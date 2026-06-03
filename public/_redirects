@@ -1,3 +1,0 @@
-# Cloudflare Pages SPA fallback: serve index.html for client-side routes.
-# Static assets that exist are served first; this only catches unknown paths.
-/*    /index.html   200

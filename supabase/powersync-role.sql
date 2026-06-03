@@ -7,7 +7,7 @@
 -- Change the password below, then use the SAME password in the PowerSync
 -- "Connect to Supabase" dialog.
 
-create role powersync_role with replication bypassrls login password 'CHANGE-ME-strong-password';
+create role powersync_role with replication bypassrls login password 'NFi$5$mt76w^FN';
 
 -- PowerSync only needs to read.
 grant select on all tables in schema public to powersync_role;
