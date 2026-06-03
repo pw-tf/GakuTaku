@@ -1,0 +1,35 @@
+{
+  "name": "japanese-reader",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "tsc -b --noEmit",
+    "deploy": "npm run build && npx wrangler pages deploy dist"
+  },
+  "dependencies": {
+    "@journeyapps/wa-sqlite": "^1.7.0",
+    "@powersync/react": "^1.10.0",
+    "@powersync/web": "^1.38.2",
+    "@supabase/supabase-js": "^2.107.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.30",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react-swc": "^4.3.1",
+    "autoprefixer": "^10.5.0",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vite-plugin-pwa": "^0.20.5",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0"
+  }
+}

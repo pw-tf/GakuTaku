@@ -1,0 +1,4 @@
+# Cloudflare Pages project config (used by `wrangler pages deploy`).
+name = "japanese-reader"
+compatibility_date = "2025-06-01"
+pages_build_output_dir = "dist"

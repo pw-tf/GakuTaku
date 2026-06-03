@@ -1,0 +1,132 @@
+import { column, Schema, Table } from '@powersync/web';
+
+/**
+ * PowerSync client schema. Mirrors the *synced* Supabase tables only (see §4 of the
+ * build plan). The dictionary / tokenizer assets are intentionally NOT synced — they
+ * live in IndexedDB / Cache API, not Postgres.
+ *
+ * Notes on types:
+ * - Every table has an implicit `id` text primary key (do not declare it here).
+ * - PowerSync supports only text / integer / real. Postgres `jsonb` columns are stored
+ *   as serialized text client-side (`column.text`) and parsed in app code.
+ * - Timestamps are ISO strings (`column.text`).
+ */
+
+const decks = new Table({
+  user_id: column.text,
+  name: column.text,
+  fsrs_params: column.text, // jsonb
+  created_at: column.text,
+});
+
+const note_types = new Table({
+  user_id: column.text,
+  name: column.text,
+  fields: column.text, // jsonb
+  card_templates: column.text, // jsonb
+});
+
+const notes = new Table(
+  {
+    user_id: column.text,
+    deck_id: column.text,
+    note_type_id: column.text,
+    fields: column.text, // jsonb
+    tags: column.text,
+    created_at: column.text,
+  },
+  { indexes: { by_deck: ['deck_id'] } },
+);
+
+const cards = new Table(
+  {
+    user_id: column.text,
+    note_id: column.text,
+    template_index: column.integer,
+    // FSRS fields — derived by replaying review_logs (see §3.3); stored for query speed.
+    due: column.text,
+    stability: column.real,
+    difficulty: column.real,
+    reps: column.integer,
+    lapses: column.integer,
+    state: column.integer,
+    last_review: column.text,
+  },
+  { indexes: { by_note: ['note_id'] } },
+);
+
+const review_logs = new Table(
+  {
+    user_id: column.text,
+    card_id: column.text,
+    rating: column.integer,
+    review_time: column.text,
+    elapsed_ms: column.integer,
+    scheduled_days: column.integer,
+  },
+  { indexes: { by_card: ['card_id'] } },
+);
+
+const documents = new Table({
+  user_id: column.text,
+  title: column.text,
+  type: column.text,
+  source: column.text, // 'upload' | 'rss'
+  storage_path: column.text,
+  language: column.text,
+  added_at: column.text,
+});
+
+const reading_positions = new Table(
+  {
+    user_id: column.text,
+    document_id: column.text,
+    locator: column.text, // CFI
+    percent: column.real,
+    updated_at: column.text,
+  },
+  { indexes: { by_document: ['document_id'] } },
+);
+
+const feeds = new Table({
+  user_id: column.text,
+  url: column.text,
+  title: column.text,
+  added_at: column.text,
+});
+
+const mined_words = new Table({
+  user_id: column.text,
+  term: column.text,
+  reading: column.text,
+  context: column.text,
+  document_id: column.text,
+  looked_up_at: column.text,
+});
+
+const user_settings = new Table({
+  user_id: column.text,
+  furigana_default: column.integer,
+  theme: column.text,
+  vertical_text: column.integer,
+});
+
+export const AppSchema = new Schema({
+  decks,
+  note_types,
+  notes,
+  cards,
+  review_logs,
+  documents,
+  reading_positions,
+  feeds,
+  mined_words,
+  user_settings,
+});
+
+export type Database = (typeof AppSchema)['types'];
+export type DeckRecord = Database['decks'];
+export type NoteRecord = Database['notes'];
+export type CardRecord = Database['cards'];
+export type ReviewLogRecord = Database['review_logs'];
+export type DocumentRecord = Database['documents'];

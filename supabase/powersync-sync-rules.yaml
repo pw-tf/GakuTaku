@@ -1,0 +1,21 @@
+# PowerSync sync rules — paste into your PowerSync instance ("Sync Rules" editor),
+# then "Deploy". Version-controlled here so the config travels with the code.
+#
+# A single per-user bucket scopes every synced table to the authenticated user
+# (request.user_id() comes from the Supabase JWT `sub` claim). This mirrors the
+# RLS policies in supabase/migrations/0002_rls.sql.
+
+bucket_definitions:
+  user_data:
+    parameters: select request.user_id() as user_id
+    data:
+      - select * from decks where user_id = bucket.user_id
+      - select * from note_types where user_id = bucket.user_id
+      - select * from notes where user_id = bucket.user_id
+      - select * from cards where user_id = bucket.user_id
+      - select * from review_logs where user_id = bucket.user_id
+      - select * from documents where user_id = bucket.user_id
+      - select * from reading_positions where user_id = bucket.user_id
+      - select * from feeds where user_id = bucket.user_id
+      - select * from mined_words where user_id = bucket.user_id
+      - select * from user_settings where user_id = bucket.user_id
