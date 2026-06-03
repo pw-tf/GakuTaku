@@ -1,6 +1,6 @@
 # Cloudflare Workers Static Assets config (used by `wrangler deploy`).
 # This is an assets-only Worker — no server script, just the built SPA in ./dist.
-name = "japanese-reader"
+name = "gakutaku"
 compatibility_date = "2025-06-01"
 
 [assets]

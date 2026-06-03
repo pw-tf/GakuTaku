@@ -5,7 +5,7 @@ import { SupabaseConnector } from './SupabaseConnector';
 /** Local SQLite (wa-sqlite WASM) database, synced with Supabase via the connector. */
 export const db = new PowerSyncDatabase({
   schema: AppSchema,
-  database: { dbFilename: 'japanese-reader.db' },
+  database: { dbFilename: 'gakutaku.db' },
 });
 
 export const connector = new SupabaseConnector();

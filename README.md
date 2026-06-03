@@ -1,4 +1,4 @@
-# Japanese Reader
+# GakuTaku
 
 Offline-first PWA for learning Japanese through immersion reading + FSRS spaced
 repetition. See [`japanese-reader-build-plan.md`](./japanese-reader-build-plan.md) for the

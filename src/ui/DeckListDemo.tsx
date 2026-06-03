@@ -34,7 +34,7 @@ export function DeckListDemo() {
     <div className="mx-auto max-w-xl p-6 text-slate-100">
       <header className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">日本語 Reader</h1>
+          <h1 className="text-2xl font-bold">GakuTaku</h1>
           <p className="text-sm text-slate-400">{session?.user.email}</p>
         </div>
         <button

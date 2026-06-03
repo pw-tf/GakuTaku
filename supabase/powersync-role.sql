@@ -4,10 +4,11 @@
 -- migrations/0001_init.sql, so it is intentionally NOT recreated here
 -- (CREATE PUBLICATION has no IF NOT EXISTS and would error).
 --
--- Change the password below, then use the SAME password in the PowerSync
--- "Connect to Supabase" dialog.
+-- SECURITY: do NOT commit a real password here. Replace the placeholder ONLY in the
+-- Supabase SQL editor when you run it, and paste that same password into the PowerSync
+-- "Connect to Supabase" dialog. Keep the placeholder in the repo.
 
-create role powersync_role with replication bypassrls login password 'NFi$5$mt76w^FN';
+create role powersync_role with replication bypassrls login password 'CHANGE-ME-strong-password';
 
 -- PowerSync only needs to read.
 grant select on all tables in schema public to powersync_role;

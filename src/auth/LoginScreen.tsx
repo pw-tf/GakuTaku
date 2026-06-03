@@ -44,7 +44,7 @@ export function LoginScreen() {
   return (
     <div className="flex min-h-full items-center justify-center bg-slate-950 p-4 text-slate-100">
       <div className="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
-        <h1 className="mb-1 text-2xl font-bold">日本語 Reader</h1>
+        <h1 className="mb-1 text-2xl font-bold">GakuTaku</h1>
         <p className="mb-6 text-sm text-slate-400">
           {mode === 'signin' ? 'Sign in to continue.' : 'Create your account.'}
         </p>

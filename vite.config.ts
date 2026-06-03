@@ -31,8 +31,8 @@ export default defineConfig({
         ],
       },
       manifest: {
-        name: 'Japanese Reader',
-        short_name: 'JP Reader',
+        name: 'GakuTaku',
+        short_name: 'GakuTaku',
         description: 'Immersion reading & spaced-repetition study for Japanese.',
         theme_color: '#0f172a',
         background_color: '#0f172a',

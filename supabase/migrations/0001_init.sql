@@ -1,4 +1,4 @@
--- 0001_init.sql — initial schema for the Japanese Reader app (§4 of the build plan).
+-- 0001_init.sql — initial schema for the GakuTaku app (§4 of the build plan).
 -- All user data tables. Large static/binary data (dictionary, document blobs) is NOT
 -- stored here; it lives client-side / in Supabase Storage.
 
