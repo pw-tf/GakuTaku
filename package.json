@@ -8,24 +8,32 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
-    "deploy": "npm run build && npx wrangler deploy"
+    "deploy": "npm run build && npx wrangler deploy",
+    "build:dict": "tsx scripts/build-dict.ts",
+    "upload:dict": "tsx --env-file=.env scripts/upload-dict.ts"
   },
   "dependencies": {
     "@journeyapps/wa-sqlite": "^1.7.0",
     "@powersync/react": "^1.10.0",
     "@powersync/web": "^1.38.2",
+    "@sglkc/kuromoji": "^1.1.0",
     "@supabase/supabase-js": "^2.107.0",
+    "comlink": "^4.4.2",
+    "dexie": "^4.4.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@scriptin/jmdict-simplified-loader": "^3.6.1",
+    "@scriptin/jmdict-simplified-types": "^3.6.1",
     "@types/react": "^18.3.30",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react-swc": "^4.3.1",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.15",
     "tailwindcss": "^3.4.19",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "vite": "^5.4.21",
     "vite-plugin-pwa": "^0.20.5",

@@ -2,6 +2,10 @@ node_modules
 dist
 dist-ssr
 *.local
+
+# Dictionary pipeline (large; generated locally, hosted on Supabase Storage)
+dict-src
+dict-build
 .env
 .env.*
 !.env.example

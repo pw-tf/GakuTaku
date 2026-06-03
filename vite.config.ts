@@ -16,7 +16,9 @@ export default defineConfig({
       // Keep them out of the precache manifest and serve them via a runtime cache.
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
-        globIgnores: ['**/*.wasm', '**/sqlite3*.js', '**/*worker*.js'],
+        // Keep large runtime assets out of the precache manifest: PowerSync WASM/workers
+        // and the vendored kuromoji dictionary (~17 MB of .dat.gz).
+        globIgnores: ['**/*.wasm', '**/sqlite3*.js', '**/*worker*.js', 'dict/**'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         runtimeCaching: [
           {
@@ -26,6 +28,15 @@ export default defineConfig({
             options: {
               cacheName: 'powersync-wasm',
               expiration: { maxEntries: 8 },
+            },
+          },
+          {
+            // Vendored kuromoji IPADIC dictionary — cache on first tokenize for offline use.
+            urlPattern: /\/dict\/kuromoji\/.*\.dat\.gz$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'kuromoji-dict',
+              expiration: { maxEntries: 16 },
             },
           },
         ],

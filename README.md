@@ -4,8 +4,9 @@ Offline-first PWA for learning Japanese through immersion reading + FSRS spaced
 repetition. See [`japanese-reader-build-plan.md`](./japanese-reader-build-plan.md) for the
 full 8-milestone spec.
 
-**Status:** M0 (scaffold) + M1 (auth & synced data layer) complete. M2+ (Japanese core,
-reader, SRS, analytics, import, RSS) not yet built — their `src/` folders are placeholders.
+**Status:** M0 (scaffold) + M1 (auth & sync) + M2 (Japanese core: tokenizer, furigana,
+offline dictionary lookup, shared popup) complete. M3+ (reader, SRS, analytics, import, RSS)
+not yet built — their `src/` folders are placeholders.
 
 ## Stack
 
@@ -43,7 +44,25 @@ cp .env.example .env   # then fill in the three VITE_ values
    the Sync Rules editor and deploy.
 4. Copy the instance URL into `VITE_POWERSYNC_URL`.
 
-### 4. Run
+### 4. Dictionary (M2) — one-time build & upload
+
+The tokenizer/furigana work out of the box (kuromoji dict is vendored in `public/dict/kuromoji/`).
+The lookup dictionary (full JMdict + JMnedict names + KANJIDIC) is large, so it's hosted on
+Supabase Storage and downloaded by the app on first use.
+
+1. Download the latest JSON files from
+   [jmdict-simplified releases](https://github.com/scriptin/jmdict-simplified/releases/latest)
+   into a local `dict-src/` folder: `jmdict-eng-*.json`, `jmnedict-all-*.json`, `kanjidic2-en-*.json`.
+2. Create a **public** Supabase Storage bucket named `dictionary`.
+3. Add `SUPABASE_SERVICE_ROLE_KEY` to `.env` (local only — gitignored).
+4. Build + upload:
+   ```bash
+   npm run build:dict     # → dict-build/ (sharded, gzipped NDJSON + manifest.json)
+   npm run upload:dict    # → uploads to the `dictionary` bucket
+   ```
+   In the app, open **Japanese core → Download dictionary** once; it's then cached in IndexedDB.
+
+### 5. Run
 
 ```bash
 npm run dev       # http://localhost:5173
@@ -66,3 +85,11 @@ npm run build && npm run preview   # production build (PWA-installable)
 3. Go back **online**. The row appears in Supabase `decks` and in a second signed-in
    session without a manual refresh.
 4. Sign in as a different user — the first user's decks are not visible (RLS).
+
+## Verifying M2 (Japanese core)
+
+1. Open the **Japanese core** tab; the sample text tokenizes with furigana (toggle on/off).
+2. Reload in airplane mode — tokenization still works (kuromoji dict is cached).
+3. Download the dictionary (above), then tap a word → popup shows readings + glosses; tap a name
+   (e.g. 田中) → JMnedict hit; a kanji shows KANJIDIC info. 食べた resolves to 食べる.
+4. **＋ Add to deck** inserts a `mined_words` row (real card creation arrives in M4).
