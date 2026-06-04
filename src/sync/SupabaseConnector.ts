@@ -19,6 +19,35 @@ import { supabase, powersyncUrl } from './supabase';
  */
 const FATAL_RESPONSE_CODES = [/^22\d{3}$/, /^23\d{3}$/, /^42501$/];
 
+/**
+ * Columns that are Postgres `jsonb` but `column.text` in the client schema (AppSchema). The client
+ * stores them as serialized JSON strings; if we upsert that string straight into a jsonb column it
+ * lands as a double-encoded jsonb *string scalar*, and on replication back the client reads
+ * `"{...}"` which JSON.parses to a string (not the object) — corrupting note fields / deck params.
+ * Parse these back to objects before sending so Postgres stores real jsonb that round-trips cleanly.
+ */
+const JSON_COLUMNS: Record<string, string[]> = {
+  decks: ['fsrs_params'],
+  note_types: ['fields', 'card_templates'],
+  notes: ['fields'],
+};
+
+function coerceJsonColumns(table: string, data: Record<string, unknown>): Record<string, unknown> {
+  const cols = JSON_COLUMNS[table];
+  if (!cols) return data;
+  const out = { ...data };
+  for (const c of cols) {
+    if (typeof out[c] === 'string') {
+      try {
+        out[c] = JSON.parse(out[c] as string);
+      } catch {
+        // Leave unparseable values as-is.
+      }
+    }
+  }
+  return out;
+}
+
 export class SupabaseConnector implements PowerSyncBackendConnector {
   /** Returns the endpoint + JWT PowerSync uses to authenticate the sync stream. */
   async fetchCredentials(): Promise<PowerSyncCredentials | null> {
@@ -60,13 +89,13 @@ export class SupabaseConnector implements PowerSyncBackendConnector {
 
         switch (op.op) {
           case UpdateType.PUT: {
-            const record = { ...op.opData, id: op.id };
+            const record = coerceJsonColumns(op.table, { ...op.opData, id: op.id });
             const { error } = await table.upsert(record);
             if (error) throw error;
             break;
           }
           case UpdateType.PATCH: {
-            const { error } = await table.update(op.opData ?? {}).eq('id', op.id);
+            const { error } = await table.update(coerceJsonColumns(op.table, op.opData ?? {})).eq('id', op.id);
             if (error) throw error;
             break;
           }

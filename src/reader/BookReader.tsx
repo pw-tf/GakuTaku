@@ -22,7 +22,7 @@ export function BookReader({ doc, mined, onMine, onReviewMined, onClose }: Props
     return (
       <div className="reader">
         <div className="rd-top">
-          <span className="back" onClick={onClose}><Icon.chevL s={18} /> Library</span>
+          <span className="back" onClick={onClose}><Icon.chevL s={18} /> <span className="back-lbl">Library</span></span>
           <span className="rtitle" lang="ja">{book.title}</span>
         </div>
         <div className="rd-stage"><div className="rd-scroll"><div className="rd-col"><p style={{ color: 'var(--ink-faint)' }}>Opening book…</p></div></div></div>
@@ -34,7 +34,7 @@ export function BookReader({ doc, mined, onMine, onReviewMined, onClose }: Props
     return (
       <div className="reader">
         <div className="rd-top">
-          <span className="back" onClick={onClose}><Icon.chevL s={18} /> Library</span>
+          <span className="back" onClick={onClose}><Icon.chevL s={18} /> <span className="back-lbl">Library</span></span>
         </div>
         <div className="rd-stage"><div className="rd-scroll"><div className="rd-col"><p style={{ color: 'var(--rate-again)' }}>Couldn't open this book: {book.error}</p></div></div></div>
       </div>

@@ -116,7 +116,7 @@ export function Reader(props: Props) {
     <div className="reader">
       <div className="rd-top">
         <span className="back" onClick={props.onClose}>
-          <Icon.chevL s={18} /> Library
+          <Icon.chevL s={18} /> <span className="back-lbl">Library</span>
         </span>
         <span style={{ width: 1, height: 22, background: 'var(--rule)' }} />
         <span className="rtitle" lang="ja">{props.title}</span>

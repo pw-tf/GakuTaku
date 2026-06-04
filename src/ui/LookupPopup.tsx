@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LookupState } from '../jp-core/lookupService';
 import { useAuth } from '../auth/AuthProvider';
-import { db } from '../sync/system';
+import { usePrefs } from '../app/prefs';
+import { useDecks } from '../sync/hooks';
+import { addCardForWord } from '../srs/mining';
+import { DeckPicker } from './DeckPicker';
 import { Btn, Chip } from './atoms';
 import { Icon } from './icons';
 
@@ -9,6 +12,7 @@ export interface MinedItem {
   term: string;
   reading: string;
   gloss: string;
+  cardId: string;
 }
 
 interface Props extends LookupState {
@@ -19,11 +23,17 @@ interface Props extends LookupState {
 /** The single shared dictionary popup (build plan §3.5), populated from the real LookupResult. */
 export function LookupPopup({ result, loading, anchor, error, onClose, onMine }: Props) {
   const { session } = useAuth();
+  const { data: decks } = useDecks();
+  const { lastDeckId, setLastDeckId } = usePrefs();
   const ref = useRef<HTMLDivElement>(null);
   const [added, setAdded] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Reset "added" when the looked-up term changes.
   useEffect(() => setAdded(false), [result?.query]);
+
+  // The remembered deck, if it still exists (one-tap add target).
+  const targetDeck = useMemo(() => decks.find((d) => d.id === lastDeckId) ?? null, [decks, lastDeckId]);
 
   // Dismiss on outside click (ignoring other tappable words).
   useEffect(() => {
@@ -50,16 +60,30 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine }:
   const firstWord = result?.words[0];
   const senses = result ? result.words.flatMap((w) => w.senses).slice(0, 8) : [];
 
-  async function addToDeck() {
+  /** Best-effort meaning, falling back to name translations / kanji meanings for non-word entries. */
+  function resolveGloss(): string {
+    const wordGloss = senses[0]?.gloss.join('; ') ?? '';
+    if (wordGloss) return wordGloss;
+    const nameGloss = result?.names[0]?.translations.map((t) => t.text.join(', ')).join('; ') ?? '';
+    if (nameGloss) return nameGloss;
+    return result?.kanji[0]?.meanings.slice(0, 4).join(', ') ?? '';
+  }
+
+  async function addTo(deckId: string) {
     if (!result || !session) return;
-    const gloss = senses[0]?.gloss.join('; ') ?? '';
-    await db.execute(
-      `INSERT INTO mined_words (id, user_id, term, reading, context, document_id, looked_up_at)
-       VALUES (uuid(), ?, ?, ?, ?, NULL, ?)`,
-      [session.user.id, result.query, reading, '', new Date().toISOString()],
-    );
-    onMine?.({ term: result.query, reading, gloss });
+    const gloss = resolveGloss();
+    const pos = firstWord?.senses[0]?.pos[0] ?? '';
+    // Create a real note + card (deduped per term) and record the lookup in mined_words history.
+    const { cardId } = await addCardForWord(session.user.id, { deckId, term: result.query, reading, gloss, pos });
+    setLastDeckId(deckId);
+    setPickerOpen(false);
+    onMine?.({ term: result.query, reading, gloss, cardId });
     setAdded(true);
+  }
+
+  function onAddClick() {
+    if (targetDeck) void addTo(targetDeck.id);
+    else setPickerOpen(true); // no remembered deck yet → choose/create one
   }
 
   function listen() {
@@ -141,7 +165,7 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine }:
       <div className="lk-foot">
         {added ? (
           <span className="lk-added">
-            <Icon.check s={18} /> Added to deck
+            <Icon.check s={18} /> Added to {targetDeck?.name ?? 'deck'}
           </span>
         ) : (
           <>
@@ -150,9 +174,12 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine }:
               size="sm"
               style={{ flex: 1, justifyContent: 'center' }}
               disabled={!hasEntry}
-              onClick={addToDeck}
+              onClick={onAddClick}
             >
-              ＋ Add to deck
+              ＋ Add{targetDeck ? ` to ${targetDeck.name}` : ' to deck'}
+            </Btn>
+            <Btn size="sm" aria-label="Choose deck" title="Choose deck" disabled={!hasEntry} onClick={() => setPickerOpen(true)}>
+              <Icon.decks s={16} />
             </Btn>
             <Btn size="sm" aria-label="listen" onClick={listen}>
               <Icon.sound s={16} />
@@ -160,6 +187,14 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine }:
           </>
         )}
       </div>
+
+      {pickerOpen && (
+        <DeckPicker
+          currentDeckId={targetDeck?.id ?? null}
+          onPick={(id) => void addTo(id)}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

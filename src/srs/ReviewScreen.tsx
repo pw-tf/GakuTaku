@@ -1,19 +1,10 @@
-import { useState } from 'react';
+import { useEffect } from 'react';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
-import { SAMPLE_INTERVALS } from '../data/sample';
-
-export interface ReviewCard {
-  term: string;
-  reading: string;
-  pos: string;
-  gloss: string;
-  jlpt?: string;
-}
+import { useReview, type ReviewSource } from './useReview';
 
 interface Props {
-  queue: ReviewCard[];
-  deckName: string;
+  source: ReviewSource;
   onExit: () => void;
 }
 
@@ -24,45 +15,56 @@ const RATINGS = [
   ['easy', 'Easy', 'var(--rate-easy)'],
 ] as const;
 
-/**
- * Review flow. UI + interaction only — real FSRS scheduling and append-only review_logs land in M4;
- * the next-interval previews are sample values.
- */
-export function ReviewScreen({ queue, deckName, onExit }: Props) {
-  const [i, setI] = useState(0);
-  const [shown, setShown] = useState(false);
-  const [done, setDone] = useState(false);
+function sourceLabel(source: ReviewSource): string {
+  if (source.kind === 'deck') return source.deckName;
+  if (source.kind === 'cards') return source.label;
+  return 'All due';
+}
 
-  const total = queue.length;
-  const card = queue[i];
+/** Review flow backed by real FSRS scheduling with Anki-style intra-session relearning. Each rating
+ *  appends a review_log; the card's state is derived from its logs (§3.3). Cards in a (re)learning
+ *  step reappear within the session until they graduate. Interval previews come straight from ts-fsrs. */
+export function ReviewScreen({ source, onExit }: Props) {
+  const review = useReview(source);
+  const { current, shown, gradePreviews, counts } = review;
 
-  function rate() {
-    if (i + 1 >= total) setDone(true);
-    else {
-      setI(i + 1);
-      setShown(false);
+  // Keyboard: space/enter reveals, 1–4 rate once revealed.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!current) return;
+      if (!shown && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault();
+        review.reveal();
+      } else if (shown && e.key >= '1' && e.key <= '4') {
+        const p = gradePreviews[Number(e.key) - 1];
+        if (p) review.rate(p.grade);
+      }
     }
-  }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [current, shown, gradePreviews, review]);
 
-  if (total === 0) {
+  const label = sourceLabel(source);
+
+  if (review.loading) {
     return (
       <div className="review-wrap">
         <div className="rv-top"><span className="back" onClick={onExit}><Icon.chevL s={18} /> Back</span></div>
-        <div className="rv-stage"><div className="rv-done"><div className="big">Nothing due</div></div></div>
+        <div className="rv-stage"><p style={{ color: 'var(--ink-faint)' }}>Loading cards…</p></div>
       </div>
     );
   }
 
-  if (done) {
+  if (review.isEmpty) {
     return (
       <div className="review-wrap">
-        <div className="rv-top"><span className="back" onClick={onExit}><Icon.chevL s={18} /> Done</span></div>
+        <div className="rv-top"><span className="back" onClick={onExit}><Icon.chevL s={18} /> Back</span></div>
         <div className="rv-stage">
           <div className="rv-done">
-            <div className="jpbig" lang="ja">お疲れさま</div>
-            <div className="big">Session complete</div>
+            <div className="jpbig" lang="ja">空っぽ</div>
+            <div className="big">Nothing due</div>
             <p style={{ color: 'var(--ink-soft)', fontSize: 15, lineHeight: 1.6 }}>
-              You reviewed {total} cards. (Real FSRS scheduling + synced review history arrive in M4.)
+              No cards are due right now. Mine some words while reading — tap a word, then ＋ Add to deck.
             </p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 24 }}>
               <Btn variant="primary" onClick={onExit}>Back to library</Btn>
@@ -73,30 +75,51 @@ export function ReviewScreen({ queue, deckName, onExit }: Props) {
     );
   }
 
-  const ivl = SAMPLE_INTERVALS[i % SAMPLE_INTERVALS.length];
+  if (review.done || !current) {
+    return (
+      <div className="review-wrap">
+        <div className="rv-top"><span className="back" onClick={onExit}><Icon.chevL s={18} /> Done</span></div>
+        <div className="rv-stage">
+          <div className="rv-done">
+            <div className="jpbig" lang="ja">お疲れさま</div>
+            <div className="big">Session complete</div>
+            <p style={{ color: 'var(--ink-soft)', fontSize: 15, lineHeight: 1.6 }}>
+              You made {review.reviewedCount} {review.reviewedCount === 1 ? 'review' : 'reviews'}. Scheduling is saved and synced.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 24 }}>
+              <Btn variant="primary" onClick={onExit}>Back to library</Btn>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const f = current.fields;
 
   return (
     <div className="review-wrap">
       <div className="rv-top">
         <span className="back" onClick={onExit}><Icon.close s={18} /></span>
-        <div className="prog-track"><i style={{ width: (i / total) * 100 + '%' }} /></div>
-        <span className="qcount">{i + 1} / {total}</span>
+        <span className="rv-counts" title="New · Learning · Due">
+          <span className="c new">{counts.new}</span>
+          <span className="c learn">{counts.learning}</span>
+          <span className="c review">{counts.review}</span>
+        </span>
         <span className="spacer" style={{ flex: 1 }} />
-        <Chip>{deckName}</Chip>
+        <Chip>{label}</Chip>
       </div>
 
-      <div className="rv-stage" onClick={() => !shown && setShown(true)}>
+      <div className="rv-stage" onClick={() => !shown && review.reveal()}>
         <div className="card-face">
-          <Kicker accent style={{ display: 'block' }}>
-            {card.jlpt ? card.jlpt + ' · ' : ''}recall the reading & meaning
-          </Kicker>
-          <div className="cf-term" style={{ marginTop: 24 }} lang="ja">{card.term}</div>
+          <Kicker accent style={{ display: 'block' }}>recall the reading &amp; meaning</Kicker>
+          <div className="cf-term" style={{ marginTop: 24 }} lang="ja">{f.Term}</div>
           {shown ? (
             <>
-              <div className="cf-reading" lang="ja">{card.reading}</div>
+              <div className="cf-reading" lang="ja">{f.Reading}</div>
               <div className="cf-sep" />
-              {card.pos && <div className="cf-pos">{card.pos}</div>}
-              <div className="cf-gloss">{card.gloss}</div>
+              {f.Pos && <div className="cf-pos">{f.Pos}</div>}
+              <div className="cf-gloss">{f.Meaning}</div>
             </>
           ) : (
             <div className="show-hint">Tap to reveal · space</div>
@@ -106,13 +129,13 @@ export function ReviewScreen({ queue, deckName, onExit }: Props) {
 
       <div className="rv-foot">
         {!shown ? (
-          <Btn variant="primary" className="reveal-btn" onClick={() => setShown(true)}>Show answer</Btn>
+          <Btn variant="primary" className="reveal-btn" onClick={review.reveal}>Show answer</Btn>
         ) : (
           <div className="rate-grid">
-            {RATINGS.map(([k, label, color], ki) => (
-              <div className="rate-btn" key={k} onClick={rate}>
-                <div className="rlab"><span className="rdot" style={{ background: color }} />{label}</div>
-                <div className="rivl">{ivl[k]}</div>
+            {RATINGS.map(([k, lab, color], ki) => (
+              <div className="rate-btn" key={k} onClick={() => gradePreviews[ki] && review.rate(gradePreviews[ki].grade)}>
+                <div className="rlab"><span className="rdot" style={{ background: color }} />{lab}</div>
+                <div className="rivl">{gradePreviews[ki]?.interval ?? ''}</div>
                 <div className="rate-key">{ki + 1}</div>
               </div>
             ))}

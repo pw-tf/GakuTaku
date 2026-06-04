@@ -6,10 +6,12 @@ import { Attribution } from '../ui/Attribution';
 import { LibraryScreen } from '../library/LibraryScreen';
 import { DecksScreen } from '../srs/DecksScreen';
 import { AnalyticsScreen } from '../analytics/AnalyticsScreen';
-import { ReviewScreen, type ReviewCard } from '../srs/ReviewScreen';
+import { ReviewScreen } from '../srs/ReviewScreen';
+import type { ReviewSource } from '../srs/useReview';
+import { useDueCount, type DeckStat } from '../srs/srsHooks';
 import type { MinedItem } from '../ui/LookupPopup';
 import type { DocumentRecord } from '../sync/AppSchema';
-import { SAMPLE_QUEUE, SAMPLE_STATS, type SampleDeck } from '../data/sample';
+import { SAMPLE_STATS } from '../data/sample';
 
 type View = 'library' | 'decks' | 'analytics' | 'credits';
 type Overlay = null | 'reader' | 'review';
@@ -21,7 +23,6 @@ const NAV: { id: 'library' | 'review' | 'decks' | 'analytics'; label: string; ic
   { id: 'analytics', label: 'Analytics', icon: 'chart' },
 ];
 
-const DUE = 53; // sample; real due count comes from FSRS in M4
 const TITLES: Record<View, [string, string]> = {
   library: ['Library', '本棚 · フィード'],
   decks: ['Decks', 'カード'],
@@ -32,22 +33,17 @@ const TITLES: Record<View, [string, string]> = {
 // Lazy-loaded so the heavy ePUB stack (epubjs/jszip) only loads when a book is opened.
 const BookReader = lazy(() => import('../reader/BookReader').then((m) => ({ default: m.BookReader })));
 
-const sampleQueueCards = (): ReviewCard[] =>
-  SAMPLE_QUEUE.map((e) => ({ term: e.term, reading: e.reading, pos: e.senses[0][0], gloss: e.senses[0][1], jlpt: e.jlpt }));
-
-const minedToCards = (mined: MinedItem[]): ReviewCard[] =>
-  mined.map((m) => ({ term: m.term, reading: m.reading, pos: '', gloss: m.gloss }));
-
 export function AppShell() {
   const { session, signOut } = useAuth();
   const [view, setView] = useState<View>('library');
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [book, setBook] = useState<DocumentRecord | null>(null);
   const [mined, setMined] = useState<MinedItem[]>([]);
-  const [reviewQueue, setReviewQueue] = useState<ReviewCard[]>([]);
-  const [reviewDeck, setReviewDeck] = useState('Reading · Mined');
+  const [reviewSource, setReviewSource] = useState<ReviewSource>({ kind: 'due' });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const due = useDueCount();
 
   function openBook(b: DocumentRecord) {
     setBook(b);
@@ -56,14 +52,13 @@ export function AppShell() {
   function mine(item: MinedItem) {
     setMined((m) => (m.find((x) => x.term === item.term) ? m : [...m, item]));
   }
-  function startReview(queue: ReviewCard[], deckName: string) {
-    setReviewQueue(queue);
-    setReviewDeck(deckName);
+  function startReview(source: ReviewSource) {
+    setReviewSource(source);
     setOverlay('review');
   }
   function navTo(item: (typeof NAV)[number]) {
     if (item.id === 'review') {
-      startReview(sampleQueueCards(), 'Reading · Mined');
+      startReview({ kind: 'due' });
       return;
     }
     setOverlay(null);
@@ -88,7 +83,7 @@ export function AppShell() {
             <div key={it.id} className={'nav-item' + (on ? ' on' : '')} onClick={() => navTo(it)} title={it.label}>
               <span className="nav-ic"><I s={20} /></span>
               <span className="nav-lbl">{it.label}</span>
-              {it.id === 'review' && <span className="nav-badge">{DUE}</span>}
+              {it.id === 'review' && <span className="nav-badge">{due.total}</span>}
             </div>
           );
         })}
@@ -128,8 +123,8 @@ export function AppShell() {
           <div className="searchbox"><Icon.search s={16} /><input placeholder="Search words, books…" /></div>
         </div>
         <div className="scroll">
-          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={DUE} streak={SAMPLE_STATS.streak} />}
-          {view === 'decks' && <DecksScreen onReviewDeck={(d: SampleDeck) => startReview(sampleQueueCards(), d.name)} />}
+          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={due.total} streak={SAMPLE_STATS.streak} />}
+          {view === 'decks' && <DecksScreen onReviewDeck={(d: DeckStat) => startReview({ kind: 'deck', deckId: d.id, deckName: d.name })} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'credits' && <Attribution />}
         </div>
@@ -155,13 +150,13 @@ export function AppShell() {
             doc={book}
             mined={mined}
             onMine={mine}
-            onReviewMined={() => startReview(minedToCards(mined), 'Reading · Mined')}
+            onReviewMined={() => startReview({ kind: 'cards', cardIds: mined.map((m) => m.cardId), label: 'Mined this session' })}
             onClose={() => setOverlay(null)}
           />
         </Suspense>
       )}
       {overlay === 'review' && (
-        <ReviewScreen queue={reviewQueue} deckName={reviewDeck} onExit={() => setOverlay(null)} />
+        <ReviewScreen source={reviewSource} onExit={() => setOverlay(null)} />
       )}
 
       {/* Mobile menu drawer (surfaces the sidebar's settings/account, hidden on small screens). */}

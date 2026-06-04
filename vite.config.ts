@@ -1,12 +1,47 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import wasm from 'vite-plugin-wasm';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import { VitePWA } from 'vite-plugin-pwa';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+/**
+ * Dev-only: serve the vendored kuromoji `*.dat.gz` dictionary files as raw bytes.
+ *
+ * Vite's dev static server tags `.gz` responses with `Content-Encoding: gzip`, so the
+ * browser transparently inflates them and the kuromoji loader receives already-decompressed
+ * bytes — its own gunzip step then throws "invalid gzip data". Serving them ourselves with
+ * `application/octet-stream` and no `Content-Encoding` keeps the raw gzip bytes intact, matching
+ * how Cloudflare Pages serves them in production. `configureServer` only runs during `vite dev`.
+ */
+function serveRawGzipDict(): PluginOption {
+  return {
+    name: 'serve-raw-gzip-dict',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? '').split('?')[0];
+        if (!/^\/dict\/.*\.dat\.gz$/.test(url)) return next();
+        const publicDir = server.config.publicDir;
+        const filePath = path.join(publicDir, decodeURIComponent(url));
+        // Guard against path traversal escaping the public dir.
+        if (!path.resolve(filePath).startsWith(path.resolve(publicDir))) return next();
+        readFile(filePath)
+          .then((buf) => {
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.setHeader('Content-Length', buf.length);
+            res.end(buf);
+          })
+          .catch(() => next());
+      });
+    },
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    serveRawGzipDict(),
     wasm(),
     topLevelAwait(),
     react(),

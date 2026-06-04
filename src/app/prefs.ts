@@ -9,9 +9,12 @@ interface PrefsState {
   accent: string;
   dark: boolean;
   furigana: FuriganaDensity;
+  /** Last deck a word was mined into — used for one-tap "Add to deck". */
+  lastDeckId: string | null;
   setAccent: (a: string) => void;
   setDark: (d: boolean) => void;
   setFurigana: (f: FuriganaDensity) => void;
+  setLastDeckId: (id: string | null) => void;
 }
 
 /**
@@ -25,9 +28,11 @@ export const usePrefs = create<PrefsState>()(
       accent: ACCENTS[0],
       dark: false,
       furigana: 'all',
+      lastDeckId: null,
       setAccent: (accent) => set({ accent }),
       setDark: (dark) => set({ dark }),
       setFurigana: (furigana) => set({ furigana }),
+      setLastDeckId: (lastDeckId) => set({ lastDeckId }),
     }),
     { name: 'gakutaku-prefs' },
   ),
