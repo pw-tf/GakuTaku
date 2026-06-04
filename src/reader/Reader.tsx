@@ -1,36 +1,45 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { jpCore, proxy } from '../jp-core/client';
 import type { LoadProgress } from '../dictionary/loader';
 import type { FuriToken } from '../jp-core/worker';
 import { usePrefs } from '../app/prefs';
 import { useLookup } from '../jp-core/lookupService';
-import { FuriganaText } from '../ui/FuriganaText';
+import { TokenizedText } from '../ui/FuriganaText';
 import { LookupPopup, type MinedItem } from '../ui/LookupPopup';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
-import { SAMPLE_PARAGRAPHS } from './sampleText';
-import type { SampleBook } from '../data/sample';
 
 type FontScale = 's' | 'm' | 'l';
 const NEXT_SCALE: Record<FontScale, FontScale> = { s: 'm', m: 'l', l: 's' };
 
 interface Props {
-  book: SampleBook;
+  title: string;
+  chapterIndex: number;
+  chapterCount: number;
+  paragraphs: FuriToken[][];
+  loadingChapter: boolean;
+  restoreScroll: number;
   mined: MinedItem[];
   onMine: (item: MinedItem) => void;
   onReviewMined: () => void;
+  onPrevChapter: () => void;
+  onNextChapter: () => void;
+  onScrollFraction: (f: number) => void;
   onClose: () => void;
 }
 
-export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
+export function Reader(props: Props) {
   const { furigana, setFurigana } = usePrefs();
   const lookup = useLookup();
   const [vertical, setVertical] = useState(false);
   const [fontScale, setFontScale] = useState<FontScale>('m');
   const [railOpen, setRailOpen] = useState(false);
-  const [active, setActive] = useState<{ p: number; i: number } | null>(null);
+  const [activeKey, setActiveKey] = useState<number | null>(null);
+  const [scrollFrac, setScrollFrac] = useState(props.restoreScroll);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Dictionary download status (lookups need it; furigana/tokenize don't).
+  const pct = props.chapterCount ? Math.round(((props.chapterIndex + Math.min(scrollFrac, 1)) / props.chapterCount) * 100) : 0;
+
   const [dictStatus, setDictStatus] = useState<'checking' | 'need' | 'loading' | 'ready'>('checking');
   const [dictPct, setDictPct] = useState(0);
   useEffect(() => {
@@ -39,43 +48,85 @@ export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
   async function downloadDict() {
     setDictStatus('loading');
     try {
-      await jpCore.ensureDictionary(
-        proxy((p: LoadProgress) => setDictPct(p.total ? Math.round((p.loaded / p.total) * 100) : 0)),
-      );
+      await jpCore.ensureDictionary(proxy((p: LoadProgress) => setDictPct(p.total ? Math.round((p.loaded / p.total) * 100) : 0)));
       setDictStatus('ready');
     } catch {
       setDictStatus('need');
     }
   }
 
-  function handleTap(p: number, token: FuriToken, i: number, anchor: DOMRect) {
-    setActive({ p, i });
+  // Token-key offsets per paragraph (global key across the chapter for active-word highlight).
+  const offsets = useMemo(() => {
+    const out: number[] = [];
+    let acc = 0;
+    for (const p of props.paragraphs) {
+      out.push(acc);
+      acc += p.length;
+    }
+    return out;
+  }, [props.paragraphs]);
+  const advAvailable = useMemo(
+    () => props.paragraphs.some((p) => p.some((t) => t.adv !== undefined)),
+    [props.paragraphs],
+  );
+
+  // Restore scroll position once a chapter's paragraphs render (horizontal mode only).
+  useEffect(() => {
+    if (vertical || props.loadingChapter || !scrollRef.current || props.restoreScroll <= 0) return;
+    const el = scrollRef.current;
+    setScrollFrac(props.restoreScroll);
+    requestAnimationFrame(() => {
+      el.scrollTop = props.restoreScroll * (el.scrollHeight - el.clientHeight);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.paragraphs, props.loadingChapter]);
+
+  function handleTap(token: FuriToken, key: number, anchor: DOMRect) {
+    setActiveKey(key);
     lookup.lookupTerm(token.surface, anchor, token.basic);
   }
   function closeLook() {
     lookup.close();
-    setActive(null);
+    setActiveKey(null);
   }
 
-  const paras = SAMPLE_PARAGRAPHS;
-  const renderPara = (text: string, pi: number) => (
-    <FuriganaText
-      text={text}
-      density={furigana}
-      activeIndex={active?.p === pi ? active.i : null}
-      onWordTap={(tok, i, anchor) => handleTap(pi, tok, i, anchor)}
-    />
-  );
+  function onScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const max = el.scrollHeight - el.clientHeight;
+    const frac = max > 0 ? el.scrollTop / max : 0;
+    setScrollFrac(frac);
+    props.onScrollFraction(frac);
+  }
+
+  const renderParagraphs = () =>
+    props.paragraphs.map((tokens, pi) => (
+      <TokenizedText
+        key={pi}
+        tokens={tokens}
+        density={furigana}
+        advAvailable={advAvailable}
+        activeKey={activeKey}
+        indexOffset={offsets[pi]}
+        onWordTap={handleTap}
+      />
+    ));
 
   return (
     <div className="reader">
       <div className="rd-top">
-        <span className="back" onClick={onClose}>
+        <span className="back" onClick={props.onClose}>
           <Icon.chevL s={18} /> Library
         </span>
         <span style={{ width: 1, height: 22, background: 'var(--rule)' }} />
-        <span className="rtitle" lang="ja">{book.title}</span>
-        <Chip>{book.chapter}</Chip>
+        <span className="rtitle" lang="ja">{props.title}</span>
+        <button className="icon-btn" title="Previous chapter" onClick={props.onPrevChapter} disabled={props.chapterIndex <= 0}>
+          <Icon.chevL s={16} />
+        </button>
+        <Chip>{props.chapterIndex + 1} / {props.chapterCount || '…'}</Chip>
+        <button className="icon-btn" title="Next chapter" onClick={props.onNextChapter} disabled={props.chapterIndex >= props.chapterCount - 1}>
+          <Icon.chevR s={16} />
+        </button>
         <span className="spacer" />
         <div className="rd-ctrl">
           <button className="icon-btn" title="Text size" onClick={() => setFontScale(NEXT_SCALE[fontScale])}>
@@ -91,29 +142,31 @@ export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
       </div>
 
       <div className="rd-stage">
-        {vertical ? (
+        {props.loadingChapter ? (
+          <div className="rd-scroll"><div className="rd-col"><p style={{ color: 'var(--ink-faint)' }}>Loading chapter…</p></div></div>
+        ) : vertical ? (
           <div className="rd-vert">
             <div className={'vcol fs-' + fontScale} lang="ja">
-              <span className="ch-no">一　</span>
-              {paras.map((p, pi) => (
+              {props.paragraphs.map((tokens, pi) => (
                 <span key={pi}>
-                  {renderPara(p, pi)}
-                  {pi < paras.length - 1 ? '　　' : ''}
+                  <TokenizedText tokens={tokens} density={furigana} advAvailable={advAvailable} activeKey={activeKey} indexOffset={offsets[pi]} onWordTap={handleTap} />
+                  {pi < props.paragraphs.length - 1 ? '　　' : ''}
                 </span>
               ))}
             </div>
           </div>
         ) : (
-          <div className="rd-scroll">
+          <div className="rd-scroll" ref={scrollRef} onScroll={onScroll}>
             <div className="rd-col">
               <Kicker accent style={{ display: 'block', textAlign: 'center', marginBottom: 18 }}>
-                {book.chapter} · {book.pct}%
+                Chapter {props.chapterIndex + 1} · {pct}%
               </Kicker>
-              <div className="ch-no">一</div>
               <div className={'rd-body fs-' + fontScale} lang="ja">
-                {paras.map((p, pi) => (
-                  <p key={pi}>{renderPara(p, pi)}</p>
-                ))}
+                {props.paragraphs.length === 0 ? (
+                  <p style={{ color: 'var(--ink-faint)' }}>(No text on this page.)</p>
+                ) : (
+                  renderParagraphs().map((node, pi) => <p key={pi}>{node}</p>)
+                )}
               </div>
             </div>
           </div>
@@ -123,9 +176,7 @@ export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
           <div className="rail">
             <div className="rail-head">
               <span className="rh-t">Study</span>
-              <button className="icon-btn" onClick={() => setRailOpen(false)}>
-                <Icon.close s={18} />
-              </button>
+              <button className="icon-btn" onClick={() => setRailOpen(false)}><Icon.close s={18} /></button>
             </div>
             <div className="rail-scroll">
               <div className="rail-sec">
@@ -143,7 +194,7 @@ export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
                 <div className="rail-sec">
                   <div className="rs-h"><Kicker>Dictionary</Kicker></div>
                   {dictStatus === 'loading' ? (
-                    <div className="h-2 w-full overflow-hidden rounded-full" style={{ background: 'var(--rule)' }}>
+                    <div style={{ height: 8, width: '100%', overflow: 'hidden', borderRadius: 99, background: 'var(--rule)' }}>
                       <div style={{ height: '100%', width: `${dictPct}%`, background: 'var(--accent)', transition: 'width .3s' }} />
                     </div>
                   ) : (
@@ -151,22 +202,18 @@ export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
                       Download dictionary
                     </Btn>
                   )}
-                  <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6 }}>
-                    Needed for word lookup. One-time, then offline.
-                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6 }}>Needed for word lookup. One-time, then offline.</div>
                 </div>
               )}
 
               <hr className="hr" />
               <div className="rail-sec">
-                <div className="rs-h"><Kicker>Mined this session</Kicker><Chip accent>{mined.length}</Chip></div>
+                <div className="rs-h"><Kicker>Mined this session</Kicker><Chip accent>{props.mined.length}</Chip></div>
                 <div className="mined-list">
-                  {mined.length === 0 && (
-                    <div style={{ color: 'var(--ink-faint)', fontSize: 13, padding: '6px 2px' }}>
-                      Tap any word, then ＋ Add to deck.
-                    </div>
+                  {props.mined.length === 0 && (
+                    <div style={{ color: 'var(--ink-faint)', fontSize: 13, padding: '6px 2px' }}>Tap any word, then ＋ Add to deck.</div>
                   )}
-                  {mined.map((m, i) => (
+                  {props.mined.map((m, i) => (
                     <div className="m-item" key={i}>
                       <span className="mt" lang="ja">{m.term}</span>
                       <span className="mr" lang="ja">{m.reading}</span>
@@ -175,9 +222,9 @@ export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
                   ))}
                 </div>
               </div>
-              {mined.length > 0 && (
-                <Btn variant="primary" style={{ justifyContent: 'center' }} onClick={onReviewMined}>
-                  Review {mined.length} mined →
+              {props.mined.length > 0 && (
+                <Btn variant="primary" style={{ justifyContent: 'center' }} onClick={props.onReviewMined}>
+                  Review {props.mined.length} mined →
                 </Btn>
               )}
 
@@ -193,7 +240,7 @@ export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
           </div>
         )}
 
-        <div className="rd-progress"><i style={{ width: book.pct + '%' }} /></div>
+        <div className="rd-progress"><i style={{ width: pct + '%' }} /></div>
       </div>
 
       {lookup.isOpen && (
@@ -203,7 +250,7 @@ export function Reader({ book, mined, onMine, onReviewMined, onClose }: Props) {
           anchor={lookup.anchor}
           error={lookup.error}
           onClose={closeLook}
-          onMine={onMine}
+          onMine={props.onMine}
         />
       )}
     </div>

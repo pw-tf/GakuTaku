@@ -4,52 +4,31 @@ import type { FuriToken } from '../jp-core/worker';
 import { hasKanji } from '../jp-core/furigana';
 import type { FuriganaDensity } from '../app/prefs';
 
-interface Props {
-  text: string;
-  density: FuriganaDensity;
-  activeIndex?: number | null;
-  onWordTap?: (token: FuriToken, index: number, anchor: DOMRect) => void;
-}
-
 function tappable(token: FuriToken): boolean {
   return hasKanji(token.surface) || token.pos === '名詞' || token.pos === '動詞' || token.pos === '形容詞';
 }
 
-/** Renders Japanese text as tokenized, tappable units (.rd-word) with density-controlled furigana. */
-export function FuriganaText({ text, density, activeIndex, onWordTap }: Props) {
-  const [tokens, setTokens] = useState<FuriToken[]>([]);
-  const [error, setError] = useState<string | null>(null);
+interface TokenizedProps {
+  tokens: FuriToken[];
+  density: FuriganaDensity;
+  /** True if any token carries an advanced flag (dictionary loaded) — enables real N3+ behavior. */
+  advAvailable?: boolean;
+  activeKey?: number | null;
+  /** Offset added to a token's local index when reporting taps (lets a paragraph map into a chapter). */
+  indexOffset?: number;
+  onWordTap?: (token: FuriToken, key: number, anchor: DOMRect) => void;
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!text.trim()) {
-      setTokens([]);
-      return;
-    }
-    jpCore
-      .furiganaFor(text)
-      .then((result) => !cancelled && setTokens(result))
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
-    return () => {
-      cancelled = true;
-    };
-  }, [text]);
-
-  if (error) return <p className="text-sm" style={{ color: 'var(--rate-again)' }}>Tokenizer error: {error}</p>;
-
-  // If density is N3+ but no advanced-flag info is available (dictionary not loaded), fall back to "all".
-  const advAvailable = tokens.some((t) => t.adv !== undefined);
-  const effectiveDensity: FuriganaDensity = density === 'n3' && !advAvailable ? 'all' : density;
-
-  function showFuri(token: FuriToken): boolean {
-    if (effectiveDensity === 'off') return false;
-    if (effectiveDensity === 'all') return true;
-    return !!token.adv;
-  }
+/** Pure renderer: turns pre-tokenized text into tappable .rd-word units with density-controlled furigana. */
+export function TokenizedText({ tokens, density, advAvailable, activeKey, indexOffset = 0, onWordTap }: TokenizedProps) {
+  const hasAdv = advAvailable ?? tokens.some((t) => t.adv !== undefined);
+  const effective: FuriganaDensity = density === 'n3' && !hasAdv ? 'all' : density;
+  const showFuri = (t: FuriToken) => (effective === 'off' ? false : effective === 'all' ? true : !!t.adv);
 
   return (
     <>
       {tokens.map((token, i) => {
+        const key = indexOffset + i;
         const segs = token.segments.map((seg, j) =>
           seg.reading ? (
             <ruby key={j} className={showFuri(token) ? undefined : 'furi-off'}>
@@ -64,10 +43,10 @@ export function FuriganaText({ text, density, activeIndex, onWordTap }: Props) {
         return (
           <span
             key={i}
-            className={'rd-word' + (activeIndex === i ? ' rd-word-active' : '')}
+            className={'rd-word' + (activeKey === key ? ' rd-word-active' : '')}
             role="button"
             tabIndex={0}
-            onClick={(e) => onWordTap(token, i, (e.currentTarget as HTMLElement).getBoundingClientRect())}
+            onClick={(e) => onWordTap(token, key, (e.currentTarget as HTMLElement).getBoundingClientRect())}
           >
             {segs}
           </span>
@@ -75,4 +54,35 @@ export function FuriganaText({ text, density, activeIndex, onWordTap }: Props) {
       })}
     </>
   );
+}
+
+interface Props {
+  text: string;
+  density: FuriganaDensity;
+  activeKey?: number | null;
+  onWordTap?: (token: FuriToken, key: number, anchor: DOMRect) => void;
+}
+
+/** Self-tokenizing convenience wrapper for one-off snippets (tokenizes `text` via the worker). */
+export function FuriganaText({ text, density, activeKey, onWordTap }: Props) {
+  const [tokens, setTokens] = useState<FuriToken[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!text.trim()) {
+      setTokens([]);
+      return;
+    }
+    jpCore
+      .furiganaFor(text)
+      .then((r) => !cancelled && setTokens(r))
+      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [text]);
+
+  if (error) return <p className="text-sm" style={{ color: 'var(--rate-again)' }}>Tokenizer error: {error}</p>;
+  return <TokenizedText tokens={tokens} density={density} activeKey={activeKey} onWordTap={onWordTap} />;
 }

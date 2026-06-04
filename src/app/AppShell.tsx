@@ -1,15 +1,15 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import { Icon, type IconName } from '../ui/icons';
-import { Settings } from '../ui/Settings';
+import { Settings, SettingsContent } from '../ui/Settings';
 import { Attribution } from '../ui/Attribution';
 import { LibraryScreen } from '../library/LibraryScreen';
 import { DecksScreen } from '../srs/DecksScreen';
 import { AnalyticsScreen } from '../analytics/AnalyticsScreen';
 import { ReviewScreen, type ReviewCard } from '../srs/ReviewScreen';
-import { Reader } from '../reader/Reader';
 import type { MinedItem } from '../ui/LookupPopup';
-import { SAMPLE_BOOKS, SAMPLE_QUEUE, SAMPLE_STATS, type SampleBook, type SampleDeck } from '../data/sample';
+import type { DocumentRecord } from '../sync/AppSchema';
+import { SAMPLE_QUEUE, SAMPLE_STATS, type SampleDeck } from '../data/sample';
 
 type View = 'library' | 'decks' | 'analytics' | 'credits';
 type Overlay = null | 'reader' | 'review';
@@ -29,6 +29,9 @@ const TITLES: Record<View, [string, string]> = {
   credits: ['Credits', 'クレジット'],
 };
 
+// Lazy-loaded so the heavy ePUB stack (epubjs/jszip) only loads when a book is opened.
+const BookReader = lazy(() => import('../reader/BookReader').then((m) => ({ default: m.BookReader })));
+
 const sampleQueueCards = (): ReviewCard[] =>
   SAMPLE_QUEUE.map((e) => ({ term: e.term, reading: e.reading, pos: e.senses[0][0], gloss: e.senses[0][1], jlpt: e.jlpt }));
 
@@ -39,13 +42,14 @@ export function AppShell() {
   const { session, signOut } = useAuth();
   const [view, setView] = useState<View>('library');
   const [overlay, setOverlay] = useState<Overlay>(null);
-  const [book, setBook] = useState<SampleBook>(SAMPLE_BOOKS[0]);
+  const [book, setBook] = useState<DocumentRecord | null>(null);
   const [mined, setMined] = useState<MinedItem[]>([]);
   const [reviewQueue, setReviewQueue] = useState<ReviewCard[]>([]);
   const [reviewDeck, setReviewDeck] = useState('Reading · Mined');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  function openBook(b: SampleBook) {
+  function openBook(b: DocumentRecord) {
     setBook(b);
     setOverlay('reader');
   }
@@ -117,7 +121,7 @@ export function AppShell() {
 
       <div className="main">
         <div className="topbar">
-          <button className="icon-btn menu-btn"><Icon.menu s={20} /></button>
+          <button className="icon-btn menu-btn" onClick={() => setMenuOpen(true)}><Icon.menu s={20} /></button>
           <h1>{title}</h1>
           <span className="sub" lang="ja">{subtitle}</span>
           <span className="spacer" />
@@ -145,17 +149,51 @@ export function AppShell() {
         </nav>
       )}
 
-      {overlay === 'reader' && (
-        <Reader
-          book={book}
-          mined={mined}
-          onMine={mine}
-          onReviewMined={() => startReview(minedToCards(mined), 'Reading · Mined')}
-          onClose={() => setOverlay(null)}
-        />
+      {overlay === 'reader' && book && (
+        <Suspense fallback={<div className="reader"><div className="rd-stage"><div className="rd-scroll"><div className="rd-col"><p style={{ color: 'var(--ink-faint)' }}>Opening reader…</p></div></div></div></div>}>
+          <BookReader
+            doc={book}
+            mined={mined}
+            onMine={mine}
+            onReviewMined={() => startReview(minedToCards(mined), 'Reading · Mined')}
+            onClose={() => setOverlay(null)}
+          />
+        </Suspense>
       )}
       {overlay === 'review' && (
         <ReviewScreen queue={reviewQueue} deckName={reviewDeck} onExit={() => setOverlay(null)} />
+      )}
+
+      {/* Mobile menu drawer (surfaces the sidebar's settings/account, hidden on small screens). */}
+      {menuOpen && (
+        <div className="mobile-menu-backdrop" onClick={() => setMenuOpen(false)}>
+          <div className="mobile-menu" onClick={(e) => e.stopPropagation()}>
+            <div className="mm-head">
+              <span className="brand"><span className="mk" lang="ja">学</span><span className="wd">GakuTaku</span></span>
+              <button className="icon-btn" onClick={() => setMenuOpen(false)}><Icon.close s={18} /></button>
+            </div>
+            <div className="user-row" style={{ padding: '4px 0 12px' }}>
+              <div className="avatar">{initial}</div>
+              <div className="sf-text"><div className="nm">{email.split('@')[0] || 'Reader'}</div><div className="em">{email}</div></div>
+            </div>
+            <SettingsContent
+              onOpenCredits={() => {
+                setOverlay(null);
+                setView('credits');
+                setMenuOpen(false);
+              }}
+            />
+            <a
+              style={{ fontSize: 13, color: 'var(--ink-faint)', cursor: 'pointer', marginTop: 6 }}
+              onClick={() => {
+                setMenuOpen(false);
+                signOut();
+              }}
+            >
+              Sign out
+            </a>
+          </div>
+        </div>
       )}
     </div>
   );

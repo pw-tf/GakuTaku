@@ -77,7 +77,7 @@ export default defineConfig({
   optimizeDeps: {
     // PowerSync web SDK must not be pre-bundled (it relies on workers + wasm).
     exclude: ['@powersync/web', '@journeyapps/wa-sqlite'],
-    include: ['@powersync/react'],
+    include: ['@powersync/react', 'epubjs'],
   },
   worker: {
     format: 'es',

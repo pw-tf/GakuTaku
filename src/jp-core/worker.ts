@@ -80,6 +80,26 @@ const api = {
     });
   },
 
+  /** Batched furigana for many paragraphs (one chapter) — computes the advanced-kanji set once. */
+  async furiganaForMany(texts: string[]): Promise<FuriToken[][]> {
+    const tokenizer = await getTokenizer();
+    const advList = (await isDictionaryLoaded()) ? await advancedKanji(texts.join('')) : null;
+    const advSet = advList ? new Set(advList) : null;
+    return texts.map((text) =>
+      tokenizer.tokenize(text).map((t: IpadicToken) => {
+        const reading = cleanReading(t.reading);
+        return {
+          surface: t.surface_form,
+          basic: t.basic_form,
+          reading,
+          pos: t.pos,
+          segments: alignFurigana(t.surface_form, reading),
+          adv: advSet ? [...t.surface_form].some((c) => advSet.has(c)) : undefined,
+        };
+      }),
+    );
+  },
+
   isDictionaryLoaded,
 
   async ensureDictionary(onProgress?: (p: LoadProgress) => void): Promise<void> {
