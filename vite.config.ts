@@ -39,6 +39,22 @@ export default defineConfig({
               expiration: { maxEntries: 16 },
             },
           },
+          {
+            // Google Fonts stylesheets.
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\//,
+            handler: 'StaleWhileRevalidate',
+            options: { cacheName: 'google-fonts-stylesheets' },
+          },
+          {
+            // Google Fonts webfont files — keep offline for a year.
+            urlPattern: /^https:\/\/fonts\.gstatic\.com\//,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'google-fonts-webfonts',
+              expiration: { maxEntries: 32, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
         ],
       },
       manifest: {

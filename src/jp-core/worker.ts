@@ -3,7 +3,7 @@ import Tokenizer, { type IpadicToken } from '@sglkc/kuromoji/src/Tokenizer';
 import BrowserDictionaryLoader from '@sglkc/kuromoji/src/loader/BrowserDictionaryLoader';
 import { alignFurigana, type FuriSegment } from './furigana';
 import { ensureDictionary, isDictionaryLoaded, type LoadProgress } from '../dictionary/loader';
-import { lookup as dictLookup } from '../dictionary/lookup';
+import { lookup as dictLookup, advancedKanji } from '../dictionary/lookup';
 import type { LookupResult } from '../dictionary/types';
 
 const DIC_PATH = '/dict/kuromoji';
@@ -33,6 +33,8 @@ export interface FuriToken {
   reading?: string;
   pos: string;
   segments: FuriSegment[];
+  /** True if the token contains an advanced (≈N1/N2) kanji. undefined when the dict isn't loaded. */
+  adv?: boolean;
 }
 
 export interface TokenLite {
@@ -61,7 +63,11 @@ const api = {
   /** Tokenize and attach furigana segments to each token (for rendering + tap-to-lookup). */
   async furiganaFor(text: string): Promise<FuriToken[]> {
     const tokenizer = await getTokenizer();
-    return tokenizer.tokenize(text).map((t: IpadicToken) => {
+    const tokens = tokenizer.tokenize(text);
+    // Advanced-kanji set for "N3+" density (only when the dictionary is available).
+    const advList = (await isDictionaryLoaded()) ? await advancedKanji(text) : null;
+    const advSet = advList ? new Set(advList) : null;
+    return tokens.map((t: IpadicToken) => {
       const reading = cleanReading(t.reading);
       return {
         surface: t.surface_form,
@@ -69,6 +75,7 @@ const api = {
         reading,
         pos: t.pos,
         segments: alignFurigana(t.surface_form, reading),
+        adv: advSet ? [...t.surface_form].some((c) => advSet.has(c)) : undefined,
       };
     });
   },

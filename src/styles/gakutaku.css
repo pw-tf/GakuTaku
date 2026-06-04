@@ -1,0 +1,153 @@
+/* ============================================================
+   GakuTaku — Design Foundations (ported from design_handoff)
+   Warm paper · calm · almost no chrome · editorial
+   ============================================================ */
+
+/* ---------- Tokens ---------- */
+:root {
+  --paper:        oklch(0.972 0.009 83);
+  --paper-sunk:   oklch(0.948 0.011 83);
+  --paper-raised: oklch(0.992 0.006 83);
+  --ink:          oklch(0.245 0.012 60);
+  --ink-soft:     oklch(0.42 0.012 60);
+  --ink-faint:    oklch(0.60 0.010 70);
+  --rule:         oklch(0.86 0.012 80);
+  --rule-strong:  oklch(0.78 0.014 80);
+
+  --rust:    oklch(0.56 0.132 38);
+  --rust-ink: oklch(0.47 0.13 38);
+  --amber:   oklch(0.70 0.12 70);
+  --sage:    oklch(0.60 0.085 150);
+  --azure:   oklch(0.58 0.10 248);
+
+  --rate-again: oklch(0.57 0.14 33);
+  --rate-hard:  oklch(0.68 0.12 75);
+  --rate-good:  oklch(0.60 0.09 158);
+  --rate-easy:  oklch(0.60 0.10 235);
+
+  --serif: "Newsreader", Georgia, serif;
+  --sans:  "Hanken Grotesk", system-ui, sans-serif;
+  --mono:  "JetBrains Mono", ui-monospace, monospace;
+  --jp-mincho: "Shippori Mincho", "Newsreader", serif;
+  --jp-gothic: "Zen Kaku Gothic New", "Hanken Grotesk", sans-serif;
+
+  --maxw: 1180px;
+  --radius: 4px;
+  --radius-lg: 8px;
+}
+
+/* ---------- Dark theme ---------- */
+.theme-dark {
+  --paper:        oklch(0.205 0.010 60);
+  --paper-sunk:   oklch(0.175 0.010 60);
+  --paper-raised: oklch(0.245 0.011 60);
+  --ink:          oklch(0.94 0.010 83);
+  --ink-soft:     oklch(0.76 0.010 83);
+  --ink-faint:    oklch(0.58 0.010 78);
+  --rule:         oklch(0.32 0.012 60);
+  --rule-strong:  oklch(0.40 0.014 60);
+  --rust:    oklch(0.66 0.135 40);
+  --rust-ink: oklch(0.74 0.13 42);
+}
+
+/* ---------- Base ---------- */
+body {
+  font-family: var(--sans);
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01";
+}
+
+/* ---------- Editorial helpers ---------- */
+.kicker {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 500;
+}
+.kicker.accent { color: var(--rust); }
+
+.serif-display {
+  font-family: var(--serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.04;
+}
+.serif-italic { font-family: var(--serif); font-style: italic; font-weight: 400; }
+
+.hr { height: 1px; background: var(--rule); border: 0; }
+.hr-strong { height: 1px; background: var(--rule-strong); border: 0; }
+
+/* ---------- Furigana (ruby) ---------- */
+ruby { ruby-align: center; }
+ruby rt {
+  font-family: var(--jp-gothic);
+  font-size: 0.52em;
+  color: var(--ink-faint);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  transition: opacity .25s ease;
+}
+.furi-off rt { opacity: 0; }
+.jp-read {
+  font-family: var(--jp-mincho);
+  line-height: 2.05;
+  color: var(--ink);
+  font-feature-settings: normal;
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: var(--radius);
+  padding: 9px 16px;
+  border: 1px solid var(--rule-strong);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.btn:hover { border-color: var(--ink-soft); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary {
+  background: var(--rust);
+  border-color: var(--rust);
+  color: oklch(0.99 0.006 83);
+}
+.btn-primary:hover { background: var(--rust-ink); border-color: var(--rust-ink); }
+.btn-ghost { border-color: transparent; color: var(--ink-soft); }
+.btn-ghost:hover { background: var(--paper-sunk); border-color: transparent; }
+.btn-sm { padding: 6px 12px; font-size: 13px; }
+
+/* chips / tags */
+.chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  border: 1px solid var(--rule);
+  border-radius: 100px;
+  padding: 3px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.chip.accent { color: var(--rust); border-color: color-mix(in oklch, var(--rust) 35%, var(--rule)); }
+
+/* ---------- Card ---------- */
+.card {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+}

@@ -45,3 +45,25 @@ export async function lookup(term: string, basicForm?: string): Promise<LookupRe
 
   return { query: term, words, names, kanji };
 }
+
+/**
+ * Set of "advanced" kanji in the text — those at old-JLPT level ≤2 (≈N1/N2) or not listed at all.
+ * Used for the reader's "N3+" furigana density (show readings only for harder words). Best-effort,
+ * per-kanji (not per-word). Returns an empty set if the dictionary isn't loaded.
+ */
+export async function advancedKanji(text: string): Promise<string[]> {
+  const chars = [...new Set([...text].filter((ch) => KANJI_RE.test(ch)))];
+  if (!chars.length) return [];
+  const recs = (await dictDb.entries.where('forms').anyOf(chars).toArray()).filter(
+    (r: DictRecord) => r.type === 'kanji',
+  );
+  const jlptByChar = new Map<string, number | undefined>();
+  for (const r of recs) {
+    const k = r.data as KanjiData;
+    jlptByChar.set(k.literal, k.jlpt);
+  }
+  return chars.filter((ch) => {
+    const j = jlptByChar.get(ch);
+    return j === undefined || j <= 2;
+  });
+}

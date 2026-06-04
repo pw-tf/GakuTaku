@@ -15,3 +15,5 @@ dict-build
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+design_handoff_gakutaku/

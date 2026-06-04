@@ -1,118 +1,165 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LookupState } from '../jp-core/lookupService';
 import { useAuth } from '../auth/AuthProvider';
 import { db } from '../sync/system';
+import { Btn, Chip } from './atoms';
+import { Icon } from './icons';
+
+export interface MinedItem {
+  term: string;
+  reading: string;
+  gloss: string;
+}
 
 interface Props extends LookupState {
   onClose: () => void;
+  onMine?: (item: MinedItem) => void;
 }
 
-/**
- * Single shared dictionary popup (build plan §3.5). Shows word / name / kanji results for the
- * tapped term. The ＋ Add to deck button is an M2 stub: it records the term in the synced
- * `mined_words` table; real note/card creation arrives in M4.
- */
-export function LookupPopup({ result, loading, anchor, error, onClose }: Props) {
+/** The single shared dictionary popup (build plan §3.5), populated from the real LookupResult. */
+export function LookupPopup({ result, loading, anchor, error, onClose, onMine }: Props) {
   const { session } = useAuth();
+  const ref = useRef<HTMLDivElement>(null);
   const [added, setAdded] = useState(false);
+
+  // Reset "added" when the looked-up term changes.
+  useEffect(() => setAdded(false), [result?.query]);
+
+  // Dismiss on outside click (ignoring other tappable words).
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      const t = e.target as HTMLElement;
+      if (ref.current && !ref.current.contains(t) && !t.closest('.rd-word')) onClose();
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [onClose]);
+
+  const reading = useMemo(
+    () => result?.words[0]?.kana[0] ?? result?.names[0]?.kana[0] ?? '',
+    [result],
+  );
 
   if (!anchor) return null;
 
-  const top = Math.min(anchor.bottom + 8, window.innerHeight - 320);
-  const left = Math.min(anchor.left, window.innerWidth - 340);
+  const below = anchor.bottom < window.innerHeight - 280;
+  const left = Math.min(Math.max(anchor.left, 12), window.innerWidth - 360);
+  const top = below ? anchor.bottom + 10 : anchor.top - 12;
+  const style = below ? { left, top } : { left, top, transform: 'translateY(-100%)' };
+
+  const firstWord = result?.words[0];
+  const senses = result ? result.words.flatMap((w) => w.senses).slice(0, 8) : [];
 
   async function addToDeck() {
     if (!result || !session) return;
-    const reading = result.words[0]?.kana[0] ?? result.names[0]?.kana[0] ?? '';
+    const gloss = senses[0]?.gloss.join('; ') ?? '';
     await db.execute(
       `INSERT INTO mined_words (id, user_id, term, reading, context, document_id, looked_up_at)
        VALUES (uuid(), ?, ?, ?, ?, NULL, ?)`,
       [session.user.id, result.query, reading, '', new Date().toISOString()],
     );
+    onMine?.({ term: result.query, reading, gloss });
     setAdded(true);
   }
 
+  function listen() {
+    if (!result || typeof speechSynthesis === 'undefined') return;
+    const u = new SpeechSynthesisUtterance(result.query);
+    u.lang = 'ja-JP';
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+
+  const hasEntry = !!result && (result.words.length > 0 || result.names.length > 0);
+
   return (
-    <>
-      {/* click-away */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div
-        className="fixed z-50 max-h-80 w-80 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-4 text-slate-100 shadow-2xl"
-        style={{ top, left }}
-      >
-        {loading && <p className="text-sm text-slate-400">Looking up…</p>}
-        {error && <p className="text-sm text-red-400">{error}</p>}
+    <div className="lookup-pop" ref={ref} style={style}>
+      <div className="lk-head">
+        <div className="lk-term">
+          <span className="tm" lang="ja">{result?.query}</span>
+          {reading && <span className="rd" lang="ja">{reading}</span>}
+        </div>
+        {firstWord && (
+          <div className="lk-tags">
+            {firstWord.common && <Chip>common</Chip>}
+            {firstWord.senses[0]?.pos[0] && <Chip>{firstWord.senses[0].pos[0]}</Chip>}
+          </div>
+        )}
+      </div>
 
-        {result && !loading && (
+      <div className="lk-body">
+        {loading && <p style={{ color: 'var(--ink-faint)', fontSize: 14 }}>Looking up…</p>}
+        {error && <p style={{ color: 'var(--rate-again)', fontSize: 14 }}>{error}</p>}
+        {result && !loading && !hasEntry && result.kanji.length === 0 && (
+          <p style={{ color: 'var(--ink-faint)', fontSize: 14 }}>No dictionary entry found.</p>
+        )}
+
+        {senses.map((s, i) => (
+          <div className="lk-sense" key={i}>
+            <span className="n">{i + 1}</span>
+            <span>
+              {s.pos[0] && <span className="pos">{s.pos[0]} </span>}
+              {s.gloss.join('; ')}
+            </span>
+          </div>
+        ))}
+
+        {result && result.names.length > 0 && (
           <>
-            <div className="mb-3 flex items-start justify-between gap-2">
-              <h2 className="text-xl font-bold" lang="ja">
-                {result.query}
-              </h2>
-              <button
-                onClick={addToDeck}
-                disabled={added || (!result.words.length && !result.names.length)}
-                className="shrink-0 rounded-lg bg-indigo-600 px-2 py-1 text-xs font-semibold hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {added ? 'Added ✓' : '＋ Add to deck'}
-              </button>
-            </div>
-
-            {result.words.length === 0 && result.names.length === 0 && result.kanji.length === 0 && (
-              <p className="text-sm text-slate-400">No dictionary entry found.</p>
-            )}
-
-            {result.words.map((w, i) => (
-              <div key={`w${i}`} className="mb-3 border-b border-slate-800 pb-2 last:border-0">
-                <div className="text-sm text-slate-300" lang="ja">
-                  {w.kanji.length > 0 && <span className="mr-2 font-semibold">{w.kanji.join('、')}</span>}
-                  <span className="text-slate-400">{w.kana.join('、')}</span>
-                  {w.common && <span className="ml-2 rounded bg-emerald-700/60 px-1 text-[10px]">common</span>}
-                </div>
-                <ol className="ml-4 list-decimal text-sm text-slate-200">
-                  {w.senses.slice(0, 4).map((s, j) => (
-                    <li key={j}>
-                      {s.pos.length > 0 && <span className="text-[11px] italic text-slate-500">{s.pos.join(', ')} · </span>}
-                      {s.gloss.join('; ')}
-                    </li>
-                  ))}
-                </ol>
+            <div className="lk-section-h">Names</div>
+            {result.names.slice(0, 5).map((n, i) => (
+              <div className="lk-name" key={i} lang="ja">
+                <span className="nm">{n.kanji.join('、') || n.kana.join('、')}</span>
+                <span style={{ color: 'var(--ink-faint)' }}>{n.kana.join('、')}</span>{' '}
+                <span style={{ color: 'var(--ink-soft)' }}>
+                  {n.translations.map((t) => t.text.join(', ')).join('; ')}
+                </span>
               </div>
             ))}
+          </>
+        )}
 
-            {result.names.length > 0 && (
-              <div className="mb-3">
-                <h3 className="mb-1 text-xs uppercase tracking-wide text-slate-500">Names</h3>
-                {result.names.slice(0, 5).map((n, i) => (
-                  <div key={`n${i}`} className="text-sm" lang="ja">
-                    <span className="font-semibold">{n.kanji.join('、') || n.kana.join('、')}</span>
-                    <span className="ml-2 text-slate-400">{n.kana.join('、')}</span>
-                    <span className="ml-2 text-slate-300">
-                      {n.translations.map((t) => t.text.join(', ')).join('; ')}
-                    </span>
+        {result && result.kanji.length > 0 && (
+          <>
+            <div className="lk-section-h">Kanji</div>
+            {result.kanji.map((k, i) => (
+              <div className="lk-kanji" key={i} style={{ marginBottom: 6 }}>
+                <span className="kl" lang="ja">{k.literal}</span>
+                <span>
+                  <span style={{ color: 'var(--ink-soft)' }}>{k.meanings.slice(0, 4).join(', ')}</span>
+                  <div className="kr" lang="ja">
+                    {k.onyomi.length > 0 && <span style={{ marginRight: 8 }}>音 {k.onyomi.join('、')}</span>}
+                    {k.kunyomi.length > 0 && <span>訓 {k.kunyomi.join('、')}</span>}
                   </div>
-                ))}
+                </span>
               </div>
-            )}
-
-            {result.kanji.length > 0 && (
-              <div>
-                <h3 className="mb-1 text-xs uppercase tracking-wide text-slate-500">Kanji</h3>
-                {result.kanji.map((k, i) => (
-                  <div key={`k${i}`} className="mb-1 text-sm">
-                    <span className="mr-2 text-lg font-bold" lang="ja">{k.literal}</span>
-                    <span className="text-slate-300">{k.meanings.slice(0, 4).join(', ')}</span>
-                    <div className="text-xs text-slate-500" lang="ja">
-                      {k.onyomi.length > 0 && <span className="mr-2">音 {k.onyomi.join('、')}</span>}
-                      {k.kunyomi.length > 0 && <span>訓 {k.kunyomi.join('、')}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            ))}
           </>
         )}
       </div>
-    </>
+
+      <div className="lk-foot">
+        {added ? (
+          <span className="lk-added">
+            <Icon.check s={18} /> Added to deck
+          </span>
+        ) : (
+          <>
+            <Btn
+              variant="primary"
+              size="sm"
+              style={{ flex: 1, justifyContent: 'center' }}
+              disabled={!hasEntry}
+              onClick={addToDeck}
+            >
+              ＋ Add to deck
+            </Btn>
+            <Btn size="sm" aria-label="listen" onClick={listen}>
+              <Icon.sound s={16} />
+            </Btn>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

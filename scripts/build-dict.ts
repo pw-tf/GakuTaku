@@ -125,7 +125,10 @@ function streamInto<T>(
   map: (entry: T) => DictRecord,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    // NOTE: the loader only attaches its entry parser from inside the onMetadata callback,
+    // so onMetadata MUST be registered or zero entries are emitted.
     const loader = loadDictionary(type, file)
+      .onMetadata(() => {})
       .onEntry((entry: T) => writer.add(map(entry)))
       .onEnd(() => {
         writer.flush();
