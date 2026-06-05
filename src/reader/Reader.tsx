@@ -1,44 +1,94 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { jpCore, proxy } from '../jp-core/client';
 import type { LoadProgress } from '../dictionary/loader';
 import type { FuriToken } from '../jp-core/worker';
-import { usePrefs } from '../app/prefs';
+import { usePrefs, type ReaderFontScale, type ReaderOrientation, type ReaderWidth } from '../app/prefs';
 import { useLookup } from '../jp-core/lookupService';
 import { TokenizedText } from '../ui/FuriganaText';
 import { LookupPopup, type MinedItem } from '../ui/LookupPopup';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
+import type { ReadingPos, RestoreTarget } from './useBook';
 
-type FontScale = 's' | 'm' | 'l';
-const NEXT_SCALE: Record<FontScale, FontScale> = { s: 'm', m: 'l', l: 's' };
+const NEXT_SCALE: Record<ReaderFontScale, ReaderFontScale> = { s: 'm', m: 'l', l: 's' };
+/** Inter-page gutter for horizontal multi-column paging (px). */
+const PAGE_GAP = 56;
+const SWIPE_MIN = 44;
+const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 interface Props {
   title: string;
+  direction: 'ltr' | 'rtl';
   chapterIndex: number;
   chapterCount: number;
   paragraphs: FuriToken[][];
   loadingChapter: boolean;
-  restoreScroll: number;
+  restore: RestoreTarget;
   mined: MinedItem[];
   onMine: (item: MinedItem) => void;
   onReviewMined: () => void;
   onPrevChapter: () => void;
   onNextChapter: () => void;
-  onScrollFraction: (f: number) => void;
+  onPrevChapterEnd: () => void;
+  onProgress: (pos: ReadingPos, immediate?: boolean) => void;
   onClose: () => void;
+}
+
+/** Geometry of the paged content, read straight from the DOM (transform-independent). */
+interface Geom {
+  view: HTMLDivElement;
+  pages: HTMLDivElement;
+  W: number;
+  stride: number;
+  total: number;
+  count: number;
+}
+/** A paragraph anchor's position along the reading axis (px from the chapter's start). */
+interface Anchor {
+  pi: number;
+  pos: number;
 }
 
 export function Reader(props: Props) {
   const { furigana, setFurigana } = usePrefs();
+  const prefs = usePrefs();
   const lookup = useLookup();
-  const [vertical, setVertical] = useState(false);
-  const [fontScale, setFontScale] = useState<FontScale>('m');
+
+  // Layout prefs seed from the persisted store (and, only when never chosen, the book's own
+  // direction); they're owned locally while open and written back so choices survive sessions.
+  const [orientation, setOrientationState] = useState<ReaderOrientation>(
+    prefs.readerOrientation ?? (props.direction === 'rtl' ? 'vertical' : 'horizontal'),
+  );
+  const [flow, setFlowState] = useState(prefs.readerFlow);
+  const [fontScale, setFontScaleState] = useState<ReaderFontScale>(prefs.readerFontScale);
+  const [width, setWidthState] = useState<ReaderWidth>(prefs.readerWidth);
+  const setOrientation = (o: ReaderOrientation) => { setOrientationState(o); prefs.setReaderOrientation(o); };
+  const setFlow = (f: typeof flow) => { setFlowState(f); prefs.setReaderFlow(f); };
+  const setFontScale = (s: ReaderFontScale) => { setFontScaleState(s); prefs.setReaderFontScale(s); };
+  const setWidth = (w: ReaderWidth) => { setWidthState(w); prefs.setReaderWidth(w); };
+
+  // Vertical text is always paged (a horizontal scroll of tategaki reads poorly).
+  const paged = orientation === 'vertical' || flow === 'paged';
+  const vertical = orientation === 'vertical';
+
   const [railOpen, setRailOpen] = useState(false);
   const [activeKey, setActiveKey] = useState<number | null>(null);
-  const [scrollFrac, setScrollFrac] = useState(props.restoreScroll);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [page, setPage] = useState(0);
+  const [pageCount, setPageCount] = useState(1);
+  const [metrics, setMetrics] = useState({ total: 0, viewSize: 0, stride: 0 });
+  // Only user page-turns animate; programmatic jumps (restore, chapter load, resize) are instant.
+  const [instant, setInstant] = useState(true);
 
-  const pct = props.chapterCount ? Math.round(((props.chapterIndex + Math.min(scrollFrac, 1)) / props.chapterCount) * 100) : 0;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const pagesRef = useRef<HTMLDivElement>(null);
+  const touchX = useRef<number | null>(null);
+  /** Last known reading position, so a layout/mode change can re-anchor to the same spot. */
+  const lastPos = useRef({ pi: 0, frac: 0 });
+  /** Set by a user action that should persist the resulting position; consumed once on settle. */
+  const pendingSave = useRef(false);
+  /** Swallow the scroll event caused by a programmatic restore (so it can't clobber the saved spot). */
+  const ignoreScroll = useRef(false);
 
   const [dictStatus, setDictStatus] = useState<'checking' | 'need' | 'loading' | 'ready'>('checking');
   const [dictPct, setDictPct] = useState(0);
@@ -55,7 +105,7 @@ export function Reader(props: Props) {
     }
   }
 
-  // Token-key offsets per paragraph (global key across the chapter for active-word highlight).
+  // Global token-key offset per paragraph (active-word highlight maps across the whole chapter).
   const offsets = useMemo(() => {
     const out: number[] = [];
     let acc = 0;
@@ -70,16 +120,242 @@ export function Reader(props: Props) {
     [props.paragraphs],
   );
 
-  // Restore scroll position once a chapter's paragraphs render (horizontal mode only).
-  useEffect(() => {
-    if (vertical || props.loadingChapter || !scrollRef.current || props.restoreScroll <= 0) return;
-    const el = scrollRef.current;
-    setScrollFrac(props.restoreScroll);
-    requestAnimationFrame(() => {
-      el.scrollTop = props.restoreScroll * (el.scrollHeight - el.clientHeight);
-    });
+  // ---- Geometry & paragraph anchors ----------------------------------------
+
+  function geom(): Geom | null {
+    const view = viewRef.current;
+    const pages = pagesRef.current;
+    if (!view || !pages) return null;
+    const W = Math.max(1, view.clientWidth);
+    const stride = vertical ? W : W + PAGE_GAP;
+    const total = pages.scrollWidth;
+    const count = vertical ? Math.max(1, Math.ceil(total / W)) : Math.max(1, Math.round((total + PAGE_GAP) / stride));
+    return { view, pages, W, stride, total, count };
+  }
+
+  /**
+   * Rect of a paragraph's first glyph via a Range over its first character. A single glyph lives in
+   * exactly one column, so this is fragmentation-proof — unlike a <p>'s bounding box, which spans
+   * every page the paragraph crosses in multi-column layout.
+   */
+  function firstGlyphRect(p: HTMLElement): DOMRect | null {
+    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode();
+    const range = document.createRange();
+    if (node && (node.textContent?.length ?? 0) > 0) {
+      range.setStart(node, 0);
+      range.setEnd(node, 1);
+    } else {
+      range.selectNodeContents(p);
+      range.collapse(true);
+    }
+    const list = range.getClientRects();
+    return list.length ? list[0] : range.getBoundingClientRect();
+  }
+
+  /** Each paragraph's start as a distance along the reading axis (handles RTL vertical). */
+  function pagedAnchors(g: Geom): Anchor[] {
+    const pr = g.pages.getBoundingClientRect();
+    const out: Anchor[] = [];
+    for (const el of g.pages.querySelectorAll<HTMLElement>('p[data-pi]')) {
+      const r = firstGlyphRect(el);
+      if (!r) continue;
+      out.push({ pi: Number(el.dataset.pi), pos: vertical ? pr.left + g.total - r.right : r.left - pr.left });
+    }
+    return out;
+  }
+
+  function scrollAnchors(el: HTMLDivElement): Anchor[] {
+    const top = el.getBoundingClientRect().top;
+    const out: Anchor[] = [];
+    for (const p of el.querySelectorAll<HTMLElement>('p[data-pi]')) {
+      const r = firstGlyphRect(p);
+      if (r) out.push({ pi: Number(p.dataset.pi), pos: r.top - top + el.scrollTop });
+    }
+    return out;
+  }
+
+  /** Leading paragraph (+ fraction into it) at a position along an axis. Robust to non-monotonic
+   *  anchor positions: sorts and scans fully rather than breaking at the first one past `at`. */
+  function leadAt(anchors: Anchor[], at: number, end: number): { paragraphIndex: number; fraction: number } {
+    if (anchors.length === 0) return { paragraphIndex: 0, fraction: 0 };
+    const sorted = [...anchors].sort((a, b) => a.pos - b.pos);
+    let lead = sorted[0];
+    for (const a of sorted) if (a.pos <= at + 1) lead = a;
+    let nextPos = end;
+    for (const a of sorted) if (a.pos > lead.pos + 1) { nextPos = a.pos; break; }
+    const seg = nextPos - lead.pos;
+    return { paragraphIndex: lead.pi, fraction: seg > 0 ? clamp01((at - lead.pos) / seg) : 0 };
+  }
+
+  /** Axis position of a paragraph anchor (+ fraction toward the next paragraph), for restoring. */
+  function axisOf(anchors: Anchor[], pi: number, fraction: number, end: number): number {
+    const a = anchors.find((x) => x.pi === pi);
+    if (!a) return 0;
+    let nextPos = end;
+    for (const s of [...anchors].sort((x, y) => x.pos - y.pos)) if (s.pos > a.pos + 1) { nextPos = s.pos; break; }
+    return a.pos + clamp01(fraction) * (nextPos - a.pos);
+  }
+
+  const translate = (() => {
+    if (!paged) return undefined;
+    if (vertical) return `translateX(${page * metrics.viewSize - (metrics.total - metrics.viewSize)}px)`;
+    return `translateX(${-page * metrics.stride}px)`;
+  })();
+
+  // ---- Position reporting (paragraph-anchored, exact round-trip) -------------
+
+  const reportProgress = useCallback((immediate = false) => {
+    if (paged) {
+      const g = geom();
+      if (!g) return;
+      const lead = leadAt(pagedAnchors(g), page * g.stride, g.total);
+      lastPos.current = { pi: lead.paragraphIndex, frac: lead.fraction };
+      props.onProgress({ ...lead, chapterFraction: g.count > 1 ? page / (g.count - 1) : 0 }, immediate);
+    } else {
+      const el = scrollRef.current;
+      if (!el) return;
+      const lead = leadAt(scrollAnchors(el), el.scrollTop, el.scrollHeight);
+      lastPos.current = { pi: lead.paragraphIndex, frac: lead.fraction };
+      const max = el.scrollHeight - el.clientHeight;
+      props.onProgress({ ...lead, chapterFraction: max > 0 ? el.scrollTop / max : 0 }, immediate);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.paragraphs, props.loadingChapter]);
+  }, [paged, vertical, page]);
+
+  /** Move the view to a restore target. Never persists — restoring must not overwrite the saved spot. */
+  const applyRestore = useCallback((t: RestoreTarget) => {
+    if (t.kind === 'anchor') lastPos.current = { pi: t.paragraphIndex, frac: t.fraction };
+    else if (t.kind === 'top') lastPos.current = { pi: 0, frac: 0 };
+    setInstant(true); // jump, don't slide, to a restored position
+    if (paged) {
+      const g = geom();
+      if (!g) return;
+      let target = 0;
+      if (t.kind === 'end') target = g.count - 1;
+      else if (t.kind === 'anchor') target = Math.round(axisOf(pagedAnchors(g), t.paragraphIndex, t.fraction, g.total) / g.stride);
+      setPage(Math.min(Math.max(0, target), g.count - 1));
+    } else {
+      const el = scrollRef.current;
+      if (!el) return;
+      ignoreScroll.current = true;
+      if (t.kind === 'end') el.scrollTop = el.scrollHeight;
+      else if (t.kind === 'top') el.scrollTop = 0;
+      else el.scrollTop = axisOf(scrollAnchors(el), t.paragraphIndex, t.fraction, el.scrollHeight);
+      requestAnimationFrame(() => (ignoreScroll.current = false));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paged, vertical]);
+
+  const measure = useCallback(() => {
+    const view = viewRef.current;
+    const pages = pagesRef.current;
+    if (!paged || !view || !pages) return;
+    const W = Math.max(1, view.clientWidth);
+    if (vertical) {
+      pages.style.columnWidth = '';
+      pages.style.columnGap = '';
+    } else {
+      pages.style.columnWidth = `${W}px`;
+      pages.style.columnGap = `${PAGE_GAP}px`;
+    }
+    const total = pages.scrollWidth;
+    const stride = vertical ? W : W + PAGE_GAP;
+    const count = vertical ? Math.max(1, Math.ceil(total / W)) : Math.max(1, Math.round((total + PAGE_GAP) / stride));
+    setInstant(true); // re-layout shouldn't animate the page jump
+    setMetrics({ total, viewSize: W, stride });
+    setPageCount(count);
+    setPage((p) => Math.min(p, count - 1));
+  }, [paged, vertical]);
+
+  // Re-enable the slide one frame after an instant jump has painted (transform unchanged → no animation).
+  useEffect(() => {
+    if (!instant) return;
+    const id = requestAnimationFrame(() => setInstant(false));
+    return () => cancelAnimationFrame(id);
+  }, [instant]);
+
+  // Measure on layout-affecting changes (and when a chapter's content arrives).
+  useLayoutEffect(() => {
+    if (!props.loadingChapter) measure();
+  }, [measure, fontScale, width, furigana, props.paragraphs, props.loadingChapter]);
+
+  // Land on the saved/target position once a chapter's paragraphs are on screen (no persist).
+  useLayoutEffect(() => {
+    if (!props.loadingChapter) applyRestore(props.restore);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.paragraphs, props.restore]);
+
+  // Re-anchor to the current reading spot when the reading MODE actually changes under the reader.
+  // Compares against the previous mode (StrictMode-proof) so it never fires on mount/remount, which
+  // would otherwise clobber a fresh restore. Preserves the fraction so single-paragraph chapters
+  // don't snap to the start.
+  const prevMode = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const key = `${orientation}|${flow}|${fontScale}|${width}`;
+    if (prevMode.current === null || prevMode.current === key) { prevMode.current = key; return; }
+    prevMode.current = key;
+    if (!props.loadingChapter) applyRestore({ kind: 'anchor', paragraphIndex: lastPos.current.pi, fraction: lastPos.current.frac });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orientation, flow, fontScale, width, props.loadingChapter]);
+
+  // Persist only after a user-initiated move (page turn or chapter change) settles.
+  useEffect(() => {
+    if (props.loadingChapter || !pendingSave.current) return;
+    pendingSave.current = false;
+    const id = requestAnimationFrame(() => reportProgress(true));
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, props.chapterIndex, props.loadingChapter]);
+
+  // Re-measure on container resize.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!paged || !view) return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(view);
+    return () => ro.disconnect();
+  }, [paged, measure]);
+
+  // ---- Navigation -----------------------------------------------------------
+
+  const nextPage = useCallback(() => {
+    pendingSave.current = true;
+    if (page < pageCount - 1) setPage(page + 1);
+    else props.onNextChapter();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, pageCount]);
+  const prevPage = useCallback(() => {
+    pendingSave.current = true;
+    if (page > 0) setPage(page - 1);
+    else props.onPrevChapterEnd();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+  const goPrevChapter = () => { pendingSave.current = true; props.onPrevChapter(); };
+  const goNextChapter = () => { pendingSave.current = true; props.onNextChapter(); };
+
+  // Arrow keys (vertical RTL flips left/right).
+  useEffect(() => {
+    if (!paged) return;
+    function onKey(e: KeyboardEvent) {
+      const fwd = vertical ? ['ArrowLeft', 'ArrowDown'] : ['ArrowRight', 'ArrowDown'];
+      const back = vertical ? ['ArrowRight', 'ArrowUp'] : ['ArrowLeft', 'ArrowUp'];
+      if (fwd.includes(e.key)) { e.preventDefault(); nextPage(); }
+      else if (back.includes(e.key)) { e.preventDefault(); prevPage(); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paged, vertical, nextPage, prevPage]);
+
+  function onTouchEnd(e: React.TouchEvent) {
+    const sx = touchX.current;
+    touchX.current = null;
+    if (sx == null) return;
+    const dx = e.changedTouches[0].clientX - sx;
+    if (Math.abs(dx) < SWIPE_MIN) return;
+    if (dx < 0) nextPage();
+    else prevPage();
+  }
 
   function handleTap(token: FuriToken, key: number, anchor: DOMRect) {
     setActiveKey(key);
@@ -91,25 +367,27 @@ export function Reader(props: Props) {
   }
 
   function onScroll() {
-    const el = scrollRef.current;
-    if (!el) return;
-    const max = el.scrollHeight - el.clientHeight;
-    const frac = max > 0 ? el.scrollTop / max : 0;
-    setScrollFrac(frac);
-    props.onScrollFraction(frac);
+    if (paged) return;
+    if (ignoreScroll.current) return;
+    reportProgress(false);
   }
 
-  const renderParagraphs = () =>
+  const pct = props.chapterCount
+    ? Math.round(((props.chapterIndex + (paged ? (pageCount > 1 ? page / (pageCount - 1) : 0) : 0)) / props.chapterCount) * 100)
+    : 0;
+
+  const paras = () =>
     props.paragraphs.map((tokens, pi) => (
-      <TokenizedText
-        key={pi}
-        tokens={tokens}
-        density={furigana}
-        advAvailable={advAvailable}
-        activeKey={activeKey}
-        indexOffset={offsets[pi]}
-        onWordTap={handleTap}
-      />
+      <p key={pi} data-pi={pi}>
+        <TokenizedText
+          tokens={tokens}
+          density={furigana}
+          advAvailable={advAvailable}
+          activeKey={activeKey}
+          indexOffset={offsets[pi]}
+          onWordTap={handleTap}
+        />
+      </p>
     ));
 
   return (
@@ -120,11 +398,11 @@ export function Reader(props: Props) {
         </span>
         <span style={{ width: 1, height: 22, background: 'var(--rule)' }} />
         <span className="rtitle" lang="ja">{props.title}</span>
-        <button className="icon-btn" title="Previous chapter" onClick={props.onPrevChapter} disabled={props.chapterIndex <= 0}>
+        <button className="icon-btn" title="Previous chapter" onClick={goPrevChapter} disabled={props.chapterIndex <= 0}>
           <Icon.chevL s={16} />
         </button>
         <Chip>{props.chapterIndex + 1} / {props.chapterCount || '…'}</Chip>
-        <button className="icon-btn" title="Next chapter" onClick={props.onNextChapter} disabled={props.chapterIndex >= props.chapterCount - 1}>
+        <button className="icon-btn" title="Next chapter" onClick={goNextChapter} disabled={props.chapterIndex >= props.chapterCount - 1}>
           <Icon.chevR s={16} />
         </button>
         <span className="spacer" />
@@ -132,7 +410,7 @@ export function Reader(props: Props) {
           <button className="icon-btn" title="Text size" onClick={() => setFontScale(NEXT_SCALE[fontScale])}>
             <span style={{ fontFamily: 'var(--serif)', fontSize: fontScale === 's' ? 14 : fontScale === 'm' ? 17 : 20, fontWeight: 600 }}>A</span>
           </button>
-          <button className={'icon-btn' + (vertical ? ' on' : '')} title="Vertical / horizontal" onClick={() => setVertical((v) => !v)}>
+          <button className={'icon-btn' + (vertical ? ' on' : '')} title="Vertical / horizontal" onClick={() => setOrientation(vertical ? 'horizontal' : 'vertical')}>
             {vertical ? <Icon.vertical s={20} /> : <Icon.horizontal s={20} />}
           </button>
           <button className={'icon-btn' + (railOpen ? ' on' : '')} title="Study panel" onClick={() => setRailOpen((o) => !o)}>
@@ -144,20 +422,31 @@ export function Reader(props: Props) {
       <div className="rd-stage">
         {props.loadingChapter ? (
           <div className="rd-scroll"><div className="rd-col"><p style={{ color: 'var(--ink-faint)' }}>Loading chapter…</p></div></div>
-        ) : vertical ? (
-          <div className="rd-vert">
-            <div className={'vcol fs-' + fontScale} lang="ja">
-              {props.paragraphs.map((tokens, pi) => (
-                <span key={pi}>
-                  <TokenizedText tokens={tokens} density={furigana} advAvailable={advAvailable} activeKey={activeKey} indexOffset={offsets[pi]} onWordTap={handleTap} />
-                  {pi < props.paragraphs.length - 1 ? '　　' : ''}
-                </span>
-              ))}
+        ) : paged ? (
+          <div
+            className={'rd-page-view' + (vertical ? ' vertical' : '')}
+            ref={viewRef}
+            onTouchStart={(e) => (touchX.current = e.touches[0].clientX)}
+            onTouchEnd={onTouchEnd}
+          >
+            <div className={`rd-pages fs-${fontScale} w-${width}`} ref={pagesRef} lang="ja" style={{ transform: translate, transition: instant ? 'none' : 'transform .26s ease' }}>
+              {props.paragraphs.length === 0 ? <p style={{ color: 'var(--ink-faint)' }}>(No text on this page.)</p> : paras()}
             </div>
+            {pageCount > 1 && (
+              <>
+                <button className="rd-page-nav left" aria-label="Page left" onClick={vertical ? nextPage : prevPage}>
+                  <Icon.chevL s={22} />
+                </button>
+                <button className="rd-page-nav right" aria-label="Page right" onClick={vertical ? prevPage : nextPage}>
+                  <Icon.chevR s={22} />
+                </button>
+              </>
+            )}
+            <div className="rd-page-count">{page + 1} / {pageCount}</div>
           </div>
         ) : (
           <div className="rd-scroll" ref={scrollRef} onScroll={onScroll}>
-            <div className="rd-col">
+            <div className={`rd-col w-${width}`}>
               <Kicker accent style={{ display: 'block', textAlign: 'center', marginBottom: 18 }}>
                 Chapter {props.chapterIndex + 1} · {pct}%
               </Kicker>
@@ -165,7 +454,7 @@ export function Reader(props: Props) {
                 {props.paragraphs.length === 0 ? (
                   <p style={{ color: 'var(--ink-faint)' }}>(No text on this page.)</p>
                 ) : (
-                  renderParagraphs().map((node, pi) => <p key={pi}>{node}</p>)
+                  paras()
                 )}
               </div>
             </div>
@@ -232,8 +521,26 @@ export function Reader(props: Props) {
               <div className="rail-sec">
                 <div className="rs-h"><Kicker>Reading orientation</Kicker></div>
                 <div className="density-seg">
-                  <div className={'d' + (!vertical ? ' on' : '')} onClick={() => setVertical(false)}>Horizontal</div>
-                  <div className={'d' + (vertical ? ' on' : '')} onClick={() => setVertical(true)} lang="ja">縦書き</div>
+                  <div className={'d' + (!vertical ? ' on' : '')} onClick={() => setOrientation('horizontal')}>Horizontal</div>
+                  <div className={'d' + (vertical ? ' on' : '')} onClick={() => setOrientation('vertical')} lang="ja">縦書き</div>
+                </div>
+              </div>
+
+              {!vertical && (
+                <div className="rail-sec">
+                  <div className="rs-h"><Kicker>Page flow</Kicker></div>
+                  <div className="density-seg">
+                    <div className={'d' + (flow === 'paged' ? ' on' : '')} onClick={() => setFlow('paged')}>Paged</div>
+                    <div className={'d' + (flow === 'scroll' ? ' on' : '')} onClick={() => setFlow('scroll')}>Scroll</div>
+                  </div>
+                </div>
+              )}
+
+              <div className="rail-sec">
+                <div className="rs-h"><Kicker>Text width</Kicker></div>
+                <div className="density-seg">
+                  <div className={'d' + (width === 'normal' ? ' on' : '')} onClick={() => setWidth('normal')}>Normal</div>
+                  <div className={'d' + (width === 'wide' ? ' on' : '')} onClick={() => setWidth('wide')}>Wide</div>
                 </div>
               </div>
             </div>

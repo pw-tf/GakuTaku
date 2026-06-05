@@ -38,6 +38,8 @@ export interface EpubBook {
   title: string;
   creator: string;
   chapterCount: number;
+  /** OPF spine page-progression-direction — 'rtl' for vertically-set Japanese books. */
+  direction: 'ltr' | 'rtl';
   /** Load and extract a chapter's paragraphs (lazy). */
   loadChapter: (index: number) => Promise<string[]>;
   destroy: () => void;
@@ -50,6 +52,9 @@ export async function openEpub(data: ArrayBuffer): Promise<EpubBook> {
   await book.ready;
 
   const meta = await book.loaded.metadata;
+  // epub.js parses <spine page-progression-direction> into metadata.direction.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const direction: 'ltr' | 'rtl' = (meta as any).direction === 'rtl' ? 'rtl' : 'ltr';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sections: any[] = (book.spine as any).spineItems ?? [];
 
@@ -57,6 +62,7 @@ export async function openEpub(data: ArrayBuffer): Promise<EpubBook> {
     title: meta.title || 'Untitled',
     creator: meta.creator || '',
     chapterCount: sections.length,
+    direction,
     async loadChapter(index: number) {
       const section = sections[index];
       if (!section) return [];

@@ -51,7 +51,8 @@ const COI_HEADERS = {
 
 // https://vite.dev/config/
 export default defineConfig({
-  server: { headers: COI_HEADERS },
+  // Ignore the gitignored sample-ePUB handoff folder: locked .epub files there crash the file watcher.
+  server: { headers: COI_HEADERS, watch: { ignored: ['**/design_handoff_gakutaku/**'] } },
   preview: { headers: COI_HEADERS },
   plugins: [
     serveRawGzipDict(),

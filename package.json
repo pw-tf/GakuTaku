@@ -23,8 +23,10 @@
     "dexie": "^4.4.3",
     "epubjs": "^0.3.93",
     "fsrs-browser": "^5.2.0",
+    "jszip": "^3.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sql.js": "^1.14.1",
     "ts-fsrs": "^5.4.1",
     "zustand": "^5.0.14"
   },
@@ -34,6 +36,7 @@
     "@types/node": "^20.19.41",
     "@types/react": "^18.3.30",
     "@types/react-dom": "^18.3.7",
+    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react-swc": "^4.3.1",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.15",

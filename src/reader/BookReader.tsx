@@ -44,17 +44,19 @@ export function BookReader({ doc, mined, onMine, onReviewMined, onClose }: Props
   return (
     <Reader
       title={book.title}
+      direction={book.direction}
       chapterIndex={book.chapterIndex}
       chapterCount={book.chapterCount}
       paragraphs={book.paragraphs}
       loadingChapter={book.loadingChapter}
-      restoreScroll={book.restoreScroll}
+      restore={book.restore}
       mined={mined}
       onMine={onMine}
       onReviewMined={onReviewMined}
       onPrevChapter={book.prevChapter}
       onNextChapter={book.nextChapter}
-      onScrollFraction={book.saveScroll}
+      onPrevChapterEnd={book.prevChapterEnd}
+      onProgress={book.saveProgress}
       onClose={onClose}
     />
   );

@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
+import { useAuth } from '../auth/AuthProvider';
+import { CardTemplate } from './CardTemplate';
 import { useReview, type ReviewSource } from './useReview';
 
 interface Props {
@@ -25,6 +27,7 @@ function sourceLabel(source: ReviewSource): string {
  *  appends a review_log; the card's state is derived from its logs (§3.3). Cards in a (re)learning
  *  step reappear within the session until they graduate. Interval previews come straight from ts-fsrs. */
 export function ReviewScreen({ source, onExit }: Props) {
+  const { session } = useAuth();
   const review = useReview(source);
   const { current, shown, gradePreviews, counts } = review;
 
@@ -96,6 +99,7 @@ export function ReviewScreen({ source, onExit }: Props) {
   }
 
   const f = current.fields;
+  const userId = session?.user.id ?? '';
 
   return (
     <div className="review-wrap">
@@ -111,20 +115,27 @@ export function ReviewScreen({ source, onExit }: Props) {
       </div>
 
       <div className="rv-stage" onClick={() => !shown && review.reveal()}>
-        <div className="card-face">
-          <Kicker accent style={{ display: 'block' }}>recall the reading &amp; meaning</Kicker>
-          <div className="cf-term" style={{ marginTop: 24 }} lang="ja">{f.Term}</div>
-          {shown ? (
-            <>
-              <div className="cf-reading" lang="ja">{f.Reading}</div>
-              <div className="cf-sep" />
-              {f.Pos && <div className="cf-pos">{f.Pos}</div>}
-              <div className="cf-gloss">{f.Meaning}</div>
-            </>
-          ) : (
-            <div className="show-hint">Tap to reveal · space</div>
-          )}
-        </div>
+        {current.generic ? (
+          <div className="card-face">
+            <CardTemplate front={current.generic.front} back={current.generic.back} fields={current.generic.fields} shown={shown} userId={userId} />
+            {!shown && <div className="show-hint">Tap to reveal · space</div>}
+          </div>
+        ) : (
+          <div className="card-face">
+            <Kicker accent style={{ display: 'block' }}>recall the reading &amp; meaning</Kicker>
+            <div className="cf-term" style={{ marginTop: 24 }} lang="ja">{f.Term}</div>
+            {shown ? (
+              <>
+                <div className="cf-reading" lang="ja">{f.Reading}</div>
+                <div className="cf-sep" />
+                {f.Pos && <div className="cf-pos">{f.Pos}</div>}
+                <div className="cf-gloss">{f.Meaning}</div>
+              </>
+            ) : (
+              <div className="show-hint">Tap to reveal · space</div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="rv-foot">

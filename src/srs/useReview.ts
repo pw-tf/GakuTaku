@@ -6,6 +6,7 @@ import {
   State,
   deckConfig,
   deriveCard,
+  parseJsonObject,
   previews,
   scheduler,
   toCardRow,
@@ -14,7 +15,33 @@ import {
   type Grade,
   type GradePreview,
 } from './fsrs';
-import { parseNoteFields, type NoteFields } from './mining';
+import { NOTE_TYPE_NAME, parseNoteFields, type NoteFields } from './mining';
+
+/** An imported (non-vocab) card: raw fields + the chosen template's front/back, for generic render. */
+export interface GenericCard {
+  fields: Record<string, string>;
+  front: string;
+  back: string;
+}
+
+function parseStrMap(text: string | null | undefined): Record<string, string> {
+  const obj = parseJsonObject(text);
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj)) out[k] = typeof v === 'string' ? v : String(v ?? '');
+  return out;
+}
+
+function parseTemplates(text: string | null | undefined): { front: string; back: string }[] {
+  if (!text) return [];
+  try {
+    let v: unknown = JSON.parse(text);
+    if (typeof v === 'string') v = JSON.parse(v);
+    if (!Array.isArray(v)) return [];
+    return v.map((t) => ({ front: String((t as { front?: unknown })?.front ?? ''), back: String((t as { back?: unknown })?.back ?? '') }));
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Review session controller (build plan M4 + Anki-style relearning). Assembles a queue from a
@@ -34,6 +61,8 @@ const DAY_MS = 86_400_000;
 interface SessionCard {
   cardId: string;
   fields: NoteFields;
+  /** Present for imported note types; null for the built-in vocab card. */
+  generic: GenericCard | null;
   fsrsCard: Card;
   cfg: DeckConfig;
   /** When this card should next appear, in ms. Past = ready now. */
@@ -42,10 +71,13 @@ interface SessionCard {
 
 interface CandidateRow {
   id: string;
+  tmpl: number;
   fields: string;
   created: string;
   deck_id: string | null;
   fsrs_params: string | null;
+  nt_name: string | null;
+  nt_templates: string | null;
 }
 
 function startOfTodayISO(): string {
@@ -54,8 +86,11 @@ function startOfTodayISO(): string {
   return d.toISOString();
 }
 
-const SELECT_CARD = `SELECT c.id, n.fields AS fields, n.created_at AS created, n.deck_id, d.fsrs_params
-  FROM cards c JOIN notes n ON n.id = c.note_id LEFT JOIN decks d ON d.id = n.deck_id`;
+const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, n.fields AS fields, n.created_at AS created, n.deck_id,
+    d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates
+  FROM cards c JOIN notes n ON n.id = c.note_id
+  LEFT JOIN decks d ON d.id = n.deck_id
+  LEFT JOIN note_types nt ON nt.id = n.note_type_id`;
 
 /** Build the ordered list of candidate cards, honouring per-deck new-card limits. */
 async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
@@ -123,7 +158,7 @@ export interface ReviewState {
   reviewedCount: number;
   counts: ReviewCounts;
   shown: boolean;
-  current: { cardId: string; fields: NoteFields } | null;
+  current: { cardId: string; fields: NoteFields; generic: GenericCard | null } | null;
   gradePreviews: GradePreview[];
   reveal: () => void;
   rate: (grade: Grade) => void;
@@ -166,7 +201,14 @@ export function useReview(source: ReviewSource): ReviewState {
         const fsrsCard = deriveCard(logsByCard.get(r.id) ?? [], r.created, cfg);
         // Reviews keep their (past) due so the most overdue come first; new cards queue at "now".
         const dueAt = fsrsCard.reps === 0 ? now : fsrsCard.due.getTime();
-        return { cardId: r.id, fields: parseNoteFields(r.fields), fsrsCard, cfg, dueAt };
+        // Imported (non-vocab) note types render via the generic Anki template renderer.
+        let generic: GenericCard | null = null;
+        if (r.nt_name && r.nt_name !== NOTE_TYPE_NAME) {
+          const tmpls = parseTemplates(r.nt_templates);
+          const t = tmpls[r.tmpl] ?? tmpls[0];
+          if (t) generic = { fields: parseStrMap(r.fields), front: t.front, back: t.back };
+        }
+        return { cardId: r.id, fields: parseNoteFields(r.fields), generic, fsrsCard, cfg, dueAt };
       });
       items.sort(bySoonest);
       setQueue(items);
@@ -251,7 +293,7 @@ export function useReview(source: ReviewSource): ReviewState {
     reviewedCount,
     counts,
     shown,
-    current: current ? { cardId: current.cardId, fields: current.fields } : null,
+    current: current ? { cardId: current.cardId, fields: current.fields, generic: current.generic } : null,
     gradePreviews,
     reveal,
     rate,

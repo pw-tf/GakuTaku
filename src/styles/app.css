@@ -109,7 +109,8 @@ body { overflow: hidden; }
 
 .rd-stage { flex:1; display:flex; min-height:0; position: relative; }
 .rd-scroll { flex:1; overflow-y:auto; }
-.rd-col { max-width: 620px; margin: 0 auto; padding: 56px 32px 120px; }
+.rd-col { --measure: 620px; max-width: var(--measure); margin: 0 auto; padding: 56px 32px 120px; }
+.rd-col.w-wide { --measure: 860px; }
 .rd-col .ch-kick { text-align:center; margin-bottom: 20px; }
 .rd-col .ch-no { font-family: var(--serif); font-weight: 500; font-size: 30px; text-align:center; margin-bottom: 34px; color: var(--ink); }
 .rd-body { font-family: var(--jp-mincho); line-height: 2.15; color: var(--ink); }
@@ -122,14 +123,33 @@ body { overflow: hidden; }
 .rd-body.fs-m { font-size: 21px; }
 .rd-body.fs-l { font-size: 25px; }
 
-/* Tategaki: scroll container is RTL so reading starts at the right edge and
-   advances leftward. `direction:rtl` only flips flex placement + scroll origin;
-   the column itself is forced back to ltr so inline text still flows top→bottom. */
-.rd-vert { flex:1; overflow-x:auto; overflow-y:hidden; padding: 40px; display:flex; justify-content:flex-start; direction: rtl; }
-.rd-vert .vcol { writing-mode: vertical-rl; direction: ltr; font-family: var(--jp-mincho); line-height: 2.2; color: var(--ink); height: 100%; max-height: 100%; column-gap: 2.4em; }
-.rd-vert .vcol.fs-s { font-size: 18px; } .rd-vert .vcol.fs-m { font-size: 21px; } .rd-vert .vcol.fs-l { font-size: 25px; }
-.rd-vert .ch-no { font-weight: 600; }
-.rd-vert ruby rt { text-orientation: upright; }
+/* Paged reader: CSS multi-column laid over the tokenized React render, advanced by transform.
+   columnWidth/columnGap are set imperatively (= viewport width) so one column == one page. */
+.rd-page-view { flex:1; position:relative; overflow:hidden; }
+.rd-pages { --measure: 620px; height:100%; box-sizing:border-box; padding: 52px 0 56px; font-family: var(--jp-mincho); line-height: 2.15; color: var(--ink); column-fill: auto; will-change: transform; }
+.rd-pages.w-wide { --measure: 860px; }
+.rd-pages p { margin: 0 0 1.5em; padding-inline: clamp(28px, calc((100% - var(--measure)) / 2), 22%); }
+.rd-pages.fs-s { font-size: 18px; }
+.rd-pages.fs-m { font-size: 21px; }
+.rd-pages.fs-l { font-size: 25px; }
+
+/* Tategaki paging: lines run top→bottom, columns (pages) advance right→left. */
+.rd-page-view.vertical .rd-pages { width: max-content; padding: 7vh 56px; writing-mode: vertical-rl; line-height: 2.2; }
+.rd-page-view.vertical .rd-pages p { margin: 0; padding: 0; }
+.rd-page-view.vertical .rd-pages ruby rt { text-orientation: upright; }
+
+.rd-page-nav { position:absolute; top:50%; transform: translateY(-50%); width: 38px; height: 64px; display:flex; align-items:center; justify-content:center; border:none; border-radius: var(--radius); background: color-mix(in oklch, var(--paper) 65%, transparent); color: var(--ink-soft); cursor:pointer; z-index: 3; opacity: .5; transition: opacity .15s, background .15s, color .15s; }
+.rd-page-nav:hover { opacity: 1; background: var(--paper-raised); color: var(--ink); }
+.rd-page-nav.left { left: 4px; }
+.rd-page-nav.right { right: 4px; }
+.rd-page-count { position:absolute; bottom: 11px; left:50%; transform: translateX(-50%); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; color: var(--ink-faint); z-index: 3; }
+
+/* Imported Anki card (generic template render). Kept readable + contained within the review face. */
+.card-html { font-family: var(--jp-mincho); font-size: 21px; line-height: 1.9; color: var(--ink); text-align: center; max-width: 100%; }
+.card-html img { max-width: 100%; height: auto; border-radius: var(--radius); margin: 10px auto; display: block; }
+.card-html hr { border: none; border-top: 1px solid var(--rule); margin: 18px 0; }
+.card-html .anki-audio { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 999px; background: color-mix(in oklch, var(--accent) 14%, transparent); color: var(--accent); cursor: pointer; font-size: 15px; margin: 6px; user-select: none; }
+.card-html .anki-audio:hover { background: color-mix(in oklch, var(--accent) 22%, transparent); }
 
 .rd-progress { position:absolute; left:0; right:0; bottom:0; height:3px; background: var(--rule); z-index: 4; }
 .rd-progress i { display:block; height:100%; background: var(--accent); transition: width .3s; }

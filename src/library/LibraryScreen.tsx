@@ -26,6 +26,7 @@ export function LibraryScreen({ onOpenBook, due, streak }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
 
   const pctById = useMemo(() => {
     const m = new Map<string, number>();
@@ -44,12 +45,28 @@ export function LibraryScreen({ onOpenBook, due, streak }: Props) {
     if (!file || !session) return;
     setUploading(true);
     setError(null);
+    setImportMsg(null);
     try {
-      // Dynamic import keeps the heavy ePUB stack out of the initial bundle.
-      const { uploadEpub } = await import('../reader/uploadEpub');
-      await uploadEpub(file, session.user.id);
+      // Dynamic imports keep the heavy ePUB / Anki-import stacks out of the initial bundle.
+      if (/\.apkg$/i.test(file.name)) {
+        const { importApkgFile } = await import('../import');
+        setImportMsg('Reading deck…');
+        const s = await importApkgFile(file, session.user.id, (p) => {
+          if (p.phase === 'mapping') setImportMsg('Reading collection…');
+          else if (p.phase === 'writing') setImportMsg(`Importing cards… ${p.done ?? 0}/${p.total ?? 0}`);
+          else if (p.phase === 'media') setImportMsg(`Uploading media… ${p.done ?? 0}/${p.total ?? 0}`);
+        });
+        const bits = [`${s.decks} deck${s.decks === 1 ? '' : 's'}`, `${s.cards} cards`];
+        if (s.reviews) bits.push(`${s.reviews.toLocaleString()} reviews`);
+        if (s.mediaFiles) bits.push(`${s.mediaFiles} media`);
+        setImportMsg(`Imported ${bits.join(', ')}.`);
+      } else {
+        const { uploadEpub } = await import('../reader/uploadEpub');
+        await uploadEpub(file, session.user.id);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed.');
+      setError(err instanceof Error ? err.message : 'Import failed.');
+      setImportMsg(null);
     } finally {
       setUploading(false);
       e.target.value = '';
@@ -58,7 +75,7 @@ export function LibraryScreen({ onOpenBook, due, streak }: Props) {
 
   return (
     <div className="page">
-      <input ref={fileRef} type="file" accept=".epub,application/epub+zip" hidden onChange={onFile} />
+      <input ref={fileRef} type="file" accept=".epub,application/epub+zip,.apkg" hidden onChange={onFile} />
 
       <div className="lib-hero">
         <div className="cont-card" onClick={() => cont && onOpenBook(cont)} style={{ cursor: cont ? 'pointer' : 'default' }}>
@@ -93,13 +110,14 @@ export function LibraryScreen({ onOpenBook, due, streak }: Props) {
       <div className="sec-bar">
         <h2>Your library</h2>
         <span className="count">{docs.length} {docs.length === 1 ? 'book' : 'books'}</span>
-        <span className="more">
+        <span className="more" style={{ display: 'flex', gap: 8 }}>
           <Btn size="sm" disabled={uploading} onClick={() => fileRef.current?.click()}>
-            <Icon.upload s={15} /> {uploading ? 'Uploading…' : 'Upload ePUB'}
+            <Icon.upload s={15} /> {uploading ? 'Working…' : 'Upload ePUB / Anki deck'}
           </Btn>
         </span>
       </div>
       {error && <p style={{ color: 'var(--rate-again)', fontSize: 13, marginBottom: 12 }}>{error}</p>}
+      {importMsg && <p style={{ color: 'var(--ink-soft)', fontSize: 13, marginBottom: 12 }}>{importMsg}</p>}
 
       {docs.length === 0 ? (
         <p style={{ color: 'var(--ink-faint)' }}>No books yet. Upload a Japanese ePUB to start reading.</p>

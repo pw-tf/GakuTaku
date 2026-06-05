@@ -3,6 +3,12 @@ import { persist } from 'zustand/middleware';
 
 export type FuriganaDensity = 'all' | 'n3' | 'off';
 
+/** Reader layout preferences (persisted, so a chosen layout survives across sessions). */
+export type ReaderOrientation = 'horizontal' | 'vertical';
+export type ReaderFlow = 'paged' | 'scroll';
+export type ReaderFontScale = 's' | 'm' | 'l';
+export type ReaderWidth = 'normal' | 'wide';
+
 export const ACCENTS = ['#b8492f', '#3f5bb0', '#2f6b4f', '#7d4a86'];
 
 interface PrefsState {
@@ -11,10 +17,19 @@ interface PrefsState {
   furigana: FuriganaDensity;
   /** Last deck a word was mined into — used for one-tap "Add to deck". */
   lastDeckId: string | null;
+  /** null = not yet chosen, so a book's own direction can seed the first default. */
+  readerOrientation: ReaderOrientation | null;
+  readerFlow: ReaderFlow;
+  readerFontScale: ReaderFontScale;
+  readerWidth: ReaderWidth;
   setAccent: (a: string) => void;
   setDark: (d: boolean) => void;
   setFurigana: (f: FuriganaDensity) => void;
   setLastDeckId: (id: string | null) => void;
+  setReaderOrientation: (o: ReaderOrientation) => void;
+  setReaderFlow: (f: ReaderFlow) => void;
+  setReaderFontScale: (s: ReaderFontScale) => void;
+  setReaderWidth: (w: ReaderWidth) => void;
 }
 
 /**
@@ -29,10 +44,18 @@ export const usePrefs = create<PrefsState>()(
       dark: false,
       furigana: 'all',
       lastDeckId: null,
+      readerOrientation: null,
+      readerFlow: 'paged',
+      readerFontScale: 'm',
+      readerWidth: 'normal',
       setAccent: (accent) => set({ accent }),
       setDark: (dark) => set({ dark }),
       setFurigana: (furigana) => set({ furigana }),
       setLastDeckId: (lastDeckId) => set({ lastDeckId }),
+      setReaderOrientation: (readerOrientation) => set({ readerOrientation }),
+      setReaderFlow: (readerFlow) => set({ readerFlow }),
+      setReaderFontScale: (readerFontScale) => set({ readerFontScale }),
+      setReaderWidth: (readerWidth) => set({ readerWidth }),
     }),
     { name: 'gakutaku-prefs' },
   ),

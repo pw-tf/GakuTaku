@@ -8,7 +8,9 @@ import { parseJsonObject, serializeDeckConfig } from './fsrs';
  */
 
 export const DEFAULT_DECK_NAME = 'Reading · Mined';
-const NOTE_TYPE_NAME = 'Japanese vocab';
+/** The app's built-in vocab note type. Review renders this with its styled UI; other (imported)
+ *  note types render via the generic Anki template renderer. */
+export const NOTE_TYPE_NAME = 'Japanese vocab';
 const NOTE_FIELDS = ['Term', 'Reading', 'Meaning', 'Pos'];
 const CARD_TEMPLATES = [
   { name: 'Recognition', front: '{{Term}}', back: '{{Reading}}<br>{{Meaning}}' },
