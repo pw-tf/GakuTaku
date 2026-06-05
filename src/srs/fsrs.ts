@@ -96,6 +96,17 @@ export function serializeDeckConfig(cfg: DeckConfig): string {
 }
 
 /**
+ * Order logs deterministically: by `review_time`, with `id` breaking ties. Replaying in this order
+ * makes the event-sourced fold independent of insertion/sync order (§3.3).
+ */
+function orderLogs(logs: ReviewLogRecord[]): ReviewLogRecord[] {
+  return [...logs].sort((a, b) => {
+    const t = (a.review_time ?? '').localeCompare(b.review_time ?? '');
+    return t !== 0 ? t : (a.id ?? '').localeCompare(b.id ?? '');
+  });
+}
+
+/**
  * Derive a card's current FSRS state by replaying its append-only logs (§3.3). `createdAt` seeds
  * the empty card; each log advances it via `next()`. Logs are sorted by time (id breaks ties) so
  * the fold is deterministic regardless of insertion/sync order.
@@ -103,15 +114,46 @@ export function serializeDeckConfig(cfg: DeckConfig): string {
 export function deriveCard(logs: ReviewLogRecord[], createdAt: string, cfg?: DeckConfig): Card {
   const f = scheduler(cfg);
   let card = createEmptyCard(new Date(createdAt));
-  const ordered = [...logs].sort((a, b) => {
-    const t = (a.review_time ?? '').localeCompare(b.review_time ?? '');
-    return t !== 0 ? t : (a.id ?? '').localeCompare(b.id ?? '');
-  });
-  for (const log of ordered) {
+  for (const log of orderLogs(logs)) {
     if (log.rating == null || !log.review_time) continue;
     card = f.next(card, new Date(log.review_time), log.rating as Grade).card;
   }
   return card;
+}
+
+/** One replayed review, carrying the card's state *before* the rating was applied. */
+export interface ReplayStep {
+  /** FSRS state immediately before this review (New/Learning/Review/Relearning). */
+  prevState: State;
+  /** Reps accumulated before this review (0 = first-ever exposure of the card). */
+  prevReps: number;
+  rating: Grade;
+  reviewTime: Date;
+  elapsedMs: number;
+}
+
+/**
+ * Replay a card's logs and emit one {@link ReplayStep} per review, capturing the pre-review state.
+ * Raw `review_logs` rows don't store the state at review time; analytics (e.g. true-retention, which
+ * counts only reviews of already-graduated cards) needs it, so we recover it by folding through the
+ * same deterministic scheduler as {@link deriveCard}.
+ */
+export function replaySteps(logs: ReviewLogRecord[], createdAt: string, cfg?: DeckConfig): ReplayStep[] {
+  const f = scheduler(cfg);
+  let card = createEmptyCard(new Date(createdAt));
+  const steps: ReplayStep[] = [];
+  for (const log of orderLogs(logs)) {
+    if (log.rating == null || !log.review_time) continue;
+    steps.push({
+      prevState: card.state,
+      prevReps: card.reps,
+      rating: log.rating as Grade,
+      reviewTime: new Date(log.review_time),
+      elapsedMs: log.elapsed_ms ?? 0,
+    });
+    card = f.next(card, new Date(log.review_time), log.rating as Grade).card;
+  }
+  return steps;
 }
 
 export interface GradePreview {

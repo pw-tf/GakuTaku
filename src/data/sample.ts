@@ -4,8 +4,8 @@
  *   - Books / Feeds (Library)  → M3 (epub upload) / M7 (RSS)
  *   - Review queue + intervals → M4 (FSRS)
  *   - Decks sample + cards table → M4
- *   - Analytics (stats/forecast/heatmap/tod) → M5
- * Replace each with real queries as those milestones land.
+ * Analytics samples were removed once M5 wired the dashboard to real review_logs.
+ * Replace each remaining one with real queries as those milestones land.
  */
 
 export interface SampleEntry {
@@ -112,21 +112,5 @@ export const SAMPLE_INTERVALS = [
   { again: '<10m', hard: '1d', good: '4d', easy: '10d' },
 ];
 
-export const SAMPLE_FORECAST = [
-  { d: 'Tue', n: 18 }, { d: 'Wed', n: 31 }, { d: 'Thu', n: 12 }, { d: 'Fri', n: 27 },
-  { d: 'Sat', n: 9 }, { d: 'Sun', n: 22 }, { d: 'Mon', n: 15 },
-];
-
-export const SAMPLE_HEATMAP: number[] = (() => {
-  const seed = [2, 3, 0, 1, 4, 3, 2, 1, 0, 2, 3, 4, 2, 1, 1, 3, 2, 0, 1, 2, 4, 3, 2, 1, 0, 3, 2, 1, 4, 3, 2, 2, 1, 0, 2, 3];
-  const out: number[] = [];
-  for (let i = 0; i < 18 * 7; i++) out.push(seed[(i * 7 + (i % 5)) % seed.length]);
-  return out;
-})();
-
-export const SAMPLE_STATS = {
-  retention: 91, streak: 47, reviewsToday: 53, minutesToday: 22,
-  mature: 1840, young: 612, learning: 88, newCards: 220,
-};
-
-export const SAMPLE_TOD = [2, 1, 0, 0, 0, 0, 1, 4, 9, 7, 5, 6, 8, 6, 4, 5, 7, 9, 12, 15, 11, 8, 5, 3];
+// Analytics samples (SAMPLE_STATS / SAMPLE_FORECAST / SAMPLE_HEATMAP / SAMPLE_TOD) were removed in
+// M5 — the dashboard now computes those from real review_logs (see src/analytics/).

@@ -9,9 +9,9 @@ import { AnalyticsScreen } from '../analytics/AnalyticsScreen';
 import { ReviewScreen } from '../srs/ReviewScreen';
 import type { ReviewSource } from '../srs/useReview';
 import { useDueCount, type DeckStat } from '../srs/srsHooks';
+import { useStreak } from '../analytics/analyticsHooks';
 import type { MinedItem } from '../ui/LookupPopup';
 import type { DocumentRecord } from '../sync/AppSchema';
-import { SAMPLE_STATS } from '../data/sample';
 
 type View = 'library' | 'decks' | 'analytics' | 'credits';
 type Overlay = null | 'reader' | 'review';
@@ -44,6 +44,7 @@ export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const due = useDueCount();
+  const streak = useStreak();
 
   function openBook(b: DocumentRecord) {
     setBook(b);
@@ -123,7 +124,7 @@ export function AppShell() {
           <div className="searchbox"><Icon.search s={16} /><input placeholder="Search words, books…" /></div>
         </div>
         <div className="scroll">
-          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={due.total} streak={SAMPLE_STATS.streak} />}
+          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={due.total} streak={streak} />}
           {view === 'decks' && <DecksScreen onReviewDeck={(d: DeckStat) => startReview({ kind: 'deck', deckId: d.id, deckName: d.name })} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'credits' && <Attribution />}

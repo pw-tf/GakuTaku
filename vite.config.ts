@@ -38,8 +38,21 @@ function serveRawGzipDict(): PluginOption {
   };
 }
 
+/**
+ * Cross-origin isolation headers. The FSRS optimizer (fsrs-browser → wasm-bindgen-rayon) trains on
+ * a `SharedArrayBuffer` across worker threads, which the browser only exposes when the document is
+ * cross-origin isolated. We use `credentialless` (not `require-corp`) so the app's cross-origin
+ * subresources — Google Fonts and Supabase Storage — keep loading without per-resource CORP headers.
+ */
+const COI_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
+};
+
 // https://vite.dev/config/
 export default defineConfig({
+  server: { headers: COI_HEADERS },
+  preview: { headers: COI_HEADERS },
   plugins: [
     serveRawGzipDict(),
     wasm(),
@@ -110,8 +123,9 @@ export default defineConfig({
     }),
   ],
   optimizeDeps: {
-    // PowerSync web SDK must not be pre-bundled (it relies on workers + wasm).
-    exclude: ['@powersync/web', '@journeyapps/wa-sqlite'],
+    // These must not be pre-bundled (they rely on workers + wasm): PowerSync web SDK and the
+    // fsrs-browser optimizer (wasm-bindgen-rayon self-spawns module workers).
+    exclude: ['@powersync/web', '@journeyapps/wa-sqlite', 'fsrs-browser'],
     include: ['@powersync/react', 'epubjs'],
   },
   worker: {

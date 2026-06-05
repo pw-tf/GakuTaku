@@ -1,0 +1,6 @@
+# Cross-origin isolation — required for the FSRS optimizer's SharedArrayBuffer worker threads
+# (fsrs-browser / wasm-bindgen-rayon). `credentialless` keeps cross-origin Google Fonts + Supabase
+# Storage loading without per-resource CORP headers. Cloudflare Workers Assets honors this file.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless

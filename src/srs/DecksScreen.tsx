@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { db } from '../sync/system';
 import { useAllCards, useDeckStats, type DeckStat } from './srsHooks';
 import { cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
+import { optimizeDeck } from '../analytics/optimizer';
 
 interface Props {
   onReviewDeck: (deck: DeckStat) => void;
@@ -69,6 +70,39 @@ function DeckConfigControl({ deck }: { deck: DeckStat }) {
           onBlur={() => void updateDeckConfig(deck.id, { relearningSteps: parseSteps(relearn) })}
         />
       </label>
+      <OptimizeControl deck={deck} />
+    </div>
+  );
+}
+
+/** Trains personalized FSRS weights from this deck's review history and writes them to fsrs_params. */
+function OptimizeControl({ deck }: { deck: DeckStat }) {
+  const [running, setRunning] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function run() {
+    setRunning(true);
+    setMsg(null);
+    try {
+      const r = await optimizeDeck(deck.id);
+      setMsg(
+        r.ok
+          ? { ok: true, text: `Optimized from ${r.reviewCount} reviews — weights saved.` }
+          : { ok: false, text: r.reason ?? 'Could not optimize.' },
+      );
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error)?.message ?? 'Optimization failed.' });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="dc-optimize">
+      <button className="dc-opt-btn" disabled={running} onClick={() => void run()}>
+        {running ? 'Optimizing…' : 'Optimize FSRS weights'}
+      </button>
+      {msg && <span className={'dc-opt-msg' + (msg.ok ? ' ok' : ' err')}>{msg.text}</span>}
     </div>
   );
 }

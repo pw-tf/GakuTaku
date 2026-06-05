@@ -10,7 +10,8 @@
     "lint": "tsc -b --noEmit",
     "deploy": "npm run build && npx wrangler deploy",
     "build:dict": "tsx scripts/build-dict.ts",
-    "upload:dict": "tsx --env-file=.env scripts/upload-dict.ts"
+    "upload:dict": "tsx --env-file=.env scripts/upload-dict.ts",
+    "verify:analytics": "tsx scripts/verify-analytics.ts"
   },
   "dependencies": {
     "@journeyapps/wa-sqlite": "^1.7.0",
@@ -21,6 +22,7 @@
     "comlink": "^4.4.2",
     "dexie": "^4.4.3",
     "epubjs": "^0.3.93",
+    "fsrs-browser": "^5.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ts-fsrs": "^5.4.1",
