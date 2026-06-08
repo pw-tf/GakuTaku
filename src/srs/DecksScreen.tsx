@@ -130,11 +130,11 @@ function DeckList({ decks, onOpen }: { decks: DeckStat[]; onOpen: (d: DeckStat) 
                 <span className="dc-name">{d.name}</span>
               </div>
               <div className="dc-stats">
+                <div className="ds new"><div className="v">{d.new}</div><div className="l">New</div></div>
+                <div className="ds learn"><div className="v">{d.learning}</div><div className="l">Learn</div></div>
                 <div className="ds due"><div className="v">{d.due}</div><div className="l">Due</div></div>
-                <div className="ds"><div className="v">{d.new}</div><div className="l">New</div></div>
-                <div className="ds"><div className="v">{d.total}</div><div className="l">Total</div></div>
               </div>
-              <div className="dc-open">Open <Icon.chevR s={14} /></div>
+              <div className="dc-open"><span>{d.total} {d.total === 1 ? 'card' : 'cards'}</span><span className="o">Open <Icon.chevR s={14} /></span></div>
             </div>
           ))}
         </div>
@@ -200,13 +200,13 @@ function DeckDetail({ deck, onBack, onReview }: { deck: DeckStat; onBack: () => 
         <h2 className="dd-name">{deck.name}</h2>
         {deck.description && <p className="dd-desc">{deck.description}</p>}
         <div className="dd-stats">
-          <span><b>{deck.due}</b> due</span>
           <span><b>{deck.new}</b> new</span>
-          <span><b>{deck.total}</b> total</span>
-          <span className="muted">{deck.newPerDay}/day new · {deck.reviewsPerDay}/day reviews</span>
+          <span><b>{deck.learning}</b> learning</span>
+          <span><b>{deck.due}</b> due</span>
+          <span className="muted">{deck.total} cards · {deck.newPerDay}/day new · {deck.reviewsPerDay}/day reviews</span>
         </div>
         <div className="dd-actions">
-          <Btn variant="primary" onClick={onReview} disabled={deck.due + deck.new === 0}>
+          <Btn variant="primary" onClick={onReview} disabled={deck.new + deck.learning + deck.due === 0}>
             <Icon.review s={16} /> Study now
           </Btn>
           <Btn onClick={() => setModal('add')}><Icon.plus s={15} /> Add card</Btn>

@@ -256,10 +256,13 @@ body { overflow: hidden; }
 .deck-card .dc-stats { display:flex; gap: 22px; }
 .deck-card .ds .v { font-family: var(--serif); font-size: 24px; font-weight: 500; }
 .deck-card .ds .l { font-family:var(--mono); font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color: var(--ink-faint); }
-.deck-card .ds.due .v { color: var(--accent); }
+.deck-card .ds.new .v { color: var(--azure); }
+.deck-card .ds.learn .v { color: var(--amber); }
+.deck-card .ds.due .v { color: var(--sage); }
 .deck-card { cursor: pointer; transition: border-color .15s, transform .15s; }
 .deck-card:hover { border-color: var(--rule-strong); }
-.deck-card .dc-open { display:flex; align-items:center; gap:4px; justify-content:flex-end; margin-top:16px; padding-top:13px; border-top:1px solid var(--rule); font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-faint); }
+.deck-card .dc-open { display:flex; align-items:center; gap:4px; justify-content:space-between; margin-top:16px; padding-top:13px; border-top:1px solid var(--rule); font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-faint); }
+.deck-card .dc-open .o { display:inline-flex; align-items:center; gap:4px; }
 
 /* Pop-down menu (New deck chooser, deck Options menu). */
 .deck-add { position: relative; }
