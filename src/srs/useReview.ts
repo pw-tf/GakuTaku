@@ -105,7 +105,19 @@ const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, c.state AS state,
   LEFT JOIN decks d ON d.id = n.deck_id
   LEFT JOIN note_types nt ON nt.id = n.note_type_id`;
 
-/** Build the ordered list of candidate cards, honouring per-deck new-card limits. */
+/** Just enough to apply the daily caps without marshalling every card's heavy note/CSS columns. */
+interface LightRow {
+  id: string;
+  state: number;
+  deck_id: string | null;
+}
+
+/**
+ * Build the ordered list of candidate cards. Daily caps are applied to *lightweight* rows (id +
+ * state + deck) so we never fetch the heavy note fields / template / CSS for the whole due backlog —
+ * only the chosen cards are then hydrated. This is the difference between a review starting instantly
+ * and scanning thousands of fat rows on a big imported deck.
+ */
 async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
   const now = new Date().toISOString();
 
@@ -121,54 +133,56 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
   const deckArg = source.kind === 'deck' ? source.deckIds : [];
   const deckFilter = deckArg.length ? ` AND n.deck_id IN (${deckArg.map(() => '?').join(',')})` : '';
 
-  const due = await db.getAll<CandidateRow>(
-    `${SELECT_CARD} WHERE c.reps > 0 AND c.due <= ?${deckFilter} ORDER BY c.due ASC`,
+  // Deck configs once (not joined per candidate row).
+  const deckRows = await db.getAll<{ id: string; fsrs_params: string | null }>('SELECT id, fsrs_params FROM decks');
+  const cfgByDeck = new Map(deckRows.map((d) => [d.id, deckConfig({ fsrs_params: d.fsrs_params })]));
+  const cfgFor = (deck: string) => cfgByDeck.get(deck) ?? deckConfig({ fsrs_params: null });
+
+  const dueLight = await db.getAll<LightRow>(
+    `SELECT c.id, c.state, n.deck_id FROM cards c JOIN notes n ON n.id = c.note_id
+     WHERE c.reps > 0 AND c.due <= ?${deckFilter} ORDER BY c.due ASC`,
     [now, ...deckArg],
   );
-
-  const newRows = await db.getAll<CandidateRow>(
-    `${SELECT_CARD} WHERE c.reps = 0${deckFilter} ORDER BY n.created_at ASC`,
+  const newLight = await db.getAll<LightRow>(
+    `SELECT c.id, c.state, n.deck_id FROM cards c JOIN notes n ON n.id = c.note_id
+     WHERE c.reps = 0${deckFilter} ORDER BY n.created_at ASC`,
     deckArg,
   );
+
   // Today's activity per deck, against the configurable study-day boundary (shared with the deck list).
   const dayStart = studyDayStart(new Date(), usePrefs.getState().dayCutoffHour).toISOString();
-  const introduced = await db.getAll<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, [dayStart]);
+  const introduced = await db.getAll<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, [dayStart, dayStart]);
   const reviewsToday = await db.getAll<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, [dayStart]);
   const introducedByDeck = new Map(introduced.map((r) => [r.deck ?? '', r.cnt]));
   const reviewedByDeck = new Map(reviewsToday.map((r) => [r.deck ?? '', r.cnt]));
-  const allowanceFor = (deck: string, params: string | null) =>
-    deckAllowances(deckConfig({ fsrs_params: params }), {
-      introduced: introducedByDeck.get(deck) ?? 0,
-      reviewed: reviewedByDeck.get(deck) ?? 0,
-    });
+  const allowanceFor = (deck: string) =>
+    deckAllowances(cfgFor(deck), { introduced: introducedByDeck.get(deck) ?? 0, reviewed: reviewedByDeck.get(deck) ?? 0 });
 
-  // Cap *review-state* cards per deck by its remaining daily review allowance (learning/relearning
-  // bypass the cap so a lapsed card always comes back this session).
+  // Cap to each deck's remaining allowance (learning/relearning bypass the review cap so a lapsed
+  // card always returns), collecting the chosen ids in display order.
   const reviewRemaining = new Map<string, number>();
-  const allowedDue: CandidateRow[] = [];
-  for (const row of due) {
-    if (row.state !== State.Review) { allowedDue.push(row); continue; }
-    const deck = row.deck_id ?? '';
-    if (!reviewRemaining.has(deck)) reviewRemaining.set(deck, allowanceFor(deck, row.fsrs_params).reviewLeft);
-    const left = reviewRemaining.get(deck)!;
-    if (left > 0) {
-      allowedDue.push(row);
-      reviewRemaining.set(deck, left - 1);
-    }
-  }
-
   const newRemaining = new Map<string, number>();
-  const allowedNew: CandidateRow[] = [];
-  for (const row of newRows) {
+  const chosen: string[] = [];
+  for (const row of dueLight) {
+    if (row.state !== State.Review) { chosen.push(row.id); continue; }
     const deck = row.deck_id ?? '';
-    if (!newRemaining.has(deck)) newRemaining.set(deck, allowanceFor(deck, row.fsrs_params).newLeft);
-    const left = newRemaining.get(deck)!;
-    if (left > 0) {
-      allowedNew.push(row);
-      newRemaining.set(deck, left - 1);
-    }
+    if (!reviewRemaining.has(deck)) reviewRemaining.set(deck, allowanceFor(deck).reviewLeft);
+    const left = reviewRemaining.get(deck)!;
+    if (left > 0) { chosen.push(row.id); reviewRemaining.set(deck, left - 1); }
   }
-  return [...allowedDue, ...allowedNew];
+  for (const row of newLight) {
+    const deck = row.deck_id ?? '';
+    if (!newRemaining.has(deck)) newRemaining.set(deck, allowanceFor(deck).newLeft);
+    const left = newRemaining.get(deck)!;
+    if (left > 0) { chosen.push(row.id); newRemaining.set(deck, left - 1); }
+  }
+  if (chosen.length === 0) return [];
+
+  // Hydrate only the chosen cards with their heavy columns, preserving order.
+  const ph = chosen.map(() => '?').join(',');
+  const full = await db.getAll<CandidateRow>(`${SELECT_CARD} WHERE c.id IN (${ph})`, chosen);
+  const byId = new Map(full.map((r) => [r.id, r]));
+  return chosen.map((id) => byId.get(id)).filter((r): r is CandidateRow => !!r);
 }
 
 const bySoonest = (a: SessionCard, b: SessionCard) => a.dueAt - b.dueAt;

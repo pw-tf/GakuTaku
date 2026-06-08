@@ -61,10 +61,11 @@ export function useDeckStats(): DeckStat[] {
   const now = useStableNow();
   const dayStart = useStudyDayStart();
   const rawParams = useMemo(() => [now, now], [now]);
-  const dayParams = useMemo(() => [dayStart], [dayStart]);
+  const introParams = useMemo(() => [dayStart, dayStart], [dayStart]);
+  const revParams = useMemo(() => [dayStart], [dayStart]);
   const { data: raw } = useQuery<RawDeckCount>(RAW_DECK_COUNTS_SQL, rawParams);
-  const { data: intro } = useQuery<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, dayParams);
-  const { data: rev } = useQuery<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, dayParams);
+  const { data: intro } = useQuery<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, introParams);
+  const { data: rev } = useQuery<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, revParams);
   return useMemo(() => {
     const introByDeck = new Map(intro.map((r) => [r.deck ?? '', r.cnt]));
     const revByDeck = new Map(rev.map((r) => [r.deck ?? '', r.cnt]));

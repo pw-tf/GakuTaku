@@ -80,12 +80,18 @@ export const RAW_DECK_COUNTS_SQL = `SELECT d.id AS deck, d.name AS name, d.fsrs_
   GROUP BY d.id
   ORDER BY d.created_at DESC`;
 
-/** Cards first-reviewed since the study-day start, per deck (new introductions today). Bind `[dayStartISO]`. */
-export const INTRODUCED_TODAY_SQL = `SELECT n.deck_id AS deck, COUNT(*) AS cnt
-  FROM (SELECT card_id, MIN(review_time) AS first FROM review_logs GROUP BY card_id) f
-  JOIN cards c ON c.id = f.card_id
+/**
+ * Cards introduced today (first-ever review since the study-day start), per deck. Scans only
+ * *today's* logs (the `by_time` index) and uses an indexed `NOT EXISTS` to confirm no earlier review —
+ * far cheaper than computing `MIN(review_time)` across the whole history on every change.
+ * Bind `[dayStartISO, dayStartISO]`.
+ */
+export const INTRODUCED_TODAY_SQL = `SELECT n.deck_id AS deck, COUNT(DISTINCT rl.card_id) AS cnt
+  FROM review_logs rl
+  JOIN cards c ON c.id = rl.card_id
   JOIN notes n ON n.id = c.note_id
-  WHERE f.first >= ?
+  WHERE rl.review_time >= ?
+    AND NOT EXISTS (SELECT 1 FROM review_logs r2 WHERE r2.card_id = rl.card_id AND r2.review_time < ?)
   GROUP BY n.deck_id`;
 
 /** All reviews logged since the study-day start, per deck. Bind `[dayStartISO]`. */
