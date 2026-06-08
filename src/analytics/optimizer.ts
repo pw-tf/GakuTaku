@@ -15,13 +15,21 @@ const DAY_MS = 86_400_000;
 /** fsrs-rs fits poorly on tiny histories; gate optimization until there's enough signal. */
 export const MIN_REVIEWS_TO_OPTIMIZE = 400;
 
+let workerInstance: Worker | null = null;
 let workerApi: Comlink.Remote<OptimizerApi> | null = null;
 function optimizer(): Comlink.Remote<OptimizerApi> {
   if (!workerApi) {
-    const worker = new Worker(new URL('./optimizer.worker.ts', import.meta.url), { type: 'module' });
-    workerApi = Comlink.wrap<OptimizerApi>(worker);
+    workerInstance = new Worker(new URL('./optimizer.worker.ts', import.meta.url), { type: 'module' });
+    workerApi = Comlink.wrap<OptimizerApi>(workerInstance);
   }
   return workerApi;
+}
+
+/** A Rust panic poisons the wasm module/thread pool — drop the worker so the next attempt starts clean. */
+function resetOptimizer(): void {
+  workerInstance?.terminate();
+  workerInstance = null;
+  workerApi = null;
 }
 
 interface LogRow {
@@ -52,17 +60,32 @@ export function buildTrainingSet(rows: LogRow[]): { set: TrainingSet; reviewCoun
   for (const logs of byCard.values()) {
     if (logs.length < 2) continue;
     logs.sort((a, b) => a.review_time.localeCompare(b.review_time));
-    cardCount++;
+
+    const cardRatings: number[] = [];
+    const cardDeltas: number[] = [];
     let prevMs: number | null = null;
+    let hasSpaced = false;
     for (const log of logs) {
       const t = new Date(log.review_time).getTime();
       const delta = prevMs === null ? 0 : Math.max(0, Math.round((t - prevMs) / DAY_MS));
-      ratings.push(log.rating);
-      deltaTs.push(delta);
+      if (delta > 0) hasSpaced = true;
+      cardRatings.push(log.rating);
+      cardDeltas.push(delta);
       prevMs = t;
+    }
+    // fsrs-rs learns the forgetting curve from intervals, so it requires at least one review with
+    // delta_t > 0 (a real gap of ≥1 day). A card reviewed only within a single day contributes none
+    // and makes the trainer panic — skip it. (If every card is same-day, the set ends up empty and
+    // optimizeDeck reports it gracefully instead of crashing.)
+    if (!hasSpaced) continue;
+
+    for (let i = 0; i < logs.length; i++) {
+      ratings.push(cardRatings[i]);
+      deltaTs.push(cardDeltas[i]);
       reviewCount++;
     }
     lengths.push(logs.length);
+    cardCount++;
   }
 
   return {
@@ -95,15 +118,23 @@ export async function optimizeDeck(deckId: string): Promise<OptimizeResult> {
     [deckId],
   );
 
-  const { set, reviewCount } = buildTrainingSet(rows);
+  const { set, reviewCount, cardCount } = buildTrainingSet(rows);
+  if (cardCount === 0) {
+    return {
+      ok: false,
+      reason: 'No spaced reviews yet — FSRS needs cards reviewed across multiple days before it can optimize.',
+      reviewCount,
+    };
+  }
   if (reviewCount < MIN_REVIEWS_TO_OPTIMIZE) {
-    return { ok: false, reason: `Need at least ${MIN_REVIEWS_TO_OPTIMIZE} reviews — this deck has ${reviewCount}.`, reviewCount };
+    return { ok: false, reason: `Need at least ${MIN_REVIEWS_TO_OPTIMIZE} spaced reviews — this deck has ${reviewCount}.`, reviewCount };
   }
 
   let weights: number[];
   try {
     weights = await optimizer().train(set);
   } catch (e) {
+    resetOptimizer();
     return { ok: false, reason: `Optimization failed: ${(e as Error)?.message ?? String(e)}`, reviewCount };
   }
   if (!weights?.length || weights.some((w) => !Number.isFinite(w))) {
