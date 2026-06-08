@@ -45,6 +45,59 @@ export async function createDeck(userId: string, name: string): Promise<string> 
   return id;
 }
 
+/** A card's note opened for editing: the note type's ordered field names + current values. */
+export interface EditableCard {
+  cardId: string;
+  noteId: string;
+  fieldNames: string[];
+  values: Record<string, string>;
+}
+
+function asStrMap(text: string | null | undefined): Record<string, string> {
+  const obj = parseJsonObject(text);
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj)) out[k] = typeof v === 'string' ? v : String(v ?? '');
+  return out;
+}
+
+/** Load a card's editable fields (note values keyed by the note type's field order). */
+export async function loadCardForEdit(cardId: string): Promise<EditableCard | null> {
+  const rows = await db.getAll<{ note_id: string; fields: string; nt_fields: string | null }>(
+    `SELECT n.id AS note_id, n.fields AS fields, nt.fields AS nt_fields
+     FROM cards c JOIN notes n ON n.id = c.note_id LEFT JOIN note_types nt ON nt.id = n.note_type_id
+     WHERE c.id = ? LIMIT 1`,
+    [cardId],
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  const values = asStrMap(r.fields);
+  let fieldNames = Object.keys(values);
+  try {
+    const v = parseJsonObject(r.nt_fields) as unknown;
+    if (Array.isArray(v) && v.length) fieldNames = v.map(String);
+  } catch { /* fall back to value keys */ }
+  return { cardId, noteId: r.note_id, fieldNames, values };
+}
+
+/** Persist edited note field values. */
+export async function updateNoteFields(noteId: string, values: Record<string, string>): Promise<void> {
+  await db.execute('UPDATE notes SET fields = ? WHERE id = ?', [JSON.stringify(values), noteId]);
+}
+
+/** Delete a card (and its logs); if its note has no other cards, remove the note too. */
+export async function deleteCard(cardId: string): Promise<void> {
+  const rows = await db.getAll<{ note_id: string }>('SELECT note_id FROM cards WHERE id = ?', [cardId]);
+  const noteId = rows[0]?.note_id;
+  await db.writeTransaction(async (tx) => {
+    await tx.execute('DELETE FROM review_logs WHERE card_id = ?', [cardId]);
+    await tx.execute('DELETE FROM cards WHERE id = ?', [cardId]);
+  });
+  if (noteId) {
+    const left = await db.getAll<{ n: number }>('SELECT COUNT(*) AS n FROM cards WHERE note_id = ?', [noteId]);
+    if ((left[0]?.n ?? 0) === 0) await db.execute('DELETE FROM notes WHERE id = ?', [noteId]);
+  }
+}
+
 /** Rename a deck. */
 export async function renameDeck(deckId: string, name: string): Promise<void> {
   const trimmed = name.trim();

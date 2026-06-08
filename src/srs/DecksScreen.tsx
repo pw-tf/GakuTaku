@@ -6,6 +6,7 @@ import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
 import { useDeckCards, useDeckStats, type CardRow, type DeckStat } from './srsHooks';
 import { buildDeckTree, descendantDeckIds, findNodeByDeckId, flattenVisible, type DeckNode } from './deckTree';
+import { EditCardModal } from './EditCardModal';
 import { cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
 import { addCardForWord, createDeck, deleteDeck, renameDeck } from './mining';
 import { optimizeDeck } from '../analytics/optimizer';
@@ -192,6 +193,7 @@ function DeckDetail({ deck, childNodes, onBack, onOpenDeck, onReview }: {
   const cards = useDeckCards(deck.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
 
   function rename() {
     const name = window.prompt('Rename deck', deck.name);
@@ -274,22 +276,23 @@ function DeckDetail({ deck, childNodes, onBack, onOpenDeck, onReview }: {
         <h2>Cards</h2>
         <span className="count">{cards.length} {cards.length === 1 ? 'card' : 'cards'}</span>
       </div>
-      <CardTable cards={cards} />
+      <CardTable cards={cards} onEdit={setEditingCardId} />
 
       {modal === 'options' && <DeckOptionsModal deck={deck} onClose={() => setModal(null)} />}
       {modal === 'description' && <DescriptionModal deck={deck} onClose={() => setModal(null)} />}
       {modal === 'add' && session && (
         <AddCardModal deckId={deck.id} userId={session.user.id} onClose={() => setModal(null)} />
       )}
+      {editingCardId && <EditCardModal cardId={editingCardId} onClose={() => setEditingCardId(null)} />}
     </div>
   );
 }
 
-function CardTable({ cards }: { cards: CardRow[] }) {
+function CardTable({ cards, onEdit }: { cards: CardRow[]; onEdit: (cardId: string) => void }) {
   const now = Date.now();
   if (cards.length === 0) return <p style={{ color: 'var(--ink-faint)' }}>No cards in this deck yet.</p>;
   return (
-    <table className="card-table">
+    <table className="card-table clickable">
       <thead>
         <tr>
           <th>Front</th>
@@ -308,7 +311,7 @@ function CardTable({ cards }: { cards: CardRow[] }) {
           });
           const dueText = c.reps === 0 ? 'new' : !c.due ? '—' : new Date(c.due).getTime() <= now ? 'due' : formatInterval(new Date(now), new Date(c.due));
           return (
-            <tr key={c.id}>
+            <tr key={c.id} onClick={() => onEdit(c.id)} title="Edit card">
               <td>
                 <span className="ct-term" lang="ja">{c.front || '—'}</span>
                 {c.reading && <> <span className="ct-reading" lang="ja">{c.reading}</span></>}

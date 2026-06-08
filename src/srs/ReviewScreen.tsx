@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { useAuth } from '../auth/AuthProvider';
 import { CardTemplate } from './CardTemplate';
+import { EditCardModal } from './EditCardModal';
 import { useReview, type ReviewSource } from './useReview';
 
 interface Props {
@@ -30,6 +31,7 @@ export function ReviewScreen({ source, onExit }: Props) {
   const { session } = useAuth();
   const review = useReview(source);
   const { current, shown, gradePreviews, counts } = review;
+  const [editing, setEditing] = useState<string | null>(null);
 
   // Keyboard: space/enter reveals, 1–4 rate once revealed.
   useEffect(() => {
@@ -111,6 +113,7 @@ export function ReviewScreen({ source, onExit }: Props) {
           <span className="c review">{counts.review}</span>
         </span>
         <span className="spacer" style={{ flex: 1 }} />
+        <button className="rv-edit" title="Edit card" onClick={() => setEditing(current.cardId)}><Icon.study s={16} /></button>
         <Chip>{label}</Chip>
       </div>
 
@@ -153,6 +156,8 @@ export function ReviewScreen({ source, onExit }: Props) {
           </div>
         )}
       </div>
+
+      {editing && <EditCardModal cardId={editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }
