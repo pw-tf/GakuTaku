@@ -7,7 +7,7 @@ interface ContentProps {
 
 /** The settings controls (accent / dark / furigana / credits), reused by the desktop popover and the mobile menu. */
 export function SettingsContent({ onOpenCredits }: ContentProps) {
-  const { accent, dark, furigana, setAccent, setDark, setFurigana } = usePrefs();
+  const { accent, dark, furigana, dayCutoffHour, setAccent, setDark, setFurigana, setDayCutoffHour } = usePrefs();
   return (
     <>
       <div className="set-sec">
@@ -39,6 +39,24 @@ export function SettingsContent({ onOpenCredits }: ContentProps) {
               {v === 'all' ? 'All' : v === 'n3' ? 'N3+' : 'Off'}
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="set-sec">
+        <div className="toggle-row">
+          <span>Day starts at</span>
+          <select
+            className="set-select"
+            value={dayCutoffHour}
+            onChange={(e) => setDayCutoffHour(Number(e.target.value))}
+          >
+            {Array.from({ length: 24 }, (_, h) => (
+              <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6, lineHeight: 1.5 }}>
+          Reviews before this time count toward the previous study day (Anki-style rollover).
         </div>
       </div>
 
