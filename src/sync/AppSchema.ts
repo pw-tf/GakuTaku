@@ -24,6 +24,7 @@ const note_types = new Table({
   name: column.text,
   fields: column.text, // jsonb
   card_templates: column.text, // jsonb
+  css: column.text, // the note type's stylesheet (Anki model CSS), applied at render time
 });
 
 const notes = new Table(
@@ -35,7 +36,7 @@ const notes = new Table(
     tags: column.text,
     created_at: column.text,
   },
-  { indexes: { by_deck: ['deck_id'] } },
+  { indexes: { by_deck: ['deck_id'], by_note_type: ['note_type_id'] } },
 );
 
 const cards = new Table(
@@ -52,7 +53,7 @@ const cards = new Table(
     state: column.integer,
     last_review: column.text,
   },
-  { indexes: { by_note: ['note_id'] } },
+  { indexes: { by_note: ['note_id'], by_due: ['due'], by_state_due: ['state', 'due'] } },
 );
 
 const review_logs = new Table(
@@ -64,7 +65,7 @@ const review_logs = new Table(
     elapsed_ms: column.integer,
     scheduled_days: column.integer,
   },
-  { indexes: { by_card: ['card_id'] } },
+  { indexes: { by_card: ['card_id'], by_card_time: ['card_id', 'review_time'], by_time: ['review_time'] } },
 );
 
 const documents = new Table({

@@ -4,6 +4,7 @@ import { db } from '../sync/system';
 import type { ReviewLogRecord } from '../sync/AppSchema';
 import {
   State,
+  cardFromRow,
   deckConfig,
   deriveCard,
   parseJsonObject,
@@ -16,12 +17,16 @@ import {
   type GradePreview,
 } from './fsrs';
 import { NOTE_TYPE_NAME, parseNoteFields, type NoteFields } from './mining';
+import { usePrefs } from '../app/prefs';
+import { INTRODUCED_TODAY_SQL, REVIEWED_TODAY_SQL, deckAllowances, studyDayStart } from './queue';
 
 /** An imported (non-vocab) card: raw fields + the chosen template's front/back, for generic render. */
 export interface GenericCard {
   fields: Record<string, string>;
   front: string;
   back: string;
+  /** The note type's stylesheet (Anki model CSS), applied in a sandboxed scope at render time. */
+  css: string;
 }
 
 function parseStrMap(text: string | null | undefined): Record<string, string> {
@@ -73,22 +78,26 @@ interface CandidateRow {
   id: string;
   tmpl: number;
   state: number;
+  // Cached FSRS columns — let us rebuild the ts-fsrs Card without replaying logs (see loader).
+  due: string | null;
+  stability: number | null;
+  difficulty: number | null;
+  reps: number | null;
+  lapses: number | null;
+  last_review: string | null;
   fields: string;
   created: string;
   deck_id: string | null;
   fsrs_params: string | null;
   nt_name: string | null;
   nt_templates: string | null;
+  nt_css: string | null;
 }
 
-function startOfTodayISO(): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
-}
-
-const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, c.state AS state, n.fields AS fields, n.created_at AS created, n.deck_id,
-    d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates
+const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, c.state AS state,
+    c.due AS due, c.stability AS stability, c.difficulty AS difficulty, c.reps AS reps, c.lapses AS lapses, c.last_review AS last_review,
+    n.fields AS fields, n.created_at AS created, n.deck_id,
+    d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates, nt.css AS nt_css
   FROM cards c JOIN notes n ON n.id = c.note_id
   LEFT JOIN decks d ON d.id = n.deck_id
   LEFT JOIN note_types nt ON nt.id = n.note_type_id`;
@@ -117,36 +126,26 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
     `${SELECT_CARD} WHERE c.reps = 0${deckFilter} ORDER BY n.created_at ASC`,
     deckArg,
   );
-  const introduced = await db.getAll<{ deck: string | null; cnt: number }>(
-    `SELECT n.deck_id AS deck, COUNT(*) AS cnt
-     FROM (SELECT card_id, MIN(review_time) AS first FROM review_logs GROUP BY card_id) f
-     JOIN cards c ON c.id = f.card_id
-     JOIN notes n ON n.id = c.note_id
-     WHERE f.first >= ?
-     GROUP BY n.deck_id`,
-    [startOfTodayISO()],
-  );
+  // Today's activity per deck, against the configurable study-day boundary (shared with the deck list).
+  const dayStart = studyDayStart(new Date(), usePrefs.getState().dayCutoffHour).toISOString();
+  const introduced = await db.getAll<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, [dayStart]);
+  const reviewsToday = await db.getAll<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, [dayStart]);
   const introducedByDeck = new Map(introduced.map((r) => [r.deck ?? '', r.cnt]));
+  const reviewedByDeck = new Map(reviewsToday.map((r) => [r.deck ?? '', r.cnt]));
+  const allowanceFor = (deck: string, params: string | null) =>
+    deckAllowances(deckConfig({ fsrs_params: params }), {
+      introduced: introducedByDeck.get(deck) ?? 0,
+      reviewed: reviewedByDeck.get(deck) ?? 0,
+    });
 
-  // Cap *review-state* cards per deck by its daily review limit, minus reviews already done today
-  // (learning/relearning cards bypass the cap so a lapsed card always comes back this session).
-  const reviewsToday = await db.getAll<{ deck: string | null; cnt: number }>(
-    `SELECT n.deck_id AS deck, COUNT(*) AS cnt
-     FROM review_logs rl JOIN cards c ON c.id = rl.card_id JOIN notes n ON n.id = c.note_id
-     WHERE rl.review_time >= ?
-     GROUP BY n.deck_id`,
-    [startOfTodayISO()],
-  );
-  const reviewsByDeck = new Map(reviewsToday.map((r) => [r.deck ?? '', r.cnt]));
+  // Cap *review-state* cards per deck by its remaining daily review allowance (learning/relearning
+  // bypass the cap so a lapsed card always comes back this session).
   const reviewRemaining = new Map<string, number>();
   const allowedDue: CandidateRow[] = [];
   for (const row of due) {
     if (row.state !== State.Review) { allowedDue.push(row); continue; }
     const deck = row.deck_id ?? '';
-    if (!reviewRemaining.has(deck)) {
-      const done = Math.max(0, (reviewsByDeck.get(deck) ?? 0) - (introducedByDeck.get(deck) ?? 0));
-      reviewRemaining.set(deck, Math.max(0, deckConfig({ fsrs_params: row.fsrs_params }).reviewsPerDay - done));
-    }
+    if (!reviewRemaining.has(deck)) reviewRemaining.set(deck, allowanceFor(deck, row.fsrs_params).reviewLeft);
     const left = reviewRemaining.get(deck)!;
     if (left > 0) {
       allowedDue.push(row);
@@ -154,18 +153,15 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
     }
   }
 
-  const remaining = new Map<string, number>();
+  const newRemaining = new Map<string, number>();
   const allowedNew: CandidateRow[] = [];
   for (const row of newRows) {
     const deck = row.deck_id ?? '';
-    if (!remaining.has(deck)) {
-      const perDay = deckConfig({ fsrs_params: row.fsrs_params }).newPerDay;
-      remaining.set(deck, Math.max(0, perDay - (introducedByDeck.get(deck) ?? 0)));
-    }
-    const left = remaining.get(deck)!;
+    if (!newRemaining.has(deck)) newRemaining.set(deck, allowanceFor(deck, row.fsrs_params).newLeft);
+    const left = newRemaining.get(deck)!;
     if (left > 0) {
       allowedNew.push(row);
-      remaining.set(deck, left - 1);
+      newRemaining.set(deck, left - 1);
     }
   }
   return [...allowedDue, ...allowedNew];
@@ -210,11 +206,19 @@ export function useReview(source: ReviewSource): ReviewState {
     (async () => {
       const rows = await buildCandidates(source);
       if (cancelled) return;
+      // Only (re)learning cards need a log replay — their intra-step counter isn't cached. New and
+      // Review cards are rebuilt straight from the cached FSRS columns (no per-card replay), which is
+      // the bulk of the queue and the main load-time win.
+      const replayIds = rows
+        .filter((r) => r.state === State.Learning || r.state === State.Relearning)
+        .map((r) => r.id);
       let logsByCard = new Map<string, ReviewLogRecord[]>();
-      if (rows.length) {
-        const ids = rows.map((r) => r.id);
-        const ph = ids.map(() => '?').join(',');
-        const logs = await db.getAll<ReviewLogRecord>(`SELECT * FROM review_logs WHERE card_id IN (${ph})`, ids);
+      if (replayIds.length) {
+        const ph = replayIds.map(() => '?').join(',');
+        const logs = await db.getAll<ReviewLogRecord>(
+          `SELECT id, card_id, rating, review_time, elapsed_ms, scheduled_days FROM review_logs WHERE card_id IN (${ph})`,
+          replayIds,
+        );
         logsByCard = logs.reduce((m, log) => {
           const arr = m.get(log.card_id!) ?? [];
           arr.push(log);
@@ -226,7 +230,8 @@ export function useReview(source: ReviewSource): ReviewState {
       const now = Date.now();
       const items: SessionCard[] = rows.map((r) => {
         const cfg = deckConfig({ fsrs_params: r.fsrs_params });
-        const fsrsCard = deriveCard(logsByCard.get(r.id) ?? [], r.created, cfg);
+        const needsReplay = r.state === State.Learning || r.state === State.Relearning;
+        const fsrsCard = needsReplay ? deriveCard(logsByCard.get(r.id) ?? [], r.created, cfg) : cardFromRow(r, r.created);
         // Reviews keep their (past) due so the most overdue come first; new cards queue at "now".
         const dueAt = fsrsCard.reps === 0 ? now : fsrsCard.due.getTime();
         // Imported (non-vocab) note types render via the generic Anki template renderer.
@@ -234,7 +239,7 @@ export function useReview(source: ReviewSource): ReviewState {
         if (r.nt_name && r.nt_name !== NOTE_TYPE_NAME) {
           const tmpls = parseTemplates(r.nt_templates);
           const t = tmpls[r.tmpl] ?? tmpls[0];
-          if (t) generic = { fields: parseStrMap(r.fields), front: t.front, back: t.back };
+          if (t) generic = { fields: parseStrMap(r.fields), front: t.front, back: t.back, css: r.nt_css ?? '' };
         }
         return { cardId: r.id, fields: parseNoteFields(r.fields), generic, fsrsCard, cfg, dueAt };
       });

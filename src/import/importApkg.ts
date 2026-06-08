@@ -137,9 +137,14 @@ export async function importApkg(
   }
 
   // Derive each card's current FSRS state from its imported logs (no history → New/due-now).
-  const cardRows: Row[] = cardInfo.map(({ id, noteId, created, ord }) => {
+  // Replaying every card is CPU-heavy on a large deck, so yield to the event loop periodically
+  // (and report progress) to keep the UI responsive.
+  onProgress?.({ phase: 'mapping', done: 0, total: cardInfo.length });
+  const cardRows: Row[] = [];
+  for (let i = 0; i < cardInfo.length; i++) {
+    const { id, noteId, created, ord } = cardInfo[i];
     const card = deriveCard(logsByCard.get(id) ?? [], created, defaultCfg);
-    return [
+    cardRows.push([
       id, userId, noteId, ord,
       card.due.toISOString(),
       card.stability ?? null,
@@ -148,8 +153,12 @@ export async function importApkg(
       card.lapses,
       card.state,
       card.last_review ? card.last_review.toISOString() : null,
-    ];
-  });
+    ]);
+    if ((i & 511) === 511) {
+      onProgress?.({ phase: 'mapping', done: i + 1, total: cardInfo.length });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
 
   // --- persist (FK-safe order: note_types, decks, notes, cards, review_logs) ---
   onProgress?.({ phase: 'writing', done: 0, total: noteRows.length + cardRows.length + reviewRows.length });

@@ -225,3 +225,38 @@ export function toCardRow(card: Card): Pick<CardRecord, 'due' | 'stability' | 'd
     last_review: card.last_review ? card.last_review.toISOString() : null,
   };
 }
+
+/** The cached FSRS columns of a `cards` row (the inverse direction of {@link toCardRow}). */
+export interface CardCacheRow {
+  due: string | null;
+  stability: number | null;
+  difficulty: number | null;
+  reps: number | null;
+  lapses: number | null;
+  state: number | null;
+  last_review: string | null;
+}
+
+/**
+ * Reconstruct a ts-fsrs {@link Card} from the cached `cards` columns — the inverse of
+ * {@link toCardRow} — so the review queue can be built without replaying each card's logs.
+ * `elapsed_days`/`scheduled_days` are recomputed by ts-fsrs from `now`/`last_review`, and
+ * `learning_steps` only matters mid-(re)learning (those cards are replayed instead, see useReview),
+ * so for New/Review cards this is exact. New cards (reps 0) become a fresh empty card.
+ */
+export function cardFromRow(row: CardCacheRow, createdAt: string): Card {
+  const reps = row.reps ?? 0;
+  if (reps === 0) return createEmptyCard(new Date(createdAt));
+  return {
+    due: new Date(row.due ?? createdAt),
+    stability: row.stability ?? 0,
+    difficulty: row.difficulty ?? 0,
+    elapsed_days: 0,
+    scheduled_days: 0,
+    learning_steps: 0,
+    reps,
+    lapses: row.lapses ?? 0,
+    state: (row.state ?? State.Review) as State,
+    last_review: row.last_review ? new Date(row.last_review) : undefined,
+  };
+}

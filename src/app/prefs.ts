@@ -22,6 +22,8 @@ interface PrefsState {
   readerFlow: ReaderFlow;
   readerFontScale: ReaderFontScale;
   readerWidth: ReaderWidth;
+  /** Anki-style day rollover hour (0–23). Reviews before this count toward the previous study day. */
+  dayCutoffHour: number;
   setAccent: (a: string) => void;
   setDark: (d: boolean) => void;
   setFurigana: (f: FuriganaDensity) => void;
@@ -30,6 +32,7 @@ interface PrefsState {
   setReaderFlow: (f: ReaderFlow) => void;
   setReaderFontScale: (s: ReaderFontScale) => void;
   setReaderWidth: (w: ReaderWidth) => void;
+  setDayCutoffHour: (h: number) => void;
 }
 
 /**
@@ -48,6 +51,7 @@ export const usePrefs = create<PrefsState>()(
       readerFlow: 'paged',
       readerFontScale: 'm',
       readerWidth: 'normal',
+      dayCutoffHour: 4,
       setAccent: (accent) => set({ accent }),
       setDark: (dark) => set({ dark }),
       setFurigana: (furigana) => set({ furigana }),
@@ -56,6 +60,7 @@ export const usePrefs = create<PrefsState>()(
       setReaderFlow: (readerFlow) => set({ readerFlow }),
       setReaderFontScale: (readerFontScale) => set({ readerFontScale }),
       setReaderWidth: (readerWidth) => set({ readerWidth }),
+      setDayCutoffHour: (dayCutoffHour) => set({ dayCutoffHour }),
     }),
     { name: 'gakutaku-prefs' },
   ),

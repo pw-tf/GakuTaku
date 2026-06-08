@@ -1,12 +1,22 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '../sync/hooks';
+import { usePrefs } from '../app/prefs';
 import { deckConfig, parseJsonObject } from './fsrs';
 import { NOTE_TYPE_NAME, parseNoteFields } from './mining';
+import {
+  INTRODUCED_TODAY_SQL,
+  RAW_DECK_COUNTS_SQL,
+  REVIEWED_TODAY_SQL,
+  capDeckQueue,
+  studyDayStart,
+  type DeckToday,
+} from './queue';
 
 /**
  * Reactive SRS queries over the synced `cards` cache (thin wrappers around PowerSync's `useQuery`,
  * like `src/sync/hooks.ts`). The FSRS columns on `cards` are a replay cache (§3.3); these read them
- * for fast counts/listing without re-deriving from logs.
+ * for fast counts/listing without re-deriving from logs. All daily-limit/study-day logic comes from
+ * `queue.ts`, shared with the review-session builder so the deck list and the session never disagree.
  */
 
 /** A now-threshold captured once per component mount (avoids re-subscribing the query each render). */
@@ -15,79 +25,20 @@ function useStableNow(): string {
   return now;
 }
 
-/** Start of today (local), captured once per mount — the boundary for "new cards introduced today". */
-function useStartOfToday(): string {
-  const [t] = useState(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d.toISOString();
-  });
-  return t;
+/** Start of the current study day (honours the configurable cutoff hour); re-subscribes only on cutoff change. */
+function useStudyDayStart(): string {
+  const cutoff = usePrefs((s) => s.dayCutoffHour);
+  return useMemo(() => studyDayStart(new Date(), cutoff).toISOString(), [cutoff]);
 }
 
-/**
- * Cards actually studiable right now — the number a review session would queue (mirrors
- * `buildCandidates` in {@link useReview}): every due review plus new cards capped per deck by its
- * remaining daily new-card allowance. This is what the Review badge / "Today" count should show;
- * a raw count of all new cards (see {@link useDueCount}) overstates it for freshly imported decks.
- */
-export function useStudyCount(): number {
-  const decks = useDeckStats();
-  const startOfToday = useStartOfToday();
-  const dayParams = useMemo(() => [startOfToday], [startOfToday]);
-  const { data: intro } = useQuery<{ deck: string | null; cnt: number }>(
-    `SELECT n.deck_id AS deck, COUNT(*) AS cnt
-     FROM (SELECT card_id, MIN(review_time) AS first FROM review_logs GROUP BY card_id) f
-     JOIN cards c ON c.id = f.card_id
-     JOIN notes n ON n.id = c.note_id
-     WHERE f.first >= ?
-     GROUP BY n.deck_id`,
-    dayParams,
-  );
-  const { data: revToday } = useQuery<{ deck: string | null; cnt: number }>(
-    `SELECT n.deck_id AS deck, COUNT(*) AS cnt
-     FROM review_logs rl
-     JOIN cards c ON c.id = rl.card_id
-     JOIN notes n ON n.id = c.note_id
-     WHERE rl.review_time >= ?
-     GROUP BY n.deck_id`,
-    dayParams,
-  );
-  return useMemo(() => {
-    const introByDeck = new Map(intro.map((r) => [r.deck ?? '', r.cnt]));
-    const revByDeck = new Map(revToday.map((r) => [r.deck ?? '', r.cnt]));
-    let total = 0;
-    for (const d of decks) {
-      const introduced = introByDeck.get(d.id) ?? 0;
-      // Reviews already done today (excluding new-card introductions) eat into the daily review cap.
-      const reviewsDone = Math.max(0, (revByDeck.get(d.id) ?? 0) - introduced);
-      total += Math.min(d.due, Math.max(0, d.reviewsPerDay - reviewsDone));
-      total += Math.min(d.new, Math.max(0, d.newPerDay - introduced));
-    }
-    return total;
-  }, [decks, intro, revToday]);
-}
-
-export interface DueCount {
-  due: number;
-  newAvailable: number;
+interface RawDeckCount {
+  deck: string;
+  name: string | null;
+  fsrs_params: string | null;
   total: number;
-}
-
-/** Cards available to study now: due reviews (reps>0, due≤now) plus untouched new cards. */
-export function useDueCount(): DueCount {
-  const now = useStableNow();
-  const params = useMemo(() => [now], [now]);
-  const { data } = useQuery<{ due: number | null; newc: number | null }>(
-    `SELECT
-       SUM(CASE WHEN reps > 0 AND due <= ? THEN 1 ELSE 0 END) AS due,
-       SUM(CASE WHEN reps = 0 THEN 1 ELSE 0 END) AS newc
-     FROM cards`,
-    params,
-  );
-  const due = data[0]?.due ?? 0;
-  const newAvailable = data[0]?.newc ?? 0;
-  return { due, newAvailable, total: due + newAvailable };
+  newc: number;
+  learnc: number;
+  reviewc: number;
 }
 
 export interface DeckStat {
@@ -98,49 +49,50 @@ export interface DeckStat {
   learningSteps?: string[];
   relearningSteps?: string[];
   description?: string;
-  due: number;
+  /** Daily-capped counts (what's actually studiable today) — match the review session and the badge. */
   new: number;
+  learning: number;
+  due: number;
   total: number;
 }
 
-/** Per-deck counts (due / new / total) plus the deck's configured new-cards-per-day. */
+/** Per-deck Anki-style counts (New / Learning / Due, daily-capped) plus the deck's config. */
 export function useDeckStats(): DeckStat[] {
   const now = useStableNow();
-  const params = useMemo(() => [now], [now]);
-  const { data } = useQuery<{
-    id: string;
-    name: string | null;
-    fsrs_params: string | null;
-    total: number;
-    newc: number;
-    due: number;
-  }>(
-    `SELECT d.id, d.name, d.fsrs_params,
-       COUNT(c.id) AS total,
-       COALESCE(SUM(CASE WHEN c.reps = 0 THEN 1 ELSE 0 END), 0) AS newc,
-       COALESCE(SUM(CASE WHEN c.reps > 0 AND c.due <= ? THEN 1 ELSE 0 END), 0) AS due
-     FROM decks d
-     LEFT JOIN notes n ON n.deck_id = d.id
-     LEFT JOIN cards c ON c.note_id = n.id
-     GROUP BY d.id
-     ORDER BY d.created_at DESC`,
-    params,
-  );
-  return data.map((r) => {
-    const cfg = deckConfig({ fsrs_params: r.fsrs_params });
-    return {
-      id: r.id,
-      name: r.name ?? 'Untitled',
-      newPerDay: cfg.newPerDay,
-      reviewsPerDay: cfg.reviewsPerDay,
-      learningSteps: cfg.learningSteps,
-      relearningSteps: cfg.relearningSteps,
-      description: cfg.description,
-      due: r.due,
-      new: r.newc,
-      total: r.total,
-    };
-  });
+  const dayStart = useStudyDayStart();
+  const rawParams = useMemo(() => [now, now], [now]);
+  const dayParams = useMemo(() => [dayStart], [dayStart]);
+  const { data: raw } = useQuery<RawDeckCount>(RAW_DECK_COUNTS_SQL, rawParams);
+  const { data: intro } = useQuery<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, dayParams);
+  const { data: rev } = useQuery<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, dayParams);
+  return useMemo(() => {
+    const introByDeck = new Map(intro.map((r) => [r.deck ?? '', r.cnt]));
+    const revByDeck = new Map(rev.map((r) => [r.deck ?? '', r.cnt]));
+    return raw.map((r) => {
+      const cfg = deckConfig({ fsrs_params: r.fsrs_params });
+      const today: DeckToday = { introduced: introByDeck.get(r.deck) ?? 0, reviewed: revByDeck.get(r.deck) ?? 0 };
+      const q = capDeckQueue(cfg, { newCount: r.newc, learningCount: r.learnc, reviewCount: r.reviewc }, today);
+      return {
+        id: r.deck,
+        name: r.name ?? 'Untitled',
+        newPerDay: cfg.newPerDay,
+        reviewsPerDay: cfg.reviewsPerDay,
+        learningSteps: cfg.learningSteps,
+        relearningSteps: cfg.relearningSteps,
+        description: cfg.description,
+        new: q.new,
+        learning: q.learning,
+        due: q.due,
+        total: r.total,
+      };
+    });
+  }, [raw, intro, rev]);
+}
+
+/** Cards actually studiable right now across all decks — the Review badge / "Today" number. */
+export function useStudyCount(): number {
+  const decks = useDeckStats();
+  return useMemo(() => decks.reduce((s, d) => s + d.new + d.learning + d.due, 0), [decks]);
 }
 
 export interface CardRow {
