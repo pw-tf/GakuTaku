@@ -49,7 +49,10 @@ interface Props {
 export function CardTemplate({ front, back, fields, shown, userId }: Props) {
   const html = useMemo(() => {
     const frontHtml = renderSide(front, fields);
-    return shown ? renderSide(back, fields, frontHtml) : frontHtml;
+    if (!shown) return frontHtml;
+    // On the answer side, wrap the repeated question (`{{FrontSide}}`) so it can be highlighted as
+    // the word under review, distinct from the answer body below it.
+    return renderSide(back, fields, `<div class="ct-q">${frontHtml}</div>`);
   }, [front, back, fields, shown]);
 
   const ref = useRef<HTMLDivElement>(null);
@@ -80,5 +83,12 @@ export function CardTemplate({ front, back, fields, shown, userId }: Props) {
     return () => { alive = false; };
   }, [html, userId]);
 
-  return <div className="card-html" ref={ref} lang="ja" dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <div
+      className={'card-html' + (shown ? '' : ' is-front')}
+      ref={ref}
+      lang="ja"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
