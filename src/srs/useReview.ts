@@ -60,7 +60,8 @@ function parseTemplates(text: string | null | undefined): { front: string; back:
 
 export type ReviewSource =
   | { kind: 'due' }
-  | { kind: 'deck'; deckId: string; deckName: string }
+  /** A deck and (optionally) its subdecks — `deckIds` = the deck plus all descendant deck ids. */
+  | { kind: 'deck'; deckIds: string[]; deckName: string }
   | { kind: 'cards'; cardIds: string[]; label: string };
 
 const DAY_MS = 86_400_000;
@@ -116,8 +117,9 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
     return source.cardIds.map((id) => byId.get(id)).filter((r): r is CandidateRow => !!r);
   }
 
-  const deckFilter = source.kind === 'deck' ? ' AND n.deck_id = ?' : '';
-  const deckArg = source.kind === 'deck' ? [source.deckId] : [];
+  if (source.kind === 'deck' && source.deckIds.length === 0) return [];
+  const deckArg = source.kind === 'deck' ? source.deckIds : [];
+  const deckFilter = deckArg.length ? ` AND n.deck_id IN (${deckArg.map(() => '?').join(',')})` : '';
 
   const due = await db.getAll<CandidateRow>(
     `${SELECT_CARD} WHERE c.reps > 0 AND c.due <= ?${deckFilter} ORDER BY c.due ASC`,

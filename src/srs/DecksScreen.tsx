@@ -1,19 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { db } from '../sync/system';
 import { useAuth } from '../auth/AuthProvider';
 import { Btn } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
 import { useDeckCards, useDeckStats, type CardRow, type DeckStat } from './srsHooks';
+import { buildDeckTree, descendantDeckIds, findNodeByDeckId, flattenVisible, type DeckNode } from './deckTree';
 import { cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
 import { addCardForWord, createDeck, deleteDeck, renameDeck } from './mining';
 import { optimizeDeck } from '../analytics/optimizer';
 
 interface Props {
-  onReviewDeck: (deck: DeckStat) => void;
+  onReviewDeck: (deck: DeckStat, deckIds: string[]) => void;
 }
-
-const DECK_TONES = ['var(--rust)', 'var(--azure)', 'var(--sage)', 'var(--amber)'];
 
 /** Merge a config patch into a deck's fsrs_params, preserving anything not touched (e.g. weights). */
 async function updateDeckConfig(deckId: string, patch: Partial<DeckConfig>): Promise<void> {
@@ -40,41 +39,67 @@ function parseSteps(text: string): string[] | undefined {
 
 export function DecksScreen({ onReviewDeck }: Props) {
   const decks = useDeckStats();
+  const roots = useMemo(() => buildDeckTree(decks), [decks]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = selectedId ? decks.find((d) => d.id === selectedId) ?? null : null;
 
-  // If the open deck disappears (deleted), fall back to the grid.
+  // If the open deck disappears (deleted), fall back to the list.
   useEffect(() => {
     if (selectedId && decks.length && !decks.some((d) => d.id === selectedId)) setSelectedId(null);
   }, [decks, selectedId]);
 
   if (selected) {
+    const node = findNodeByDeckId(roots, selected.id);
+    const studyIds = node ? descendantDeckIds(node) : [selected.id];
     return (
       <DeckDetail
         deck={selected}
+        childNodes={node?.children ?? []}
         onBack={() => setSelectedId(null)}
-        onReview={() => onReviewDeck(selected)}
+        onOpenDeck={setSelectedId}
+        onReview={() => onReviewDeck(selected, studyIds)}
       />
     );
   }
-  return <DeckList decks={decks} onOpen={(d) => setSelectedId(d.id)} />;
+  return <DeckList roots={roots} deckCount={decks.length} onOpen={(d) => setSelectedId(d.id)} />;
 }
 
 // ---------------------------------------------------------------------------
-// Deck grid + create/upload.
+// Deck tree (Anki-style) + create/upload.
 // ---------------------------------------------------------------------------
 
-function DeckList({ decks, onOpen }: { decks: DeckStat[]; onOpen: (d: DeckStat) => void }) {
+function DeckCounts({ roll }: { roll: DeckNode['roll'] }) {
+  return (
+    <span className="dr-counts">
+      <span className="c new" title="New">{roll.new}</span>
+      <span className="c learn" title="Learning">{roll.learning}</span>
+      <span className="c due" title="Due">{roll.due}</span>
+    </span>
+  );
+}
+
+function DeckList({ roots, deckCount, onOpen }: { roots: DeckNode[]; deckCount: number; onOpen: (d: DeckStat) => void }) {
   const { session } = useAuth();
   const importing = useImporting();
   const fileRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  const rows = useMemo(() => flattenVisible(roots, collapsed), [roots, collapsed]);
+
+  function toggle(key: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   async function addDeck() {
     const userId = session?.user.id;
     if (!userId || creating) return;
-    const name = window.prompt('New deck name', 'New deck');
+    const name = window.prompt('New deck name (use “Parent::Child” for a subdeck)', 'New deck');
     if (name === null) return;
     setCreating(true);
     try {
@@ -96,7 +121,7 @@ function DeckList({ decks, onOpen }: { decks: DeckStat[]; onOpen: (d: DeckStat) 
       <input ref={fileRef} type="file" accept=".apkg" hidden onChange={onFile} />
       <div className="sec-bar">
         <h2>Decks</h2>
-        <span className="count">{decks.length} {decks.length === 1 ? 'deck' : 'decks'}</span>
+        <span className="count">{deckCount} {deckCount === 1 ? 'deck' : 'decks'}</span>
         <span className="more deck-add">
           <Btn size="sm" disabled={creating || importing} onClick={() => setMenuOpen((o) => !o)}>
             <Icon.plus s={15} /> New deck
@@ -117,26 +142,33 @@ function DeckList({ decks, onOpen }: { decks: DeckStat[]; onOpen: (d: DeckStat) 
         </span>
       </div>
 
-      {decks.length === 0 ? (
+      {deckCount === 0 ? (
         <p style={{ color: 'var(--ink-faint)' }}>
           No decks yet. Open a book, tap a word, and ＋ Add to deck — or import an Anki deck above.
         </p>
       ) : (
-        <div className="deck-grid">
-          {decks.map((d, i) => (
-            <div className="deck-card" key={d.id} onClick={() => onOpen(d)}>
-              <div className="dc-top">
-                <span className="dc-bar" style={{ background: DECK_TONES[i % DECK_TONES.length] }} />
-                <span className="dc-name">{d.name}</span>
+        <div className="deck-tree">
+          {rows.map((node) => {
+            const hasChildren = node.children.length > 0;
+            const isCollapsed = collapsed.has(node.key);
+            return (
+              <div
+                key={node.key}
+                className={'deck-row' + (node.deck ? '' : ' group')}
+                style={{ paddingLeft: 14 + node.depth * 20 }}
+                onClick={() => (node.deck ? onOpen(node.deck) : toggle(node.key))}
+              >
+                <button
+                  className={'dr-caret' + (hasChildren ? '' : ' empty')}
+                  onClick={(e) => { e.stopPropagation(); if (hasChildren) toggle(node.key); }}
+                >
+                  {hasChildren ? <Icon.chevR s={14} style={{ transform: isCollapsed ? 'none' : 'rotate(90deg)', transition: 'transform .15s' }} /> : null}
+                </button>
+                <span className="dr-name">{node.label}</span>
+                <DeckCounts roll={node.roll} />
               </div>
-              <div className="dc-stats">
-                <div className="ds new"><div className="v">{d.new}</div><div className="l">New</div></div>
-                <div className="ds learn"><div className="v">{d.learning}</div><div className="l">Learn</div></div>
-                <div className="ds due"><div className="v">{d.due}</div><div className="l">Due</div></div>
-              </div>
-              <div className="dc-open"><span>{d.total} {d.total === 1 ? 'card' : 'cards'}</span><span className="o">Open <Icon.chevR s={14} /></span></div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -149,7 +181,13 @@ function DeckList({ decks, onOpen }: { decks: DeckStat[]; onOpen: (d: DeckStat) 
 
 type Modal = null | 'options' | 'description' | 'add';
 
-function DeckDetail({ deck, onBack, onReview }: { deck: DeckStat; onBack: () => void; onReview: () => void }) {
+function DeckDetail({ deck, childNodes, onBack, onOpenDeck, onReview }: {
+  deck: DeckStat;
+  childNodes: DeckNode[];
+  onBack: () => void;
+  onOpenDeck: (id: string) => void;
+  onReview: () => void;
+}) {
   const { session } = useAuth();
   const cards = useDeckCards(deck.id);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -207,11 +245,30 @@ function DeckDetail({ deck, onBack, onReview }: { deck: DeckStat; onBack: () => 
         </div>
         <div className="dd-actions">
           <Btn variant="primary" onClick={onReview} disabled={deck.new + deck.learning + deck.due === 0}>
-            <Icon.review s={16} /> Study now
+            <Icon.review s={16} /> Study now{childNodes.length ? ' (incl. subdecks)' : ''}
           </Btn>
           <Btn onClick={() => setModal('add')}><Icon.plus s={15} /> Add card</Btn>
         </div>
       </div>
+
+      {childNodes.length > 0 && (
+        <>
+          <div className="sec-bar"><h2>Subdecks</h2><span className="count">{childNodes.length}</span></div>
+          <div className="deck-tree">
+            {childNodes.map((c) => (
+              <div
+                key={c.key}
+                className={'deck-row' + (c.deck ? '' : ' group')}
+                onClick={() => c.deck && onOpenDeck(c.deck.id)}
+              >
+                <span className="dr-caret empty" />
+                <span className="dr-name">{c.label}</span>
+                <DeckCounts roll={c.roll} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="sec-bar">
         <h2>Cards</h2>

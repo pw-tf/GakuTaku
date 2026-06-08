@@ -126,7 +126,7 @@ export function AppShell() {
         </div>
         <div className="scroll">
           {view === 'library' && <LibraryScreen onOpenBook={openBook} due={due} streak={streak} />}
-          {view === 'decks' && <DecksScreen onReviewDeck={(d: DeckStat) => startReview({ kind: 'deck', deckId: d.id, deckName: d.name })} />}
+          {view === 'decks' && <DecksScreen onReviewDeck={(d: DeckStat, ids: string[]) => startReview({ kind: 'deck', deckIds: ids, deckName: d.name })} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'credits' && <Attribution />}
         </div>
