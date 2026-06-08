@@ -146,11 +146,11 @@ body { overflow: hidden; }
 
 /* Imported Anki card (generic template render). Kept readable + contained within the review face. */
 .card-html { font-family: var(--jp-mincho); font-size: 21px; line-height: 1.9; color: var(--ink); text-align: center; max-width: 100%; }
-/* The word under review: prominent and in the chosen accent — on the front, and where the
-   question repeats on the answer side (`.ct-q`). Scales from a single word down to a full sentence. */
-.card-html.is-front { font-size: clamp(32px, 6vw, 56px); font-weight: 600; line-height: 1.25; color: var(--accent); }
-.card-html .ct-q { display: block; font-size: clamp(26px, 5vw, 40px); font-weight: 600; line-height: 1.25; color: var(--accent); margin-bottom: 14px; }
-.card-html.is-front img, .card-html .ct-q img { /* keep media at natural size, not the headline scale */ font-size: 16px; }
+/* The front prompt is shown large (in theme ink); only the word under review is tinted with the
+   accent (see `.ct-word`), so a sentence card doesn't turn entirely accent-coloured. */
+.card-html.is-front { font-size: clamp(30px, 5.2vw, 50px); font-weight: 500; line-height: 1.3; }
+.card-html.is-front img { font-size: 16px; } /* keep media at natural size, not the headline scale */
+.card-html .ct-word { color: var(--accent); font-weight: 600; }
 .card-html img { max-width: 100%; height: auto; border-radius: var(--radius); margin: 10px auto; display: block; }
 .card-html hr { border: none; border-top: 1px solid var(--rule); margin: 18px 0; }
 .card-html .anki-audio { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 999px; background: color-mix(in oklch, var(--accent) 14%, transparent); color: var(--accent); cursor: pointer; font-size: 15px; margin: 6px; user-select: none; }
