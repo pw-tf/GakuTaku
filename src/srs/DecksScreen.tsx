@@ -4,9 +4,9 @@ import { useAuth } from '../auth/AuthProvider';
 import { Btn } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
-import { useAllCards, useDeckStats, type DeckStat } from './srsHooks';
+import { useDeckCards, useDeckStats, type CardRow, type DeckStat } from './srsHooks';
 import { cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
-import { createDeck, deleteDeck, renameDeck } from './mining';
+import { addCardForWord, createDeck, deleteDeck, renameDeck } from './mining';
 import { optimizeDeck } from '../analytics/optimizer';
 
 interface Props {
@@ -34,120 +34,42 @@ function parseSteps(text: string): string[] | undefined {
   return steps.length ? steps : undefined;
 }
 
-/** Inline per-deck config: name + new cards/day + (re)learning steps + delete. Stops click bubbling
- *  so editing doesn't launch a review. */
-function DeckConfigControl({ deck }: { deck: DeckStat }) {
-  const [name, setName] = useState(deck.name);
-  const [perDay, setPerDay] = useState(deck.newPerDay);
-  const [learn, setLearn] = useState((deck.learningSteps ?? []).join(' '));
-  const [relearn, setRelearn] = useState((deck.relearningSteps ?? []).join(' '));
-  useEffect(() => setPerDay(deck.newPerDay), [deck.newPerDay]);
-  useEffect(() => setName(deck.name), [deck.name]);
+// ---------------------------------------------------------------------------
+// Top-level screen: deck grid, or a single deck's detail view.
+// ---------------------------------------------------------------------------
 
-  function confirmDelete() {
-    if (window.confirm(`Delete “${deck.name}” and its ${deck.total} card${deck.total === 1 ? '' : 's'}? This cannot be undone.`)) {
-      void deleteDeck(deck.id);
-    }
-  }
-
-  return (
-    <div className="dc-config" onClick={(e) => e.stopPropagation()}>
-      <label className="dc-field">
-        <span className="l">Name</span>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => name.trim() && name.trim() !== deck.name && void renameDeck(deck.id, name)}
-        />
-      </label>
-      <label className="dc-field">
-        <span className="l">New/day</span>
-        <input
-          type="number"
-          min={0}
-          value={perDay}
-          onChange={(e) => {
-            const n = Math.max(0, parseInt(e.target.value || '0', 10) || 0);
-            setPerDay(n);
-            void updateDeckConfig(deck.id, { newPerDay: n });
-          }}
-        />
-      </label>
-      <label className="dc-field">
-        <span className="l">Learning steps</span>
-        <input
-          value={learn}
-          placeholder="1m 10m"
-          onChange={(e) => setLearn(e.target.value)}
-          onBlur={() => void updateDeckConfig(deck.id, { learningSteps: parseSteps(learn) })}
-        />
-      </label>
-      <label className="dc-field">
-        <span className="l">Relearning</span>
-        <input
-          value={relearn}
-          placeholder="10m"
-          onChange={(e) => setRelearn(e.target.value)}
-          onBlur={() => void updateDeckConfig(deck.id, { relearningSteps: parseSteps(relearn) })}
-        />
-      </label>
-      <OptimizeControl deck={deck} />
-      <button className="dc-delete" onClick={confirmDelete}>
-        <Icon.trash s={14} /> Delete deck
-      </button>
-    </div>
-  );
-}
-
-/** Trains personalized FSRS weights from this deck's review history and writes them to fsrs_params. */
-function OptimizeControl({ deck }: { deck: DeckStat }) {
-  const [running, setRunning] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  async function run() {
-    setRunning(true);
-    setMsg(null);
-    try {
-      const r = await optimizeDeck(deck.id);
-      setMsg(
-        r.ok
-          ? { ok: true, text: `Optimized from ${r.reviewCount} reviews — weights saved.` }
-          : { ok: false, text: r.reason ?? 'Could not optimize.' },
-      );
-    } catch (e) {
-      setMsg({ ok: false, text: (e as Error)?.message ?? 'Optimization failed.' });
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  return (
-    <div className="dc-optimize">
-      <button className="dc-opt-btn" disabled={running} onClick={() => void run()}>
-        {running ? 'Optimizing…' : 'Optimize FSRS weights'}
-      </button>
-      {msg && <span className={'dc-opt-msg' + (msg.ok ? ' ok' : ' err')}>{msg.text}</span>}
-    </div>
-  );
-}
-
-/** Decks grid + all-cards browser, driven entirely by the synced cards/notes/decks tables (M4). */
 export function DecksScreen({ onReviewDeck }: Props) {
-  const { session } = useAuth();
   const decks = useDeckStats();
-  const cards = useAllCards();
-  const now = Date.now();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = selectedId ? decks.find((d) => d.id === selectedId) ?? null : null;
+
+  // If the open deck disappears (deleted), fall back to the grid.
+  useEffect(() => {
+    if (selectedId && decks.length && !decks.some((d) => d.id === selectedId)) setSelectedId(null);
+  }, [decks, selectedId]);
+
+  if (selected) {
+    return (
+      <DeckDetail
+        deck={selected}
+        onBack={() => setSelectedId(null)}
+        onReview={() => onReviewDeck(selected)}
+      />
+    );
+  }
+  return <DeckList decks={decks} onOpen={(d) => setSelectedId(d.id)} />;
+}
+
+// ---------------------------------------------------------------------------
+// Deck grid + create/upload.
+// ---------------------------------------------------------------------------
+
+function DeckList({ decks, onOpen }: { decks: DeckStat[]; onOpen: (d: DeckStat) => void }) {
+  const { session } = useAuth();
   const importing = useImporting();
   const fileRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-
-  function dueText(due: string | null, reps: number): string {
-    if (reps === 0) return 'new';
-    if (!due) return '—';
-    const t = new Date(due).getTime();
-    return t <= now ? 'due' : formatInterval(new Date(now), new Date(t));
-  }
 
   async function addDeck() {
     const userId = session?.user.id;
@@ -181,8 +103,8 @@ export function DecksScreen({ onReviewDeck }: Props) {
           </Btn>
           {menuOpen && (
             <>
-              <div className="deck-add-backdrop" onClick={() => setMenuOpen(false)} />
-              <div className="deck-add-menu">
+              <div className="popmenu-backdrop" onClick={() => setMenuOpen(false)} />
+              <div className="popmenu">
                 <button onClick={() => { setMenuOpen(false); void addDeck(); }}>
                   <Icon.plus s={15} /> Create empty deck
                 </button>
@@ -194,14 +116,15 @@ export function DecksScreen({ onReviewDeck }: Props) {
           )}
         </span>
       </div>
+
       {decks.length === 0 ? (
-        <p style={{ color: 'var(--ink-faint)', marginBottom: 36 }}>
-          No decks yet. Open a book, tap a word, and ＋ Add to deck to start mining cards.
+        <p style={{ color: 'var(--ink-faint)' }}>
+          No decks yet. Open a book, tap a word, and ＋ Add to deck — or import an Anki deck above.
         </p>
       ) : (
         <div className="deck-grid">
           {decks.map((d, i) => (
-            <div className="deck-card" key={d.id} onClick={() => onReviewDeck(d)}>
+            <div className="deck-card" key={d.id} onClick={() => onOpen(d)}>
               <div className="dc-top">
                 <span className="dc-bar" style={{ background: DECK_TONES[i % DECK_TONES.length] }} />
                 <span className="dc-name">{d.name}</span>
@@ -211,56 +134,295 @@ export function DecksScreen({ onReviewDeck }: Props) {
                 <div className="ds"><div className="v">{d.new}</div><div className="l">New</div></div>
                 <div className="ds"><div className="v">{d.total}</div><div className="l">Total</div></div>
               </div>
-              <DeckConfigControl deck={d} />
+              <div className="dc-open">Open <Icon.chevR s={14} /></div>
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
 
-      <div className="sec-bar">
-        <h2>All cards</h2>
-        <span className="count">{cards.length} {cards.length === 1 ? 'card' : 'cards'}</span>
+// ---------------------------------------------------------------------------
+// Single deck: actions menu + scoped card browser.
+// ---------------------------------------------------------------------------
+
+type Modal = null | 'options' | 'description' | 'add';
+
+function DeckDetail({ deck, onBack, onReview }: { deck: DeckStat; onBack: () => void; onReview: () => void }) {
+  const { session } = useAuth();
+  const cards = useDeckCards(deck.id);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [modal, setModal] = useState<Modal>(null);
+
+  function rename() {
+    const name = window.prompt('Rename deck', deck.name);
+    if (name && name.trim() && name.trim() !== deck.name) void renameDeck(deck.id, name);
+  }
+  function confirmDelete() {
+    if (window.confirm(`Delete “${deck.name}” and its ${deck.total} card${deck.total === 1 ? '' : 's'}? This cannot be undone.`)) {
+      void deleteDeck(deck.id);
+      onBack();
+    }
+  }
+
+  const MENU: { label: string; icon: keyof typeof Icon; run: () => void; danger?: boolean }[] = [
+    { label: 'Add card', icon: 'plus', run: () => setModal('add') },
+    { label: 'Rename deck', icon: 'study', run: rename },
+    { label: 'Edit description', icon: 'reader', run: () => setModal('description') },
+    { label: 'Deck options', icon: 'gear', run: () => setModal('options') },
+    { label: 'Delete deck', icon: 'trash', run: confirmDelete, danger: true },
+  ];
+
+  return (
+    <div className="page">
+      <div className="dd-bar">
+        <button className="dd-back" onClick={onBack}><Icon.chevL s={18} /> Decks</button>
+        <span style={{ flex: 1 }} />
+        <span className="deck-add">
+          <Btn size="sm" onClick={() => setMenuOpen((o) => !o)}><Icon.gear s={15} /> Options</Btn>
+          {menuOpen && (
+            <>
+              <div className="popmenu-backdrop" onClick={() => setMenuOpen(false)} />
+              <div className="popmenu">
+                {MENU.map((m) => (
+                  <button key={m.label} className={m.danger ? 'danger' : ''} onClick={() => { setMenuOpen(false); m.run(); }}>
+                    {(() => { const I = Icon[m.icon]; return <I s={15} />; })()} {m.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </span>
       </div>
 
-      {cards.length === 0 ? (
-        <p style={{ color: 'var(--ink-faint)' }}>No cards yet.</p>
-      ) : (
-        <table className="card-table">
-          <thead>
-            <tr>
-              <th>Term</th>
-              <th className="hide-sm">Meaning</th>
-              <th>Deck</th>
-              <th>State</th>
-              <th className="hide-sm">Due</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cards.map((c) => {
-              const state = cardStateLabel({
-                state: c.state,
-                reps: c.reps,
-                due: new Date(c.due ?? now),
-                last_review: c.last_review ? new Date(c.last_review) : null,
-              });
-              return (
-                <tr key={c.id}>
-                  <td>
-                    <span className="ct-term" lang="ja">{c.fields.Term}</span>{' '}
-                    <span className="ct-reading" lang="ja">{c.fields.Reading}</span>
-                  </td>
-                  <td className="hide-sm" style={{ color: 'var(--ink-soft)' }}>{c.fields.Meaning}</td>
-                  <td style={{ color: 'var(--ink-faint)', fontSize: 13 }}>{c.deck}</td>
-                  <td><span className={'state-pill state-' + state}>{state}</span></td>
-                  <td className="hide-sm" style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--ink-faint)' }}>
-                    {dueText(c.due, c.reps)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="dd-head">
+        <h2 className="dd-name">{deck.name}</h2>
+        {deck.description && <p className="dd-desc">{deck.description}</p>}
+        <div className="dd-stats">
+          <span><b>{deck.due}</b> due</span>
+          <span><b>{deck.new}</b> new</span>
+          <span><b>{deck.total}</b> total</span>
+          <span className="muted">{deck.newPerDay}/day new · {deck.reviewsPerDay}/day reviews</span>
+        </div>
+        <div className="dd-actions">
+          <Btn variant="primary" onClick={onReview} disabled={deck.due + deck.new === 0}>
+            <Icon.review s={16} /> Study now
+          </Btn>
+          <Btn onClick={() => setModal('add')}><Icon.plus s={15} /> Add card</Btn>
+        </div>
+      </div>
+
+      <div className="sec-bar">
+        <h2>Cards</h2>
+        <span className="count">{cards.length} {cards.length === 1 ? 'card' : 'cards'}</span>
+      </div>
+      <CardTable cards={cards} />
+
+      {modal === 'options' && <DeckOptionsModal deck={deck} onClose={() => setModal(null)} />}
+      {modal === 'description' && <DescriptionModal deck={deck} onClose={() => setModal(null)} />}
+      {modal === 'add' && session && (
+        <AddCardModal deckId={deck.id} userId={session.user.id} onClose={() => setModal(null)} />
       )}
     </div>
+  );
+}
+
+function CardTable({ cards }: { cards: CardRow[] }) {
+  const now = Date.now();
+  if (cards.length === 0) return <p style={{ color: 'var(--ink-faint)' }}>No cards in this deck yet.</p>;
+  return (
+    <table className="card-table">
+      <thead>
+        <tr>
+          <th>Front</th>
+          <th className="hide-sm">Back</th>
+          <th>State</th>
+          <th className="hide-sm">Due</th>
+        </tr>
+      </thead>
+      <tbody>
+        {cards.map((c) => {
+          const state = cardStateLabel({
+            state: c.state,
+            reps: c.reps,
+            due: new Date(c.due ?? now),
+            last_review: c.last_review ? new Date(c.last_review) : null,
+          });
+          const dueText = c.reps === 0 ? 'new' : !c.due ? '—' : new Date(c.due).getTime() <= now ? 'due' : formatInterval(new Date(now), new Date(c.due));
+          return (
+            <tr key={c.id}>
+              <td>
+                <span className="ct-term" lang="ja">{c.front || '—'}</span>
+                {c.reading && <> <span className="ct-reading" lang="ja">{c.reading}</span></>}
+              </td>
+              <td className="hide-sm" style={{ color: 'var(--ink-soft)' }}>{c.back}</td>
+              <td><span className={'state-pill state-' + state}>{state}</span></td>
+              <td className="hide-sm" style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--ink-faint)' }}>{dueText}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modals.
+// ---------------------------------------------------------------------------
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{title}</h3>
+          <button className="icon-btn" onClick={onClose}><Icon.close s={18} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function DeckOptionsModal({ deck, onClose }: { deck: DeckStat; onClose: () => void }) {
+  const [newPerDay, setNewPerDay] = useState(String(deck.newPerDay));
+  const [reviewsPerDay, setReviewsPerDay] = useState(String(deck.reviewsPerDay));
+  const [learn, setLearn] = useState((deck.learningSteps ?? []).join(' '));
+  const [relearn, setRelearn] = useState((deck.relearningSteps ?? []).join(' '));
+
+  async function save() {
+    await updateDeckConfig(deck.id, {
+      newPerDay: Math.max(0, parseInt(newPerDay || '0', 10) || 0),
+      reviewsPerDay: Math.max(0, parseInt(reviewsPerDay || '0', 10) || 0),
+      learningSteps: parseSteps(learn),
+      relearningSteps: parseSteps(relearn),
+    });
+    onClose();
+  }
+
+  return (
+    <Modal title="Deck options" onClose={onClose}>
+      <div className="modal-body">
+        <label className="opt-field">
+          <span>New cards / day</span>
+          <input type="number" min={0} value={newPerDay} onChange={(e) => setNewPerDay(e.target.value)} />
+        </label>
+        <label className="opt-field">
+          <span>Maximum reviews / day</span>
+          <input type="number" min={0} value={reviewsPerDay} onChange={(e) => setReviewsPerDay(e.target.value)} />
+        </label>
+        <label className="opt-field">
+          <span>Learning steps</span>
+          <input value={learn} placeholder="1m 10m" onChange={(e) => setLearn(e.target.value)} />
+        </label>
+        <label className="opt-field">
+          <span>Relearning steps</span>
+          <input value={relearn} placeholder="10m" onChange={(e) => setRelearn(e.target.value)} />
+        </label>
+        <OptimizeRow deck={deck} />
+      </div>
+      <div className="modal-foot">
+        <Btn onClick={onClose}>Cancel</Btn>
+        <Btn variant="primary" onClick={() => void save()}>Save</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/** Trains personalized FSRS weights from this deck's review history and writes them to fsrs_params. */
+function OptimizeRow({ deck }: { deck: DeckStat }) {
+  const [running, setRunning] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function run() {
+    setRunning(true);
+    setMsg(null);
+    try {
+      const r = await optimizeDeck(deck.id);
+      setMsg(r.ok
+        ? { ok: true, text: `Optimized from ${r.reviewCount} reviews — weights saved.` }
+        : { ok: false, text: r.reason ?? 'Could not optimize.' });
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error)?.message ?? 'Optimization failed.' });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="opt-optimize">
+      <button className="dc-opt-btn" disabled={running} onClick={() => void run()}>
+        {running ? 'Optimizing…' : 'Optimize FSRS weights from history'}
+      </button>
+      {msg && <span className={'dc-opt-msg' + (msg.ok ? ' ok' : ' err')}>{msg.text}</span>}
+    </div>
+  );
+}
+
+function DescriptionModal({ deck, onClose }: { deck: DeckStat; onClose: () => void }) {
+  const [text, setText] = useState(deck.description ?? '');
+  async function save() {
+    await updateDeckConfig(deck.id, { description: text.trim() || undefined });
+    onClose();
+  }
+  return (
+    <Modal title="Edit description" onClose={onClose}>
+      <div className="modal-body">
+        <textarea
+          className="opt-textarea"
+          rows={4}
+          value={text}
+          placeholder="A note about this deck…"
+          onChange={(e) => setText(e.target.value)}
+        />
+      </div>
+      <div className="modal-foot">
+        <Btn onClick={onClose}>Cancel</Btn>
+        <Btn variant="primary" onClick={() => void save()}>Save</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function AddCardModal({ deckId, userId, onClose }: { deckId: string; userId: string; onClose: () => void }) {
+  const [term, setTerm] = useState('');
+  const [reading, setReading] = useState('');
+  const [meaning, setMeaning] = useState('');
+  const [pos, setPos] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    if (!term.trim()) { setErr('A term is required.'); return; }
+    setSaving(true);
+    setErr(null);
+    try {
+      await addCardForWord(userId, { deckId, term: term.trim(), reading: reading.trim(), gloss: meaning.trim(), pos: pos.trim() });
+      onClose();
+    } catch (e) {
+      setErr((e as Error)?.message ?? 'Could not add card.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="Add card" onClose={onClose}>
+      <div className="modal-body">
+        <label className="opt-field col"><span>Term</span>
+          <input lang="ja" value={term} autoFocus onChange={(e) => setTerm(e.target.value)} /></label>
+        <label className="opt-field col"><span>Reading</span>
+          <input lang="ja" value={reading} onChange={(e) => setReading(e.target.value)} /></label>
+        <label className="opt-field col"><span>Meaning</span>
+          <input value={meaning} onChange={(e) => setMeaning(e.target.value)} /></label>
+        <label className="opt-field col"><span>Part of speech</span>
+          <input value={pos} onChange={(e) => setPos(e.target.value)} /></label>
+        {err && <p style={{ color: 'var(--rate-again)', fontSize: 13 }}>{err}</p>}
+      </div>
+      <div className="modal-foot">
+        <Btn onClick={onClose}>Cancel</Btn>
+        <Btn variant="primary" disabled={saving} onClick={() => void save()}>{saving ? 'Adding…' : 'Add card'}</Btn>
+      </div>
+    </Modal>
   );
 }

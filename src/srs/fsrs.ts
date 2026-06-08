@@ -34,6 +34,7 @@ export function parseJsonObject(text: string | null | undefined): Record<string,
 export const GRADES: Grade[] = [Rating.Again, Rating.Hard, Rating.Good, Rating.Easy];
 
 const DEFAULT_NEW_PER_DAY = 20;
+const DEFAULT_REVIEWS_PER_DAY = 200;
 
 /**
  * FSRS scheduler. Fuzz is disabled so scheduling is a pure function of (params, card, time,
@@ -60,11 +61,18 @@ export function scheduler(cfg?: DeckConfig): FSRS {
   return s;
 }
 
+/**
+ * Per-deck settings, stored in the deck's `fsrs_params` jsonb blob (the only flexible column on
+ * `decks`). Besides the scheduler inputs (steps, optimized `w`) it also carries daily limits and a
+ * free-text `description`; the FSRS scheduler ignores the non-scheduling keys.
+ */
 export interface DeckConfig {
   newPerDay: number;
+  reviewsPerDay: number;
   learningSteps?: string[];
   relearningSteps?: string[];
   w?: number[];
+  description?: string;
 }
 
 const asStringArray = (v: unknown): string[] | undefined =>
@@ -74,24 +82,29 @@ const asStringArray = (v: unknown): string[] | undefined =>
 export function deckConfig(deck: Pick<DeckRecord, 'fsrs_params'>): DeckConfig {
   const parsed = parseJsonObject(deck.fsrs_params) as {
     newPerDay?: unknown;
+    reviewsPerDay?: unknown;
     learningSteps?: unknown;
     relearningSteps?: unknown;
     w?: unknown;
+    description?: unknown;
   };
   return {
     newPerDay: typeof parsed.newPerDay === 'number' ? parsed.newPerDay : DEFAULT_NEW_PER_DAY,
+    reviewsPerDay: typeof parsed.reviewsPerDay === 'number' ? parsed.reviewsPerDay : DEFAULT_REVIEWS_PER_DAY,
     learningSteps: asStringArray(parsed.learningSteps),
     relearningSteps: asStringArray(parsed.relearningSteps),
     w: Array.isArray(parsed.w) && parsed.w.every((x) => typeof x === 'number') ? (parsed.w as number[]) : undefined,
+    description: typeof parsed.description === 'string' && parsed.description ? parsed.description : undefined,
   };
 }
 
 /** Serialize deck config back to the `fsrs_params` text column (preserving optimized weights/steps). */
 export function serializeDeckConfig(cfg: DeckConfig): string {
-  const out: Record<string, unknown> = { newPerDay: cfg.newPerDay };
+  const out: Record<string, unknown> = { newPerDay: cfg.newPerDay, reviewsPerDay: cfg.reviewsPerDay };
   if (cfg.learningSteps?.length) out.learningSteps = cfg.learningSteps;
   if (cfg.relearningSteps?.length) out.relearningSteps = cfg.relearningSteps;
   if (cfg.w) out.w = cfg.w;
+  if (cfg.description) out.description = cfg.description;
   return JSON.stringify(out);
 }
 

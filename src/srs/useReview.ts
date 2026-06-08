@@ -72,6 +72,7 @@ interface SessionCard {
 interface CandidateRow {
   id: string;
   tmpl: number;
+  state: number;
   fields: string;
   created: string;
   deck_id: string | null;
@@ -86,7 +87,7 @@ function startOfTodayISO(): string {
   return d.toISOString();
 }
 
-const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, n.fields AS fields, n.created_at AS created, n.deck_id,
+const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, c.state AS state, n.fields AS fields, n.created_at AS created, n.deck_id,
     d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates
   FROM cards c JOIN notes n ON n.id = c.note_id
   LEFT JOIN decks d ON d.id = n.deck_id
@@ -126,6 +127,33 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
     [startOfTodayISO()],
   );
   const introducedByDeck = new Map(introduced.map((r) => [r.deck ?? '', r.cnt]));
+
+  // Cap *review-state* cards per deck by its daily review limit, minus reviews already done today
+  // (learning/relearning cards bypass the cap so a lapsed card always comes back this session).
+  const reviewsToday = await db.getAll<{ deck: string | null; cnt: number }>(
+    `SELECT n.deck_id AS deck, COUNT(*) AS cnt
+     FROM review_logs rl JOIN cards c ON c.id = rl.card_id JOIN notes n ON n.id = c.note_id
+     WHERE rl.review_time >= ?
+     GROUP BY n.deck_id`,
+    [startOfTodayISO()],
+  );
+  const reviewsByDeck = new Map(reviewsToday.map((r) => [r.deck ?? '', r.cnt]));
+  const reviewRemaining = new Map<string, number>();
+  const allowedDue: CandidateRow[] = [];
+  for (const row of due) {
+    if (row.state !== State.Review) { allowedDue.push(row); continue; }
+    const deck = row.deck_id ?? '';
+    if (!reviewRemaining.has(deck)) {
+      const done = Math.max(0, (reviewsByDeck.get(deck) ?? 0) - (introducedByDeck.get(deck) ?? 0));
+      reviewRemaining.set(deck, Math.max(0, deckConfig({ fsrs_params: row.fsrs_params }).reviewsPerDay - done));
+    }
+    const left = reviewRemaining.get(deck)!;
+    if (left > 0) {
+      allowedDue.push(row);
+      reviewRemaining.set(deck, left - 1);
+    }
+  }
+
   const remaining = new Map<string, number>();
   const allowedNew: CandidateRow[] = [];
   for (const row of newRows) {
@@ -140,7 +168,7 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
       remaining.set(deck, left - 1);
     }
   }
-  return [...due, ...allowedNew];
+  return [...allowedDue, ...allowedNew];
 }
 
 const bySoonest = (a: SessionCard, b: SessionCard) => a.dueAt - b.dueAt;
