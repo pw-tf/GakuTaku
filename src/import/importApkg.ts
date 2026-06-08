@@ -60,7 +60,7 @@ export async function importApkg(
     const noteTypeId = crypto.randomUUID();
     modelById.set(m.id, { noteTypeId, fields: m.fields });
     const templates = m.templates.map((t) => ({ name: t.name, front: t.qfmt, back: t.afmt }));
-    noteTypeRows.push([noteTypeId, userId, m.name || 'Imported note type', JSON.stringify(m.fields), JSON.stringify(templates)]);
+    noteTypeRows.push([noteTypeId, userId, m.name || 'Imported note type', JSON.stringify(m.fields), JSON.stringify(templates), m.css || null]);
   }
 
   // --- decks (only those a card actually lives in) ---
@@ -162,7 +162,7 @@ export async function importApkg(
 
   // --- persist (FK-safe order: note_types, decks, notes, cards, review_logs) ---
   onProgress?.({ phase: 'writing', done: 0, total: noteRows.length + cardRows.length + reviewRows.length });
-  await insertChunked('INSERT INTO note_types (id, user_id, name, fields, card_templates) VALUES (?, ?, ?, ?, ?)', noteTypeRows);
+  await insertChunked('INSERT INTO note_types (id, user_id, name, fields, card_templates, css) VALUES (?, ?, ?, ?, ?, ?)', noteTypeRows);
   await insertChunked('INSERT INTO decks (id, user_id, name, fsrs_params, created_at) VALUES (?, ?, ?, ?, ?)', deckRows);
   const grandTotal = noteRows.length + cardRows.length + reviewRows.length;
   await insertChunked('INSERT INTO notes (id, user_id, deck_id, note_type_id, fields, tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', noteRows,

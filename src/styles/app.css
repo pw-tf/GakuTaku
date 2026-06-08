@@ -144,17 +144,9 @@ body { overflow: hidden; }
 .rd-page-nav.right { right: 4px; }
 .rd-page-count { position:absolute; bottom: 11px; left:50%; transform: translateX(-50%); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; color: var(--ink-faint); z-index: 3; }
 
-/* Imported Anki card (generic template render). Kept readable + contained within the review face. */
-.card-html { font-family: var(--jp-mincho); font-size: 21px; line-height: 1.9; color: var(--ink); text-align: center; max-width: 100%; }
-/* The front prompt is shown large (in theme ink); only the word under review is tinted with the
-   accent (see `.ct-word`), so a sentence card doesn't turn entirely accent-coloured. */
-.card-html.is-front { font-size: clamp(30px, 5.2vw, 50px); font-weight: 500; line-height: 1.3; }
-.card-html.is-front img { font-size: 16px; } /* keep media at natural size, not the headline scale */
-.card-html .ct-word { color: var(--accent); font-weight: 600; }
-.card-html img { max-width: 100%; height: auto; border-radius: var(--radius); margin: 10px auto; display: block; }
-.card-html hr { border: none; border-top: 1px solid var(--rule); margin: 18px 0; }
-.card-html .anki-audio { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 999px; background: color-mix(in oklch, var(--accent) 14%, transparent); color: var(--accent); cursor: pointer; font-size: 15px; margin: 6px; user-select: none; }
-.card-html .anki-audio:hover { background: color-mix(in oklch, var(--accent) 22%, transparent); }
+/* Imported Anki card — rendered inside a Shadow DOM with the note type's own CSS (see CardTemplate).
+   The host just provides width/centering; styling lives in the shadow root. */
+.card-shadow-host { display: block; width: 100%; max-width: 100%; }
 
 .rd-progress { position:absolute; left:0; right:0; bottom:0; height:3px; background: var(--rule); z-index: 4; }
 .rd-progress i { display:block; height:100%; background: var(--accent); transition: width .3s; }

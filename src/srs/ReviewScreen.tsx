@@ -117,7 +117,7 @@ export function ReviewScreen({ source, onExit }: Props) {
       <div className="rv-stage" onClick={() => !shown && review.reveal()}>
         {current.generic ? (
           <div className="card-face">
-            <CardTemplate front={current.generic.front} back={current.generic.back} fields={current.generic.fields} shown={shown} userId={userId} />
+            <CardTemplate front={current.generic.front} back={current.generic.back} fields={current.generic.fields} css={current.generic.css} ord={current.generic.ord} shown={shown} userId={userId} />
             {!shown && <div className="show-hint">Tap to reveal · space</div>}
           </div>
         ) : (

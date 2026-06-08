@@ -27,6 +27,8 @@ export interface GenericCard {
   back: string;
   /** The note type's stylesheet (Anki model CSS), applied in a sandboxed scope at render time. */
   css: string;
+  /** The card's template/cloze ordinal (Anki `ord`) — the active cloze is ord + 1. */
+  ord: number;
 }
 
 function parseStrMap(text: string | null | undefined): Record<string, string> {
@@ -239,7 +241,7 @@ export function useReview(source: ReviewSource): ReviewState {
         if (r.nt_name && r.nt_name !== NOTE_TYPE_NAME) {
           const tmpls = parseTemplates(r.nt_templates);
           const t = tmpls[r.tmpl] ?? tmpls[0];
-          if (t) generic = { fields: parseStrMap(r.fields), front: t.front, back: t.back, css: r.nt_css ?? '' };
+          if (t) generic = { fields: parseStrMap(r.fields), front: t.front, back: t.back, css: r.nt_css ?? '', ord: r.tmpl };
         }
         return { cardId: r.id, fields: parseNoteFields(r.fields), generic, fsrsCard, cfg, dueAt };
       });

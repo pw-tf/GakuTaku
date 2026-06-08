@@ -25,6 +25,8 @@ export interface ApkgModel {
   /** Field names in display order. */
   fields: string[];
   templates: { name: string; qfmt: string; afmt: string }[];
+  /** The note type's stylesheet (Anki model `css`) — applied verbatim at render time. */
+  css: string;
 }
 export interface ApkgDeck {
   id: string;
@@ -91,7 +93,7 @@ function parseColJson(db: Database): { models: ApkgModel[]; decks: ApkgDeck[] } 
   const decks: ApkgDeck[] = [];
   if (col) {
     const modelsObj = JSON.parse(str(col.models) || '{}') as Record<string, {
-      id: number; name: string; flds: { name: string; ord: number }[]; tmpls: { name: string; qfmt: string; afmt: string; ord: number }[];
+      id: number; name: string; css?: string; flds: { name: string; ord: number }[]; tmpls: { name: string; qfmt: string; afmt: string; ord: number }[];
     }>;
     for (const m of Object.values(modelsObj)) {
       models.push({
@@ -99,6 +101,7 @@ function parseColJson(db: Database): { models: ApkgModel[]; decks: ApkgDeck[] } 
         name: m.name,
         fields: [...m.flds].sort((a, b) => a.ord - b.ord).map((f) => f.name),
         templates: [...m.tmpls].sort((a, b) => a.ord - b.ord).map((t) => ({ name: t.name, qfmt: t.qfmt, afmt: t.afmt })),
+        css: str(m.css),
       });
     }
     const decksObj = JSON.parse(str(col.decks) || '{}') as Record<string, { id: number; name: string }>;
@@ -128,6 +131,7 @@ function parseNormalized(db: Database): { models: ApkgModel[]; decks: ApkgDeck[]
       name: str(nt.name),
       fields: (fieldsByNt.get(k) ?? []).sort((a, b) => a.ord - b.ord).map((f) => f.name),
       templates: (tmplByNt.get(k) ?? []).sort((a, b) => a.ord - b.ord).map((t) => ({ name: t.name, qfmt: t.qfmt, afmt: t.afmt })),
+      css: '', // schema-18 model CSS lives in a protobuf config blob we don't decode
     };
   });
   const decks: ApkgDeck[] = rows(db, 'SELECT id, name FROM decks').map((d) => ({ id: str(d.id), name: str(d.name) }));

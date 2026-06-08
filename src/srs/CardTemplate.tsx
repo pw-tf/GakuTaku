@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { usePrefs } from '../app/prefs';
 import { resolveMedia } from '../import/media';
 
 /**
- * Render an imported Anki card (build plan M6). Anki templates are HTML with `{{Field}}`
- * substitution, `{{FrontSide}}` (the rendered question, reused on the answer), and
- * `{{#Field}}…{{/Field}}` / `{{^Field}}…{{/Field}}` conditionals. We support those; cloze and
- * template JS are out of scope. Media refs were rewritten at import time to `data-media`/`data-audio`
- * tokens, which we resolve to object URLs from the offline cache (or Storage) after the HTML mounts.
+ * Render an imported Anki card faithfully (SRS redesign). Anki templates are HTML with `{{Field}}`
+ * substitution, `{{FrontSide}}`, `{{#Field}}…{{/Field}}` / `{{^Field}}…{{/Field}}` conditionals, and
+ * `{{cloze:Field}}` deletions. We render the result **inside a Shadow DOM** together with the note
+ * type's own CSS, so each deck looks as its author intended — including which word is emphasised —
+ * without a heuristic and without the styles leaking into (or being overridden by) the app. Media
+ * refs were rewritten at import to `data-media`/`data-audio` tokens, resolved after mount.
  */
 
 /** Show/hide `{{#F}}…{{/F}}` (if non-empty) and `{{^F}}…{{/F}}` (if empty) blocks until stable. */
@@ -22,7 +24,7 @@ function applyConditionals(tmpl: string, fields: Record<string, string>): string
   return out;
 }
 
-/** Replace `{{Field}}` (stripping modifiers like `text:`/`furigana:`/`cloze:`) with field values. */
+/** Replace `{{Field}}` (stripping modifiers like `text:`/`furigana:`) with field values. */
 function substFields(tmpl: string, fields: Record<string, string>): string {
   return tmpl.replace(/\{\{([^}#^/][^}]*)\}\}/g, (_m, raw: string) => {
     let name = raw.trim();
@@ -32,126 +34,99 @@ function substFields(tmpl: string, fields: Record<string, string>): string {
   });
 }
 
-function renderSide(tmpl: string, fields: Record<string, string>, frontSide?: string): string {
+/**
+ * Process Anki cloze markers `{{cN::answer::hint}}` for the active cloze ordinal. On the question
+ * side the active cloze is hidden as `[hint]`/`[...]`; other clozes show their answer. On the answer
+ * side the active cloze is revealed and highlighted.
+ */
+function processCloze(value: string, activeN: number, showAnswer: boolean): string {
+  return value.replace(/\{\{c(\d+)::([\s\S]*?)(?:::([\s\S]*?))?\}\}/g, (_m, n: string, text: string, hint?: string) => {
+    if (Number(n) !== activeN) return text; // other clozes are revealed as plain text
+    if (showAnswer) return `<span class="cloze">${text}</span>`;
+    return `<span class="cloze">[${hint && hint.trim() ? hint : '...'}]</span>`;
+  });
+}
+
+interface RenderOpts {
+  frontSide?: string;
+  clozeN: number;
+  showAnswer: boolean;
+}
+
+function renderSide(tmpl: string, fields: Record<string, string>, opts: RenderOpts): string {
   let html = applyConditionals(tmpl, fields);
-  if (frontSide != null) html = html.replace(/\{\{FrontSide\}\}/g, frontSide);
+  if (opts.frontSide != null) html = html.replace(/\{\{FrontSide\}\}/g, opts.frontSide);
+  // Cloze fields are processed before generic substitution so their {{cN::…}} markers aren't mangled.
+  html = html.replace(/\{\{cloze:([^}]+)\}\}/g, (_m, f: string) =>
+    processCloze(fields[f.trim()] ?? '', opts.clozeN, opts.showAnswer),
+  );
   return substFields(html, fields);
 }
 
-/** Plain text of a field value (drop tags, media tokens, furigana brackets) for word matching. */
-function plain(s: string): string {
-  return s
-    .replace(/\[sound:[^\]]*\]/gi, '')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\[[^\]]*\]/g, '') // furigana readings like 人[ひと]
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-const TARGET_NAME = /(word|vocab|term|target|focus|kanji|expression|単語|言葉|表現)/i;
-const CONTEXT_NAME = /(sentence|context|example|reading|meaning|definition|translat|note|例文|文)/i;
-
-/**
- * Identify the single word under review on a sentence/context card: the short field whose value
- * appears *inside* a longer field (the example sentence). Used to highlight only that word in the
- * accent colour, rather than the whole card. Returns null when nothing matches (then nothing is
- * highlighted — better than colouring the entire sentence).
- */
-function pickWord(fields: Record<string, string>): string | null {
-  const entries = Object.entries(fields)
-    .map(([name, v]) => ({ name, val: plain(v) }))
-    .filter((e) => e.val.length > 0);
-  let best: { val: string; score: number } | null = null;
-  for (const e of entries) {
-    if (e.val.length > 24) continue; // a word/phrase, not a sentence
-    const insideLonger = entries.some((o) => o.val.length > e.val.length && o.val.includes(e.val));
-    if (!insideLonger) continue;
-    const score = (TARGET_NAME.test(e.name) ? 2 : 0) - (CONTEXT_NAME.test(e.name) ? 2 : 0) - e.val.length * 0.01;
-    if (!best || score > best.score) best = { val: e.val, score };
-  }
-  return best?.val ?? null;
-}
-
-/** Wrap every occurrence of `word` in the element's text nodes with an accent span. DOM-safe (never
- *  touches tags/attributes), idempotent (skips text already inside a highlight). */
-function highlightWord(root: HTMLElement, word: string): void {
-  if (word.length < 1) return;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const targets: Text[] = [];
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const t = n as Text;
-    if (t.parentElement?.closest('.ct-word')) continue;
-    if (t.textContent && t.textContent.includes(word)) targets.push(t);
-  }
-  for (const t of targets) {
-    const parts = (t.textContent ?? '').split(word);
-    const frag = document.createDocumentFragment();
-    parts.forEach((p, i) => {
-      if (i > 0) {
-        const span = document.createElement('span');
-        span.className = 'ct-word';
-        span.textContent = word;
-        frag.appendChild(span);
-      }
-      if (p) frag.appendChild(document.createTextNode(p));
-    });
-    t.replaceWith(frag);
-  }
-}
+/** Minimal defaults so a card still reads even with no model CSS; the model CSS follows and wins. */
+const BASE_CSS = `
+  :host { display: block; }
+  .card { font-family: var(--jp-mincho), serif; font-size: 21px; line-height: 1.7; color: var(--ink); text-align: center; }
+  .nightMode .card, .night_mode .card { color: var(--ink); }
+  img { max-width: 100%; height: auto; }
+  a { color: var(--accent); }
+  hr { border: none; border-top: 1px solid var(--rule); margin: 16px 0; }
+  .cloze { color: var(--accent); font-weight: 600; }
+  .anki-audio { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px;
+    border-radius: 999px; background: color-mix(in oklch, var(--accent) 14%, transparent); color: var(--accent);
+    cursor: pointer; font-size: 15px; margin: 6px; user-select: none; }
+`;
 
 interface Props {
   front: string;
   back: string;
   fields: Record<string, string>;
+  css: string;
+  /** Card template/cloze ordinal (Anki `ord`); the active cloze is `ord + 1`. */
+  ord: number;
   shown: boolean;
   userId: string;
 }
 
-export function CardTemplate({ front, back, fields, shown, userId }: Props) {
+export function CardTemplate({ front, back, fields, css, ord, shown, userId }: Props) {
+  const dark = usePrefs((s) => s.dark);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const shadowRef = useRef<ShadowRoot | null>(null);
+
   const html = useMemo(() => {
-    const frontHtml = renderSide(front, fields);
-    return shown ? renderSide(back, fields, frontHtml) : frontHtml;
-  }, [front, back, fields, shown]);
+    const clozeN = ord + 1;
+    const frontHtml = renderSide(front, fields, { clozeN, showAnswer: false });
+    return shown ? renderSide(back, fields, { frontSide: frontHtml, clozeN, showAnswer: true }) : frontHtml;
+  }, [front, back, fields, ord, shown]);
 
-  const word = useMemo(() => pickWord(fields), [fields]);
-
-  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const host = hostRef.current;
+    if (!host) return;
+    if (!shadowRef.current) shadowRef.current = host.attachShadow({ mode: 'open' });
+    const root = shadowRef.current;
+    const nm = dark ? ' nightMode night_mode' : '';
+    root.innerHTML = `<style>${BASE_CSS}${css || ''}</style><div class="${nm.trim()}"><div class="card">${html}</div></div>`;
+
     let alive = true;
-
-    if (word) highlightWord(el, word);
-
-    el.querySelectorAll<HTMLElement>('[data-media]').forEach((node) => {
+    root.querySelectorAll<HTMLElement>('[data-media]').forEach((node) => {
       const token = node.getAttribute('data-media');
       if (!token) return;
       void resolveMedia(token, userId).then((url) => {
         if (url && alive && node.tagName === 'IMG') (node as HTMLImageElement).src = url;
       });
     });
-
-    el.querySelectorAll<HTMLElement>('[data-audio]').forEach((node) => {
+    root.querySelectorAll<HTMLElement>('[data-audio]').forEach((node) => {
       const token = node.getAttribute('data-audio');
       if (!token) return;
-      node.classList.add('ready');
+      node.classList.add('anki-audio');
       node.textContent = '►';
       node.onclick = async () => {
         const url = await resolveMedia(token, userId);
         if (url) void new Audio(url).play().catch(() => {});
       };
     });
-
     return () => { alive = false; };
-  }, [html, userId, word]);
+  }, [html, css, dark, userId]);
 
-  return (
-    <div
-      className={'card-html' + (shown ? '' : ' is-front')}
-      ref={ref}
-      lang="ja"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <div className="card-shadow-host" ref={hostRef} lang="ja" />;
 }
