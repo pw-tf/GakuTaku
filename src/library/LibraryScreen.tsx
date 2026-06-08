@@ -2,12 +2,10 @@ import { useMemo, useRef } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
-import { useTasks } from '../app/tasks';
+import { importFile, useImporting } from '../import/runImport';
 import { useDocuments, useReadingPositions } from '../sync/hooks';
 import type { DocumentRecord } from '../sync/AppSchema';
 import { SAMPLE_FEEDS } from '../data/sample';
-
-const IMPORT_TASK = 'library-import';
 
 const TONES = ['#b8492f', '#5b6b58', '#3d5a6b', '#6b5b3d', '#7d4a86', '#3f5bb0', '#2f6b4f'];
 function toneFor(id: string): string {
@@ -28,7 +26,7 @@ export function LibraryScreen({ onOpenBook, due, streak }: Props) {
   const { data: positions } = useReadingPositions();
   const fileRef = useRef<HTMLInputElement>(null);
   // Progress lives in the global task store (BackgroundTasks banner) so it survives navigating away.
-  const busy = useTasks((s) => s.tasks.some((t) => t.id === IMPORT_TASK && t.status === 'running'));
+  const busy = useImporting();
 
   const pctById = useMemo(() => {
     const m = new Map<string, number>();
@@ -46,31 +44,7 @@ export function LibraryScreen({ onOpenBook, due, streak }: Props) {
     const file = e.target.files?.[0];
     if (!file || !session) return;
     e.target.value = '';
-    const isApkg = /\.apkg$/i.test(file.name);
-    const tasks = useTasks.getState();
-    tasks.start(IMPORT_TASK, isApkg ? `Importing ${file.name}` : `Uploading ${file.name}`);
-    tasks.update(IMPORT_TASK, { message: isApkg ? 'Reading deck…' : 'Uploading to your library…' });
-    try {
-      // Dynamic imports keep the heavy ePUB / Anki-import stacks out of the initial bundle.
-      if (isApkg) {
-        const { importApkgFile } = await import('../import');
-        const s = await importApkgFile(file, session.user.id, (p) => {
-          if (p.phase === 'mapping') tasks.update(IMPORT_TASK, { total: 0, message: 'Reading collection…' });
-          else if (p.phase === 'writing') tasks.update(IMPORT_TASK, { done: p.done ?? 0, total: p.total ?? 0, message: 'Importing cards…' });
-          else if (p.phase === 'media') tasks.update(IMPORT_TASK, { done: p.done ?? 0, total: p.total ?? 0, message: 'Uploading media…' });
-        });
-        const bits = [`${s.decks} deck${s.decks === 1 ? '' : 's'}`, `${s.cards} cards`];
-        if (s.reviews) bits.push(`${s.reviews.toLocaleString()} reviews`);
-        if (s.mediaFiles) bits.push(`${s.mediaFiles} media`);
-        tasks.finish(IMPORT_TASK, 'success', `Imported ${bits.join(', ')}.`);
-      } else {
-        const { uploadEpub } = await import('../reader/uploadEpub');
-        await uploadEpub(file, session.user.id);
-        tasks.finish(IMPORT_TASK, 'success', `“${file.name}” added to your library.`);
-      }
-    } catch (err) {
-      tasks.finish(IMPORT_TASK, 'error', err instanceof Error ? err.message : 'Import failed.');
-    }
+    await importFile(file, session.user.id);
   }
 
   return (

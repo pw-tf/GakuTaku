@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { db } from '../sync/system';
 import { useAuth } from '../auth/AuthProvider';
 import { Btn } from '../ui/atoms';
 import { Icon } from '../ui/icons';
+import { importFile, useImporting } from '../import/runImport';
 import { useAllCards, useDeckStats, type DeckStat } from './srsHooks';
 import { cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
 import { createDeck, deleteDeck, renameDeck } from './mining';
@@ -136,7 +137,10 @@ export function DecksScreen({ onReviewDeck }: Props) {
   const decks = useDeckStats();
   const cards = useAllCards();
   const now = Date.now();
+  const importing = useImporting();
+  const fileRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   function dueText(due: string | null, reps: number): string {
     if (reps === 0) return 'new';
@@ -158,15 +162,36 @@ export function DecksScreen({ onReviewDeck }: Props) {
     }
   }
 
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !session) return;
+    e.target.value = '';
+    await importFile(file, session.user.id);
+  }
+
   return (
     <div className="page">
+      <input ref={fileRef} type="file" accept=".apkg" hidden onChange={onFile} />
       <div className="sec-bar">
         <h2>Decks</h2>
         <span className="count">{decks.length} {decks.length === 1 ? 'deck' : 'decks'}</span>
-        <span className="more">
-          <Btn size="sm" disabled={creating} onClick={() => void addDeck()}>
+        <span className="more deck-add">
+          <Btn size="sm" disabled={creating || importing} onClick={() => setMenuOpen((o) => !o)}>
             <Icon.plus s={15} /> New deck
           </Btn>
+          {menuOpen && (
+            <>
+              <div className="deck-add-backdrop" onClick={() => setMenuOpen(false)} />
+              <div className="deck-add-menu">
+                <button onClick={() => { setMenuOpen(false); void addDeck(); }}>
+                  <Icon.plus s={15} /> Create empty deck
+                </button>
+                <button onClick={() => { setMenuOpen(false); fileRef.current?.click(); }}>
+                  <Icon.upload s={15} /> Upload Anki deck (.apkg)
+                </button>
+              </div>
+            </>
+          )}
         </span>
       </div>
       {decks.length === 0 ? (
