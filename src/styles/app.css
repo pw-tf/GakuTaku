@@ -364,6 +364,10 @@ body { overflow: hidden; }
 .accent-swatches .sw { width: 26px; height: 26px; border-radius: 50%; cursor:pointer; border: 2px solid transparent; }
 .accent-swatches .sw.on { border-color: var(--ink); }
 .toggle-row { display:flex; align-items:center; justify-content:space-between; font-size: 13.5px; }
+.spinner { display:inline-block; border:2px solid var(--rule-strong); border-top-color: var(--accent); border-radius:50%; animation: spin .7s linear infinite; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.deck-loading { display:flex; justify-content:center; padding: 48px 0; }
+
 .set-select { font:inherit; font-size:13px; padding:5px 8px; border:1px solid var(--rule-strong); border-radius:var(--radius); background:var(--paper); color:var(--ink); cursor:pointer; outline:none; }
 .set-select:focus { border-color: var(--accent); }
 

@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { useAuth } from '../auth/AuthProvider';
-import { Btn, Chip, Kicker } from '../ui/atoms';
+import { Btn, Chip, Kicker, Spinner } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
 import { useDocuments, useReadingPositions } from '../sync/hooks';
@@ -17,10 +17,11 @@ function toneFor(id: string): string {
 interface Props {
   onOpenBook: (doc: DocumentRecord) => void;
   due: number;
+  dueLoading: boolean;
   streak: number;
 }
 
-export function LibraryScreen({ onOpenBook, due, streak }: Props) {
+export function LibraryScreen({ onOpenBook, due, dueLoading, streak }: Props) {
   const { session } = useAuth();
   const { data: docs } = useDocuments();
   const { data: positions } = useReadingPositions();
@@ -71,7 +72,7 @@ export function LibraryScreen({ onOpenBook, due, streak }: Props) {
         <div className="daily">
           <div>
             <Kicker accent>Today</Kicker>
-            <div className="big-num">{due}<span className="u">due</span></div>
+            <div className="big-num">{dueLoading ? <Spinner size={26} /> : due}<span className="u">due</span></div>
           </div>
           <div style={{ marginTop: 'auto', display: 'flex', gap: 18, alignItems: 'center' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--accent)', fontWeight: 600, fontSize: 13 }}>

@@ -46,6 +46,7 @@ export function AppShell() {
 
   const due = useStudyCount();
   const streak = useStreak();
+  const dueCount = due.count;
 
   function openBook(b: DocumentRecord) {
     setBook(b);
@@ -85,7 +86,7 @@ export function AppShell() {
             <div key={it.id} className={'nav-item' + (on ? ' on' : '')} onClick={() => navTo(it)} title={it.label}>
               <span className="nav-ic"><I s={20} /></span>
               <span className="nav-lbl">{it.label}</span>
-              {it.id === 'review' && due > 0 && <span className="nav-badge">{due}</span>}
+              {it.id === 'review' && dueCount > 0 && <span className="nav-badge">{dueCount}</span>}
             </div>
           );
         })}
@@ -125,7 +126,7 @@ export function AppShell() {
           <div className="searchbox"><Icon.search s={16} /><input placeholder="Search words, books…" /></div>
         </div>
         <div className="scroll">
-          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={due} streak={streak} />}
+          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={dueCount} dueLoading={due.loading} streak={streak} />}
           {view === 'decks' && <DecksScreen onReviewDeck={(d: DeckStat, ids: string[]) => startReview({ kind: 'deck', deckIds: ids, deckName: d.name })} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'credits' && <Attribution />}

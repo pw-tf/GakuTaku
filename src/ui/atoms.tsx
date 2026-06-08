@@ -38,6 +38,11 @@ export function Chip({
   );
 }
 
+/** Small indeterminate loading spinner. */
+export function Spinner({ size = 16, className = '' }: { size?: number; className?: string }) {
+  return <span className={'spinner ' + className} style={{ width: size, height: size }} aria-label="Loading" />;
+}
+
 export function Kicker({
   accent,
   children,

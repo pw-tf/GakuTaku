@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { db } from '../sync/system';
 import { useAuth } from '../auth/AuthProvider';
-import { Btn } from '../ui/atoms';
+import { Btn, Spinner } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
 import { useDeckCards, useDeckStats, type CardRow, type DeckStat } from './srsHooks';
@@ -39,7 +39,7 @@ function parseSteps(text: string): string[] | undefined {
 // ---------------------------------------------------------------------------
 
 export function DecksScreen({ onReviewDeck }: Props) {
-  const decks = useDeckStats();
+  const { decks, loading } = useDeckStats();
   const roots = useMemo(() => buildDeckTree(decks), [decks]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = selectedId ? decks.find((d) => d.id === selectedId) ?? null : null;
@@ -62,7 +62,7 @@ export function DecksScreen({ onReviewDeck }: Props) {
       />
     );
   }
-  return <DeckList roots={roots} deckCount={decks.length} onOpen={(d) => setSelectedId(d.id)} />;
+  return <DeckList roots={roots} deckCount={decks.length} loading={loading} onOpen={(d) => setSelectedId(d.id)} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ function DeckCounts({ roll }: { roll: DeckNode['roll'] }) {
   );
 }
 
-function DeckList({ roots, deckCount, onOpen }: { roots: DeckNode[]; deckCount: number; onOpen: (d: DeckStat) => void }) {
+function DeckList({ roots, deckCount, loading, onOpen }: { roots: DeckNode[]; deckCount: number; loading: boolean; onOpen: (d: DeckStat) => void }) {
   const { session } = useAuth();
   const importing = useImporting();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -122,7 +122,7 @@ function DeckList({ roots, deckCount, onOpen }: { roots: DeckNode[]; deckCount: 
       <input ref={fileRef} type="file" accept=".apkg" hidden onChange={onFile} />
       <div className="sec-bar">
         <h2>Decks</h2>
-        <span className="count">{deckCount} {deckCount === 1 ? 'deck' : 'decks'}</span>
+        <span className="count">{loading ? '…' : `${deckCount} ${deckCount === 1 ? 'deck' : 'decks'}`}</span>
         <span className="more deck-add">
           <Btn size="sm" disabled={creating || importing} onClick={() => setMenuOpen((o) => !o)}>
             <Icon.plus s={15} /> New deck
@@ -143,7 +143,9 @@ function DeckList({ roots, deckCount, onOpen }: { roots: DeckNode[]; deckCount: 
         </span>
       </div>
 
-      {deckCount === 0 ? (
+      {loading ? (
+        <div className="deck-loading"><Spinner size={26} /></div>
+      ) : deckCount === 0 ? (
         <p style={{ color: 'var(--ink-faint)' }}>
           No decks yet. Open a book, tap a word, and ＋ Add to deck — or import an Anki deck above.
         </p>

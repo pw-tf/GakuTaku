@@ -56,17 +56,23 @@ export interface DeckStat {
   total: number;
 }
 
+export interface DeckStatsResult {
+  decks: DeckStat[];
+  /** True until the first result lands (so the UI can show a spinner instead of an empty/zero state). */
+  loading: boolean;
+}
+
 /** Per-deck Anki-style counts (New / Learning / Due, daily-capped) plus the deck's config. */
-export function useDeckStats(): DeckStat[] {
+export function useDeckStats(): DeckStatsResult {
   const now = useStableNow();
   const dayStart = useStudyDayStart();
   const rawParams = useMemo(() => [now, now], [now]);
   const introParams = useMemo(() => [dayStart, dayStart], [dayStart]);
   const revParams = useMemo(() => [dayStart], [dayStart]);
-  const { data: raw } = useQuery<RawDeckCount>(RAW_DECK_COUNTS_SQL, rawParams);
-  const { data: intro } = useQuery<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, introParams);
-  const { data: rev } = useQuery<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, revParams);
-  return useMemo(() => {
+  const { data: raw, isLoading: lRaw } = useQuery<RawDeckCount>(RAW_DECK_COUNTS_SQL, rawParams);
+  const { data: intro, isLoading: lIntro } = useQuery<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, introParams);
+  const { data: rev, isLoading: lRev } = useQuery<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, revParams);
+  const decks = useMemo(() => {
     const introByDeck = new Map(intro.map((r) => [r.deck ?? '', r.cnt]));
     const revByDeck = new Map(rev.map((r) => [r.deck ?? '', r.cnt]));
     return raw.map((r) => {
@@ -88,12 +94,19 @@ export function useDeckStats(): DeckStat[] {
       };
     });
   }, [raw, intro, rev]);
+  return { decks, loading: lRaw || lIntro || lRev };
+}
+
+export interface StudyCountResult {
+  count: number;
+  loading: boolean;
 }
 
 /** Cards actually studiable right now across all decks — the Review badge / "Today" number. */
-export function useStudyCount(): number {
-  const decks = useDeckStats();
-  return useMemo(() => decks.reduce((s, d) => s + d.new + d.learning + d.due, 0), [decks]);
+export function useStudyCount(): StudyCountResult {
+  const { decks, loading } = useDeckStats();
+  const count = useMemo(() => decks.reduce((s, d) => s + d.new + d.learning + d.due, 0), [decks]);
+  return { count, loading };
 }
 
 export interface CardRow {
