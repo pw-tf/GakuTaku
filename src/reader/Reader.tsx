@@ -3,6 +3,7 @@ import { jpCore, proxy } from '../jp-core/client';
 import type { LoadProgress } from '../dictionary/loader';
 import type { FuriToken } from '../jp-core/worker';
 import { usePrefs, type ReaderFontScale, type ReaderOrientation, type ReaderWidth } from '../app/prefs';
+import { useTasks, isTaskRunning } from '../app/tasks';
 import { useLookup } from '../jp-core/lookupService';
 import { TokenizedText } from '../ui/FuriganaText';
 import { LookupPopup, type MinedItem } from '../ui/LookupPopup';
@@ -14,6 +15,8 @@ const NEXT_SCALE: Record<ReaderFontScale, ReaderFontScale> = { s: 'm', m: 'l', l
 /** Inter-page gutter for horizontal multi-column paging (px). */
 const PAGE_GAP = 56;
 const SWIPE_MIN = 44;
+/** Background-task id for the one-time offline dictionary download (shared with the shell banner). */
+const DICT_TASK = 'dict-download';
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 interface Props {
@@ -93,15 +96,30 @@ export function Reader(props: Props) {
   const [dictStatus, setDictStatus] = useState<'checking' | 'need' | 'loading' | 'ready'>('checking');
   const [dictPct, setDictPct] = useState(0);
   useEffect(() => {
+    // If a download is already running (e.g. started, then the reader was reopened), reflect that.
+    if (isTaskRunning(DICT_TASK)) {
+      setDictStatus('loading');
+      return;
+    }
     jpCore.isDictionaryLoaded().then((l) => setDictStatus(l ? 'ready' : 'need'));
   }, []);
   async function downloadDict() {
+    if (isTaskRunning(DICT_TASK)) return;
     setDictStatus('loading');
+    const tasks = useTasks.getState();
+    tasks.start(DICT_TASK, 'Downloading dictionary');
+    tasks.update(DICT_TASK, { message: 'For offline word lookup — one time.' });
     try {
-      await jpCore.ensureDictionary(proxy((p: LoadProgress) => setDictPct(p.total ? Math.round((p.loaded / p.total) * 100) : 0)));
+      await jpCore.ensureDictionary(proxy((p: LoadProgress) => {
+        const pct = p.total ? Math.round((p.loaded / p.total) * 100) : 0;
+        setDictPct(pct);
+        tasks.update(DICT_TASK, { done: p.loaded, total: p.total });
+      }));
       setDictStatus('ready');
-    } catch {
+      tasks.finish(DICT_TASK, 'success', 'Dictionary ready — lookup works offline.');
+    } catch (err) {
       setDictStatus('need');
+      tasks.finish(DICT_TASK, 'error', err instanceof Error ? err.message : 'Dictionary download failed.');
     }
   }
 

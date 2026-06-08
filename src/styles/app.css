@@ -265,6 +265,8 @@ body { overflow: hidden; }
 .deck-card .dc-opt-msg { font-size:11.5px; line-height:1.4; }
 .deck-card .dc-opt-msg.ok { color: var(--sage); }
 .deck-card .dc-opt-msg.err { color: var(--ink-faint); }
+.deck-card .dc-delete { display:inline-flex; align-items:center; gap:6px; align-self:flex-start; margin-top:2px; font:inherit; font-size:12px; font-weight:600; padding:6px 9px; border:1px solid transparent; border-radius:var(--radius); background:none; color:var(--ink-faint); cursor:pointer; transition:color .15s, border-color .15s, background .15s; }
+.deck-card .dc-delete:hover { color:var(--rate-again); border-color:color-mix(in oklch, var(--rate-again) 40%, transparent); background:color-mix(in oklch, var(--rate-again) 8%, transparent); }
 
 .card-table { width:100%; border-collapse: collapse; }
 .card-table th { text-align:left; font-family:var(--mono); font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-faint); font-weight:500; padding: 0 14px 12px; border-bottom: 1px solid var(--rule); }
@@ -394,3 +396,23 @@ body { overflow: hidden; }
   .auth-stage { grid-template-columns: 1fr; }
   .card-table .hide-sm { display:none; }
 }
+
+/* Background-task banner (upload / import / dictionary download) — pinned, survives navigation. */
+.bgtasks { position: fixed; right: 20px; bottom: 20px; z-index: 60; display:flex; flex-direction:column; gap:10px; width: min(340px, calc(100vw - 40px)); }
+.bgtask { background: var(--paper-raised); border:1px solid var(--rule); border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 30px -14px oklch(0.2 0.02 60/.45); animation: bgtask-in .2s ease; }
+.bgtask.error { border-color: color-mix(in oklch, var(--rate-again) 45%, var(--rule)); }
+.bgtask .bt-row { display:flex; align-items:center; gap:8px; }
+.bgtask .bt-ic { display:inline-flex; color: var(--ink-faint); }
+.bgtask.success .bt-ic { color: var(--sage); }
+.bgtask.error .bt-ic { color: var(--rate-again); }
+.bgtask .bt-label { font-size:13px; font-weight:600; color: var(--ink); }
+.bgtask .bt-spacer { flex:1; }
+.bgtask .bt-pct { font-family:var(--mono); font-size:11.5px; color: var(--ink-faint); }
+.bgtask .bt-x { display:inline-flex; padding:2px; border:none; background:none; color:var(--ink-faint); cursor:pointer; border-radius:6px; }
+.bgtask .bt-x:hover { color: var(--ink); background: var(--paper-sunk); }
+.bgtask .bt-msg { font-size:12px; color: var(--ink-soft); margin-top:5px; line-height:1.4; }
+.bgtask .bt-bar { height:6px; margin-top:9px; border-radius:99px; background: var(--rule); overflow:hidden; }
+.bgtask .bt-bar i { display:block; height:100%; background: var(--accent); border-radius:99px; transition: width .3s ease; }
+.bgtask .bt-bar i.indet { width:40%; animation: bgtask-indet 1.1s ease-in-out infinite; }
+@keyframes bgtask-in { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform:none; } }
+@keyframes bgtask-indet { 0% { margin-left:-40%; } 100% { margin-left:100%; } }

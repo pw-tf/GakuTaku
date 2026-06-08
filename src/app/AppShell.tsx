@@ -3,12 +3,13 @@ import { useAuth } from '../auth/AuthProvider';
 import { Icon, type IconName } from '../ui/icons';
 import { Settings, SettingsContent } from '../ui/Settings';
 import { Attribution } from '../ui/Attribution';
+import { BackgroundTasks } from '../ui/BackgroundTasks';
 import { LibraryScreen } from '../library/LibraryScreen';
 import { DecksScreen } from '../srs/DecksScreen';
 import { AnalyticsScreen } from '../analytics/AnalyticsScreen';
 import { ReviewScreen } from '../srs/ReviewScreen';
 import type { ReviewSource } from '../srs/useReview';
-import { useDueCount, type DeckStat } from '../srs/srsHooks';
+import { useStudyCount, type DeckStat } from '../srs/srsHooks';
 import { useStreak } from '../analytics/analyticsHooks';
 import type { MinedItem } from '../ui/LookupPopup';
 import type { DocumentRecord } from '../sync/AppSchema';
@@ -43,7 +44,7 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const due = useDueCount();
+  const due = useStudyCount();
   const streak = useStreak();
 
   function openBook(b: DocumentRecord) {
@@ -84,7 +85,7 @@ export function AppShell() {
             <div key={it.id} className={'nav-item' + (on ? ' on' : '')} onClick={() => navTo(it)} title={it.label}>
               <span className="nav-ic"><I s={20} /></span>
               <span className="nav-lbl">{it.label}</span>
-              {it.id === 'review' && <span className="nav-badge">{due.total}</span>}
+              {it.id === 'review' && due > 0 && <span className="nav-badge">{due}</span>}
             </div>
           );
         })}
@@ -124,7 +125,7 @@ export function AppShell() {
           <div className="searchbox"><Icon.search s={16} /><input placeholder="Search words, books…" /></div>
         </div>
         <div className="scroll">
-          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={due.total} streak={streak} />}
+          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={due} streak={streak} />}
           {view === 'decks' && <DecksScreen onReviewDeck={(d: DeckStat) => startReview({ kind: 'deck', deckId: d.id, deckName: d.name })} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'credits' && <Attribution />}
@@ -159,6 +160,8 @@ export function AppShell() {
       {overlay === 'review' && (
         <ReviewScreen source={reviewSource} onExit={() => setOverlay(null)} />
       )}
+
+      <BackgroundTasks />
 
       {/* Mobile menu drawer (surfaces the sidebar's settings/account, hidden on small screens). */}
       {menuOpen && (

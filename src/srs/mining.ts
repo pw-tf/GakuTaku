@@ -45,6 +45,31 @@ export async function createDeck(userId: string, name: string): Promise<string> 
   return id;
 }
 
+/** Rename a deck. */
+export async function renameDeck(deckId: string, name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  await db.execute('UPDATE decks SET name = ? WHERE id = ?', [trimmed, deckId]);
+}
+
+/**
+ * Delete a deck and everything under it — its notes, their cards, and those cards' review_logs.
+ * Done in one transaction so the synced tables never end up with orphaned rows. Destructive and
+ * irreversible (the caller should confirm first).
+ */
+export async function deleteDeck(deckId: string): Promise<void> {
+  await db.writeTransaction(async (tx) => {
+    await tx.execute(
+      `DELETE FROM review_logs WHERE card_id IN (
+         SELECT c.id FROM cards c JOIN notes n ON n.id = c.note_id WHERE n.deck_id = ?)`,
+      [deckId],
+    );
+    await tx.execute('DELETE FROM cards WHERE note_id IN (SELECT id FROM notes WHERE deck_id = ?)', [deckId]);
+    await tx.execute('DELETE FROM notes WHERE deck_id = ?', [deckId]);
+    await tx.execute('DELETE FROM decks WHERE id = ?', [deckId]);
+  });
+}
+
 /** Find-or-create the default mining deck (used as a first-run fallback target). */
 export async function ensureDefaultDeck(userId: string): Promise<string> {
   const rows = await db.getAll<{ id: string }>(

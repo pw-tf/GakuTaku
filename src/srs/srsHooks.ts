@@ -15,6 +15,47 @@ function useStableNow(): string {
   return now;
 }
 
+/** Start of today (local), captured once per mount — the boundary for "new cards introduced today". */
+function useStartOfToday(): string {
+  const [t] = useState(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  });
+  return t;
+}
+
+/**
+ * Cards actually studiable right now — the number a review session would queue (mirrors
+ * `buildCandidates` in {@link useReview}): every due review plus new cards capped per deck by its
+ * remaining daily new-card allowance. This is what the Review badge / "Today" count should show;
+ * a raw count of all new cards (see {@link useDueCount}) overstates it for freshly imported decks.
+ */
+export function useStudyCount(): number {
+  const decks = useDeckStats();
+  const startOfToday = useStartOfToday();
+  const introParams = useMemo(() => [startOfToday], [startOfToday]);
+  const { data: intro } = useQuery<{ deck: string | null; cnt: number }>(
+    `SELECT n.deck_id AS deck, COUNT(*) AS cnt
+     FROM (SELECT card_id, MIN(review_time) AS first FROM review_logs GROUP BY card_id) f
+     JOIN cards c ON c.id = f.card_id
+     JOIN notes n ON n.id = c.note_id
+     WHERE f.first >= ?
+     GROUP BY n.deck_id`,
+    introParams,
+  );
+  return useMemo(() => {
+    const introByDeck = new Map(intro.map((r) => [r.deck ?? '', r.cnt]));
+    let total = 0;
+    for (const d of decks) {
+      total += d.due;
+      const allowance = Math.max(0, d.newPerDay - (introByDeck.get(d.id) ?? 0));
+      total += Math.min(d.new, allowance);
+    }
+    return total;
+  }, [decks, intro]);
+}
+
 export interface DueCount {
   due: number;
   newAvailable: number;

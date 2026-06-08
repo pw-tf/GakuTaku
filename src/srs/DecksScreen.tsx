@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { db } from '../sync/system';
+import { useAuth } from '../auth/AuthProvider';
+import { Btn } from '../ui/atoms';
+import { Icon } from '../ui/icons';
 import { useAllCards, useDeckStats, type DeckStat } from './srsHooks';
 import { cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
+import { createDeck, deleteDeck, renameDeck } from './mining';
 import { optimizeDeck } from '../analytics/optimizer';
 
 interface Props {
@@ -29,16 +33,32 @@ function parseSteps(text: string): string[] | undefined {
   return steps.length ? steps : undefined;
 }
 
-/** Inline per-deck config: new cards/day + (re)learning steps. Stops click bubbling so editing
- *  doesn't launch a review. */
+/** Inline per-deck config: name + new cards/day + (re)learning steps + delete. Stops click bubbling
+ *  so editing doesn't launch a review. */
 function DeckConfigControl({ deck }: { deck: DeckStat }) {
+  const [name, setName] = useState(deck.name);
   const [perDay, setPerDay] = useState(deck.newPerDay);
   const [learn, setLearn] = useState((deck.learningSteps ?? []).join(' '));
   const [relearn, setRelearn] = useState((deck.relearningSteps ?? []).join(' '));
   useEffect(() => setPerDay(deck.newPerDay), [deck.newPerDay]);
+  useEffect(() => setName(deck.name), [deck.name]);
+
+  function confirmDelete() {
+    if (window.confirm(`Delete “${deck.name}” and its ${deck.total} card${deck.total === 1 ? '' : 's'}? This cannot be undone.`)) {
+      void deleteDeck(deck.id);
+    }
+  }
 
   return (
     <div className="dc-config" onClick={(e) => e.stopPropagation()}>
+      <label className="dc-field">
+        <span className="l">Name</span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => name.trim() && name.trim() !== deck.name && void renameDeck(deck.id, name)}
+        />
+      </label>
       <label className="dc-field">
         <span className="l">New/day</span>
         <input
@@ -71,6 +91,9 @@ function DeckConfigControl({ deck }: { deck: DeckStat }) {
         />
       </label>
       <OptimizeControl deck={deck} />
+      <button className="dc-delete" onClick={confirmDelete}>
+        <Icon.trash s={14} /> Delete deck
+      </button>
     </div>
   );
 }
@@ -109,9 +132,11 @@ function OptimizeControl({ deck }: { deck: DeckStat }) {
 
 /** Decks grid + all-cards browser, driven entirely by the synced cards/notes/decks tables (M4). */
 export function DecksScreen({ onReviewDeck }: Props) {
+  const { session } = useAuth();
   const decks = useDeckStats();
   const cards = useAllCards();
   const now = Date.now();
+  const [creating, setCreating] = useState(false);
 
   function dueText(due: string | null, reps: number): string {
     if (reps === 0) return 'new';
@@ -120,8 +145,30 @@ export function DecksScreen({ onReviewDeck }: Props) {
     return t <= now ? 'due' : formatInterval(new Date(now), new Date(t));
   }
 
+  async function addDeck() {
+    const userId = session?.user.id;
+    if (!userId || creating) return;
+    const name = window.prompt('New deck name', 'New deck');
+    if (name === null) return;
+    setCreating(true);
+    try {
+      await createDeck(userId, name.trim() || 'New deck');
+    } finally {
+      setCreating(false);
+    }
+  }
+
   return (
     <div className="page">
+      <div className="sec-bar">
+        <h2>Decks</h2>
+        <span className="count">{decks.length} {decks.length === 1 ? 'deck' : 'decks'}</span>
+        <span className="more">
+          <Btn size="sm" disabled={creating} onClick={() => void addDeck()}>
+            <Icon.plus s={15} /> New deck
+          </Btn>
+        </span>
+      </div>
       {decks.length === 0 ? (
         <p style={{ color: 'var(--ink-faint)', marginBottom: 36 }}>
           No decks yet. Open a book, tap a word, and ＋ Add to deck to start mining cards.
