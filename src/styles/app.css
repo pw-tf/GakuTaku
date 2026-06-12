@@ -214,6 +214,8 @@ body { overflow: hidden; }
 .rv-top .rv-counts .c.new { color: var(--azure); }
 .rv-top .rv-counts .c.learn { color: var(--rate-again); }
 .rv-top .rv-counts .c.review { color: var(--rate-good); }
+/* Anki underlines the count the current card was drawn from. */
+.rv-top .rv-counts .c.cur { text-decoration: underline; text-underline-offset: 3px; }
 .rv-stage { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 30px; overflow:auto; }
 .card-face { width: 100%; max-width: 540px; text-align:center; }
 .card-face .cf-kick { margin-bottom: 30px; }
@@ -229,9 +231,9 @@ body { overflow: hidden; }
 .rate-grid { display:grid; grid-template-columns: repeat(4,1fr); gap: 12px; max-width: 620px; margin: 0 auto; }
 .rate-btn { border:1px solid var(--rule-strong); border-radius: var(--radius-lg); background: var(--paper-raised); padding: 14px 8px 12px; cursor:pointer; text-align:center; transition: transform .1s, border-color .12s; }
 .rate-btn:hover { transform: translateY(-2px); }
-.rate-btn .rlab { font-weight: 700; font-size: 15px; display:flex; align-items:center; justify-content:center; gap:7px; }
-.rate-btn .rdot { width:8px; height:8px; border-radius:50%; }
-.rate-btn .rivl { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
+/* AnkiDroid layout: predicted interval above the (colored) answer label. */
+.rate-btn .rlab { font-weight: 700; font-size: 15px; display:flex; align-items:center; justify-content:center; gap:7px; margin-top: 4px; }
+.rate-btn .rivl { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); min-height: 15px; }
 .rate-key { font-family:var(--mono); font-size:10px; color:var(--ink-faint); margin-top:8px; opacity:.7; }
 
 .rv-done { text-align:center; max-width: 420px; }

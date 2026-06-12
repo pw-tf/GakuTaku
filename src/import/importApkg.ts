@@ -143,7 +143,7 @@ export async function importApkg(
   const cardRows: Row[] = [];
   for (let i = 0; i < cardInfo.length; i++) {
     const { id, noteId, created, ord } = cardInfo[i];
-    const card = deriveCard(logsByCard.get(id) ?? [], created, defaultCfg);
+    const card = deriveCard(logsByCard.get(id) ?? [], created, defaultCfg, id);
     cardRows.push([
       id, userId, noteId, ord,
       card.due.toISOString(),

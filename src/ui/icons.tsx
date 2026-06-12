@@ -57,6 +57,7 @@ export const Icon = {
   vertical: svg(['M9 4v16', 'M15 4v16', 'M9 8h6M9 13h6']),
   horizontal: svg(['M4 9h16', 'M4 15h16', 'M8 9v6M16 9v6']),
   close: svg(['M6 6l12 12M18 6 6 18']),
+  undo: svg(['M8 5 4 9l4 4', 'M4 9h10a5 5 0 1 1 0 10h-4']),
   chevR: svg(['M9 5l7 7-7 7']),
   chevL: svg(['M15 5l-7 7 7 7']),
   sound: svg(['M4 9v6h4l5 4V5L8 9z', 'M16 9a3 3 0 0 1 0 6', 'M18.5 7a6 6 0 0 1 0 10']),

@@ -7,7 +7,7 @@ import { importFile, useImporting } from '../import/runImport';
 import { useDeckCards, useDeckStats, type CardRow, type DeckStat } from './srsHooks';
 import { buildDeckTree, descendantDeckIds, findNodeByDeckId, flattenVisible, type DeckNode } from './deckTree';
 import { EditCardModal } from './EditCardModal';
-import { cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
+import { DEFAULT_MAXIMUM_INTERVAL, cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
 import { addCardForWord, createDeck, deleteDeck, renameDeck } from './mining';
 import { optimizeDeck } from '../analytics/optimizer';
 
@@ -352,13 +352,19 @@ function DeckOptionsModal({ deck, onClose }: { deck: DeckStat; onClose: () => vo
   const [reviewsPerDay, setReviewsPerDay] = useState(String(deck.reviewsPerDay));
   const [learn, setLearn] = useState((deck.learningSteps ?? []).join(' '));
   const [relearn, setRelearn] = useState((deck.relearningSteps ?? []).join(' '));
+  const [retention, setRetention] = useState(String(Math.round(deck.desiredRetention * 100)));
+  const [maxIvl, setMaxIvl] = useState(String(deck.maximumInterval));
 
   async function save() {
+    // Anki clamps desired retention to 0.70–0.99.
+    const dr = Math.min(0.99, Math.max(0.7, (parseInt(retention || '90', 10) || 90) / 100));
     await updateDeckConfig(deck.id, {
       newPerDay: Math.max(0, parseInt(newPerDay || '0', 10) || 0),
       reviewsPerDay: Math.max(0, parseInt(reviewsPerDay || '0', 10) || 0),
       learningSteps: parseSteps(learn),
       relearningSteps: parseSteps(relearn),
+      desiredRetention: dr,
+      maximumInterval: Math.max(1, parseInt(maxIvl || '0', 10) || DEFAULT_MAXIMUM_INTERVAL),
     });
     onClose();
   }
@@ -381,6 +387,14 @@ function DeckOptionsModal({ deck, onClose }: { deck: DeckStat; onClose: () => vo
         <label className="opt-field">
           <span>Relearning steps</span>
           <input value={relearn} placeholder="10m" onChange={(e) => setRelearn(e.target.value)} />
+        </label>
+        <label className="opt-field">
+          <span>Desired retention (%)</span>
+          <input type="number" min={70} max={99} value={retention} onChange={(e) => setRetention(e.target.value)} />
+        </label>
+        <label className="opt-field">
+          <span>Maximum interval (days)</span>
+          <input type="number" min={1} value={maxIvl} onChange={(e) => setMaxIvl(e.target.value)} />
         </label>
         <OptimizeRow deck={deck} />
       </div>

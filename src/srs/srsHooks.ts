@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '../sync/hooks';
 import { usePrefs } from '../app/prefs';
 import { deckConfig, parseJsonObject } from './fsrs';
@@ -8,6 +8,7 @@ import {
   RAW_DECK_COUNTS_SQL,
   REVIEWED_TODAY_SQL,
   capDeckQueue,
+  studyDayEnd,
   studyDayStart,
   type DeckToday,
 } from './queue';
@@ -19,16 +20,16 @@ import {
  * `queue.ts`, shared with the review-session builder so the deck list and the session never disagree.
  */
 
-/** A now-threshold captured once per component mount (avoids re-subscribing the query each render). */
-function useStableNow(): string {
-  const [now] = useState(() => new Date().toISOString());
-  return now;
-}
-
 /** Start of the current study day (honours the configurable cutoff hour); re-subscribes only on cutoff change. */
 function useStudyDayStart(): string {
   const cutoff = usePrefs((s) => s.dayCutoffHour);
   return useMemo(() => studyDayStart(new Date(), cutoff).toISOString(), [cutoff]);
+}
+
+/** End of the current study day — the due threshold for Anki-style day-granular counts. */
+function useStudyDayEnd(): string {
+  const cutoff = usePrefs((s) => s.dayCutoffHour);
+  return useMemo(() => studyDayEnd(new Date(), cutoff).toISOString(), [cutoff]);
 }
 
 interface RawDeckCount {
@@ -46,6 +47,8 @@ export interface DeckStat {
   name: string;
   newPerDay: number;
   reviewsPerDay: number;
+  desiredRetention: number;
+  maximumInterval: number;
   learningSteps?: string[];
   relearningSteps?: string[];
   description?: string;
@@ -64,9 +67,9 @@ export interface DeckStatsResult {
 
 /** Per-deck Anki-style counts (New / Learning / Due, daily-capped) plus the deck's config. */
 export function useDeckStats(): DeckStatsResult {
-  const now = useStableNow();
+  const dayEnd = useStudyDayEnd();
   const dayStart = useStudyDayStart();
-  const rawParams = useMemo(() => [now, now], [now]);
+  const rawParams = useMemo(() => [dayEnd, dayEnd], [dayEnd]);
   const introParams = useMemo(() => [dayStart, dayStart], [dayStart]);
   const revParams = useMemo(() => [dayStart], [dayStart]);
   const { data: raw, isLoading: lRaw } = useQuery<RawDeckCount>(RAW_DECK_COUNTS_SQL, rawParams);
@@ -84,6 +87,8 @@ export function useDeckStats(): DeckStatsResult {
         name: r.name ?? 'Untitled',
         newPerDay: cfg.newPerDay,
         reviewsPerDay: cfg.reviewsPerDay,
+        desiredRetention: cfg.desiredRetention,
+        maximumInterval: cfg.maximumInterval,
         learningSteps: cfg.learningSteps,
         relearningSteps: cfg.relearningSteps,
         description: cfg.description,

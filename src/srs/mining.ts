@@ -1,5 +1,5 @@
 import { db } from '../sync/system';
-import { parseJsonObject, serializeDeckConfig } from './fsrs';
+import { deckConfig, parseJsonObject, serializeDeckConfig } from './fsrs';
 
 /**
  * Mining: turn a looked-up word into a real note + card (build plan M4). The lookup popup's
@@ -40,7 +40,7 @@ export async function createDeck(userId: string, name: string): Promise<string> 
   const id = crypto.randomUUID();
   await db.execute(
     'INSERT INTO decks (id, user_id, name, fsrs_params, created_at) VALUES (?, ?, ?, ?, ?)',
-    [id, userId, name.trim() || DEFAULT_DECK_NAME, serializeDeckConfig({ newPerDay: 20, reviewsPerDay: 200 }), new Date().toISOString()],
+    [id, userId, name.trim() || DEFAULT_DECK_NAME, serializeDeckConfig(deckConfig({ fsrs_params: null })), new Date().toISOString()],
   );
   return id;
 }

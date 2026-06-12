@@ -12,9 +12,6 @@ import type { OptimizerApi, TrainingSet } from './optimizer.worker';
 
 const DAY_MS = 86_400_000;
 
-/** fsrs-rs fits poorly on tiny histories; gate optimization until there's enough signal. */
-export const MIN_REVIEWS_TO_OPTIMIZE = 400;
-
 let workerInstance: Worker | null = null;
 let workerApi: Comlink.Remote<OptimizerApi> | null = null;
 function optimizer(): Comlink.Remote<OptimizerApi> {
@@ -126,9 +123,8 @@ export async function optimizeDeck(deckId: string): Promise<OptimizeResult> {
       reviewCount,
     };
   }
-  if (reviewCount < MIN_REVIEWS_TO_OPTIMIZE) {
-    return { ok: false, reason: `Need at least ${MIN_REVIEWS_TO_OPTIMIZE} spaced reviews — this deck has ${reviewCount}.`, reviewCount };
-  }
+  // No minimum review count, matching current Anki: with little data fsrs-rs falls back to
+  // pretraining only the initial-stability parameters (or the defaults), so it's always safe to run.
 
   let weights: number[];
   try {
