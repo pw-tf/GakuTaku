@@ -438,7 +438,13 @@ body { overflow: hidden; }
   .rail { position:absolute; right:0; top:0; bottom:0; z-index: 30; box-shadow: -12px 0 30px -16px oklch(0.2 0.02 60/.4); }
   .rd-col { padding: 40px 22px 120px; }
   .card-face .cf-term { font-size: 60px; }
-  .rate-grid { grid-template-columns: repeat(2,1fr); }
+  /* One row of four compact answer buttons, like AnkiDroid; key hints are pointless on touch. */
+  .rv-foot { padding: 12px 14px; }
+  .rate-grid { gap: 8px; }
+  .rate-btn { padding: 8px 4px; }
+  .rate-btn .rlab { font-size: 13.5px; margin-top: 2px; }
+  .rate-btn .rivl { font-size: 11px; min-height: 13px; }
+  .rate-key { display: none; }
   .auth-stage { grid-template-columns: 1fr; }
   .card-table .hide-sm { display:none; }
 }
