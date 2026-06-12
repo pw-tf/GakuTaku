@@ -1,17 +1,25 @@
 import JSZip from 'jszip';
 import initSqlJs, { type Database } from 'sql.js';
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
+import { decompress } from 'fzstd';
+import { decodeFields, pbMessages, pbString, pbUint } from './proto';
 
 /**
- * Parse an Anki `.apkg` (build plan M6). An `.apkg` is a ZIP holding a SQLite "collection"
- * (`collection.anki2` schema 11, or `collection.anki21` schema 18), a `media` JSON map
- * (`{ "0": "img.jpg", ... }`), and numbered media blobs. We read the legacy/uncompressed form
- * (what AnkiWeb decks and "Support older Anki versions" exports use). The modern
- * `collection.anki21b` is zstd-compressed with a protobuf media map — detected and rejected with a
- * friendly message rather than parsed (see {@link UnsupportedApkgError}).
+ * Parse an Anki `.apkg` (build plan M6). An `.apkg` is a ZIP holding a SQLite "collection", a media
+ * map, and numbered media blobs, in one of Anki's three export versions (the `meta` protobuf entry):
+ *
+ * - v1/v2 (legacy, what "Support older Anki versions" exports): uncompressed `collection.anki2` /
+ *   `collection.anki21` with schema-11 JSON blobs in `col`, and a JSON `media` map
+ *   (`{ "0": "img.jpg", ... }`).
+ * - v3 (the current Anki default): `collection.anki21b` — a zstd-compressed schema-18 SQLite file
+ *   with normalized `notetypes`/`fields`/`templates`/`decks` tables (protobuf config blobs), a
+ *   zstd-compressed protobuf `media` map, and each numbered media file individually
+ *   zstd-compressed.
+ *
+ * Both forms are parsed here so decks import with their authors' templates and styling intact.
  */
 
-/** Thrown for `.apkg` variants we can't read yet (modern zstd `collection.anki21b`). */
+/** Thrown for files we can't read (not an Anki package, or a corrupt one). */
 export class UnsupportedApkgError extends Error {
   constructor(message: string) {
     super(message);
@@ -50,6 +58,7 @@ export interface ApkgRevlog {
   cid: string;
   ease: number;
   ivl: number;
+  factor: number;
   time: number;
   type: number;
 }
@@ -60,8 +69,10 @@ export interface ParsedApkg {
   notes: ApkgNote[];
   cards: ApkgCard[];
   revlog: ApkgRevlog[];
-  /** numbered-file -> original filename (from the `media` JSON map). */
+  /** numbered-file -> original filename (from the `media` map, either JSON or protobuf form). */
   media: Record<string, string>;
+  /** True for v3 packages, whose numbered media files are individually zstd-compressed. */
+  mediaCompressed: boolean;
   /** The open archive, so media blobs can be pulled lazily during upload. */
   zip: JSZip;
 }
@@ -82,8 +93,9 @@ function rows(db: Database, sql: string): Record<string, unknown>[] {
 
 const str = (v: unknown): string => (v == null ? '' : String(v));
 const num = (v: unknown): number => (typeof v === 'number' ? v : Number(v) || 0);
+const blob = (v: unknown): Uint8Array => (v instanceof Uint8Array ? v : new Uint8Array(0));
 
-/** Anki joins a note's field values with the Unit Separator control char. */
+/** Anki joins a note's field values (and schema-18 deck name components) with the Unit Separator. */
 const FIELD_SEP = String.fromCharCode(0x1f);
 
 /** Note types/decks from the schema-11 `col` JSON blobs. */
@@ -110,7 +122,11 @@ function parseColJson(db: Database): { models: ApkgModel[]; decks: ApkgDeck[] } 
   return { models, decks };
 }
 
-/** Note types/decks from the normalized schema-18 tables (when `col` JSON is empty). */
+/**
+ * Note types/decks from the normalized schema-18 tables. The `config` blobs are protobuf:
+ * `Notetype.Config` (css = field 3) for `notetypes`, `Notetype.Template.Config`
+ * (q_format = 1, a_format = 2) for `templates` — so authors' templates and styling import intact.
+ */
 function parseNormalized(db: Database): { models: ApkgModel[]; decks: ApkgDeck[] } {
   const fieldsByNt = new Map<string, { name: string; ord: number }[]>();
   for (const f of rows(db, 'SELECT ntid, ord, name FROM fields')) {
@@ -119,41 +135,89 @@ function parseNormalized(db: Database): { models: ApkgModel[]; decks: ApkgDeck[]
   }
   const tmplByNt = new Map<string, { name: string; qfmt: string; afmt: string; ord: number }[]>();
   for (const t of rows(db, 'SELECT ntid, ord, name, config FROM templates')) {
-    // Schema-18 templates store qfmt/afmt in a protobuf `config` blob we can't decode here; fall back
-    // to empty front/back (fields still import). Most legacy exports use the schema-11 col JSON path.
     const k = str(t.ntid);
-    (tmplByNt.get(k) ?? tmplByNt.set(k, []).get(k)!).push({ name: str(t.name), qfmt: '', afmt: '', ord: num(t.ord) });
+    let qfmt = '';
+    let afmt = '';
+    try {
+      const cfg = decodeFields(blob(t.config));
+      qfmt = pbString(cfg, 1);
+      afmt = pbString(cfg, 2);
+    } catch {
+      // A malformed blob still imports the fields; the template just renders empty.
+    }
+    (tmplByNt.get(k) ?? tmplByNt.set(k, []).get(k)!).push({ name: str(t.name), qfmt, afmt, ord: num(t.ord) });
   }
-  const models: ApkgModel[] = rows(db, 'SELECT id, name FROM notetypes').map((nt) => {
+  const models: ApkgModel[] = rows(db, 'SELECT id, name, config FROM notetypes').map((nt) => {
     const k = str(nt.id);
+    let css = '';
+    try {
+      css = pbString(decodeFields(blob(nt.config)), 3);
+    } catch {
+      // Missing CSS falls back to the renderer's base styles.
+    }
     return {
       id: k,
       name: str(nt.name),
       fields: (fieldsByNt.get(k) ?? []).sort((a, b) => a.ord - b.ord).map((f) => f.name),
       templates: (tmplByNt.get(k) ?? []).sort((a, b) => a.ord - b.ord).map((t) => ({ name: t.name, qfmt: t.qfmt, afmt: t.afmt })),
-      css: '', // schema-18 model CSS lives in a protobuf config blob we don't decode
+      css,
     };
   });
-  const decks: ApkgDeck[] = rows(db, 'SELECT id, name FROM decks').map((d) => ({ id: str(d.id), name: str(d.name) }));
+  // Schema-18 deck names use \x1f between components where schema 11 used "::".
+  const decks: ApkgDeck[] = rows(db, 'SELECT id, name FROM decks').map((d) => ({
+    id: str(d.id),
+    name: str(d.name).split(FIELD_SEP).join('::'),
+  }));
   return { models, decks };
+}
+
+/** The media map: legacy JSON `{ "0": name }`, or v3's zstd protobuf MediaEntries (index = filename). */
+async function parseMediaMap(zip: JSZip, v3: boolean): Promise<Record<string, string>> {
+  const mediaEntry = zip.file('media');
+  if (!mediaEntry) return {};
+  if (!v3) return JSON.parse(await mediaEntry.async('string')) as Record<string, string>;
+  const raw = decompress(new Uint8Array(await mediaEntry.async('arraybuffer')));
+  const media: Record<string, string> = {};
+  pbMessages(decodeFields(raw), 1).forEach((entry, i) => {
+    const name = pbString(decodeFields(entry), 1);
+    if (name) media[String(i)] = name;
+  });
+  return media;
 }
 
 /** Parse an `.apkg` file's bytes into typed collection data. */
 export async function parseApkg(data: ArrayBuffer): Promise<ParsedApkg> {
   const zip = await JSZip.loadAsync(data);
 
-  const collectionFile = zip.file('collection.anki21') ?? zip.file('collection.anki2');
-  if (!collectionFile) {
-    if (zip.file('collection.anki21b')) {
-      throw new UnsupportedApkgError(
-        'This deck uses Anki’s newest export format. In Anki, re-export with “Support older Anki versions” enabled, then import that file.',
-      );
+  // The `meta` entry (PackageMetadata.version) says which export version this is; version 3 means
+  // zstd. Trust the anki21b file itself too — v3 packages may carry a legacy placeholder collection.
+  const metaFile = zip.file('meta');
+  let version = 0;
+  if (metaFile) {
+    try {
+      version = pbUint(decodeFields(new Uint8Array(await metaFile.async('arraybuffer'))), 1);
+    } catch {
+      version = 0;
     }
-    throw new UnsupportedApkgError('Not a valid .apkg — no Anki collection found inside.');
+  }
+  const modern = zip.file('collection.anki21b');
+  const v3 = !!modern && (version >= 3 || !zip.file('collection.anki21'));
+
+  let dbBytes: Uint8Array;
+  if (v3 && modern) {
+    try {
+      dbBytes = decompress(new Uint8Array(await modern.async('arraybuffer')));
+    } catch {
+      throw new UnsupportedApkgError('Could not decompress this deck — the file may be corrupt.');
+    }
+  } else {
+    const collectionFile = zip.file('collection.anki21') ?? zip.file('collection.anki2');
+    if (!collectionFile) throw new UnsupportedApkgError('Not a valid .apkg — no Anki collection found inside.');
+    dbBytes = new Uint8Array(await collectionFile.async('arraybuffer'));
   }
 
   const SQL = await loadSql();
-  const db = new SQL.Database(new Uint8Array(await collectionFile.async('arraybuffer')));
+  const db = new SQL.Database(dbBytes);
   try {
     let { models, decks } = parseColJson(db);
     if (models.length === 0) ({ models, decks } = parseNormalized(db));
@@ -170,19 +234,19 @@ export async function parseApkg(data: ArrayBuffer): Promise<ParsedApkg> {
       did: str(c.did),
       ord: num(c.ord),
     }));
-    const revlog: ApkgRevlog[] = rows(db, 'SELECT id, cid, ease, ivl, time, type FROM revlog').map((r) => ({
+    const revlog: ApkgRevlog[] = rows(db, 'SELECT id, cid, ease, ivl, factor, time, type FROM revlog').map((r) => ({
       id: num(r.id),
       cid: str(r.cid),
       ease: num(r.ease),
       ivl: num(r.ivl),
+      factor: num(r.factor),
       time: num(r.time),
       type: num(r.type),
     }));
 
-    const mediaEntry = zip.file('media');
-    const media = mediaEntry ? (JSON.parse(await mediaEntry.async('string')) as Record<string, string>) : {};
+    const media = await parseMediaMap(zip, v3);
 
-    return { models, decks, notes, cards, revlog, media, zip };
+    return { models, decks, notes, cards, revlog, media, mediaCompressed: v3, zip };
   } finally {
     db.close();
   }

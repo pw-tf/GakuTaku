@@ -1,4 +1,5 @@
 import type JSZip from 'jszip';
+import { decompress } from 'fzstd';
 import { supabase } from '../sync/supabase';
 import { getMedia, putMedia } from './mediaCache';
 
@@ -43,6 +44,7 @@ export async function uploadMedia(
   referenced: Set<string>,
   userId: string,
   importId: string,
+  compressed: boolean,
   onProgress?: (done: number, total: number) => void,
 ): Promise<number> {
   const numberByName = new Map<string, string>();
@@ -54,10 +56,21 @@ export async function uploadMedia(
     const numbered = numberByName.get(name);
     const entry = numbered ? zip.file(numbered) : null;
     if (entry) {
-      const blob = await entry.async('blob');
-      const path = `${userId}/${importId}/${name}`;
-      const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { upsert: true });
-      if (!error) await putMedia(`${importId}/${name}`, blob);
+      // v3 packages zstd-compress each media file individually.
+      let bytes: Uint8Array | null = new Uint8Array(await entry.async('arraybuffer'));
+      if (compressed) {
+        try {
+          bytes = decompress(bytes);
+        } catch {
+          bytes = null; // corrupt entry — skip rather than store garbage
+        }
+      }
+      if (bytes) {
+        const blob = new Blob([bytes as BlobPart]);
+        const path = `${userId}/${importId}/${name}`;
+        const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { upsert: true });
+        if (!error) await putMedia(`${importId}/${name}`, blob);
+      }
     }
     onProgress?.(++done, total);
   }
