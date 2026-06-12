@@ -18,7 +18,7 @@ import {
 } from './fsrs';
 import { NOTE_TYPE_NAME, parseNoteFields, type NoteFields } from './mining';
 import { usePrefs } from '../app/prefs';
-import { INTRODUCED_TODAY_SQL, REVIEWED_TODAY_SQL, deckAllowances, studyDayStart } from './queue';
+import { INTRODUCED_TODAY_SQL, LEARN_AHEAD_MS, REVIEWED_TODAY_SQL, deckAllowances, studyDayEnd, studyDayStart } from './queue';
 
 /** An imported (non-vocab) card: raw fields + the chosen template's front/back, for generic render. */
 export interface GenericCard {
@@ -29,6 +29,11 @@ export interface GenericCard {
   css: string;
   /** The card's template/cloze ordinal (Anki `ord`) — the active cloze is ord + 1. */
   ord: number;
+  /** Context for Anki's special fields: {{Tags}}, {{Deck}}, {{Subdeck}}, {{Card}}, {{Type}}. */
+  tags: string;
+  deckName: string;
+  noteTypeName: string;
+  templateName: string;
 }
 
 function parseStrMap(text: string | null | undefined): Record<string, string> {
@@ -38,13 +43,17 @@ function parseStrMap(text: string | null | undefined): Record<string, string> {
   return out;
 }
 
-function parseTemplates(text: string | null | undefined): { front: string; back: string }[] {
+function parseTemplates(text: string | null | undefined): { name: string; front: string; back: string }[] {
   if (!text) return [];
   try {
     let v: unknown = JSON.parse(text);
     if (typeof v === 'string') v = JSON.parse(v);
     if (!Array.isArray(v)) return [];
-    return v.map((t) => ({ front: String((t as { front?: unknown })?.front ?? ''), back: String((t as { back?: unknown })?.back ?? '') }));
+    return v.map((t) => ({
+      name: String((t as { name?: unknown })?.name ?? ''),
+      front: String((t as { front?: unknown })?.front ?? ''),
+      back: String((t as { back?: unknown })?.back ?? ''),
+    }));
   } catch {
     return [];
   }
@@ -64,10 +73,11 @@ export type ReviewSource =
   | { kind: 'deck'; deckIds: string[]; deckName: string }
   | { kind: 'cards'; cardIds: string[]; label: string };
 
-const DAY_MS = 86_400_000;
-
 interface SessionCard {
   cardId: string;
+  noteId: string;
+  /** The note's tags (space-separated, Anki style) — needed for leech tagging. */
+  tags: string;
   fields: NoteFields;
   /** Present for imported note types; null for the built-in vocab card. */
   generic: GenericCard | null;
@@ -77,8 +87,14 @@ interface SessionCard {
   dueAt: number;
 }
 
+/** Anki's default leech threshold: tag at 8 lapses, then again every half-threshold (12, 16, …). */
+const LEECH_THRESHOLD = 8;
+
+const hasLeechTag = (tags: string) => /(^|\s)leech(\s|$)/i.test(tags);
+
 interface CandidateRow {
   id: string;
+  note_id: string;
   tmpl: number;
   state: number;
   // Cached FSRS columns — let us rebuild the ts-fsrs Card without replaying logs (see loader).
@@ -89,8 +105,10 @@ interface CandidateRow {
   lapses: number | null;
   last_review: string | null;
   fields: string;
+  tags: string | null;
   created: string;
   deck_id: string | null;
+  deck_name: string | null;
   fsrs_params: string | null;
   nt_name: string | null;
   nt_templates: string | null;
@@ -99,8 +117,8 @@ interface CandidateRow {
 
 const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, c.state AS state,
     c.due AS due, c.stability AS stability, c.difficulty AS difficulty, c.reps AS reps, c.lapses AS lapses, c.last_review AS last_review,
-    n.fields AS fields, n.created_at AS created, n.deck_id,
-    d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates, nt.css AS nt_css
+    n.id AS note_id, n.fields AS fields, n.tags AS tags, n.created_at AS created, n.deck_id,
+    d.name AS deck_name, d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates, nt.css AS nt_css
   FROM cards c JOIN notes n ON n.id = c.note_id
   LEFT JOIN decks d ON d.id = n.deck_id
   LEFT JOIN note_types nt ON nt.id = n.note_type_id`;
@@ -119,7 +137,9 @@ interface LightRow {
  * and scanning thousands of fat rows on a big imported deck.
  */
 async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
-  const now = new Date().toISOString();
+  // Anki-style day granularity: anything due before the next day rollover is studiable now.
+  const cutoffHour = usePrefs.getState().dayCutoffHour;
+  const dayEnd = studyDayEnd(new Date(), cutoffHour).toISOString();
 
   if (source.kind === 'cards') {
     if (source.cardIds.length === 0) return [];
@@ -141,7 +161,7 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
   const dueLight = await db.getAll<LightRow>(
     `SELECT c.id, c.state, n.deck_id FROM cards c JOIN notes n ON n.id = c.note_id
      WHERE c.reps > 0 AND c.due <= ?${deckFilter} ORDER BY c.due ASC`,
-    [now, ...deckArg],
+    [dayEnd, ...deckArg],
   );
   const newLight = await db.getAll<LightRow>(
     `SELECT c.id, c.state, n.deck_id FROM cards c JOIN notes n ON n.id = c.note_id
@@ -150,7 +170,7 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
   );
 
   // Today's activity per deck, against the configurable study-day boundary (shared with the deck list).
-  const dayStart = studyDayStart(new Date(), usePrefs.getState().dayCutoffHour).toISOString();
+  const dayStart = studyDayStart(new Date(), cutoffHour).toISOString();
   const introduced = await db.getAll<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, [dayStart, dayStart]);
   const reviewsToday = await db.getAll<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, [dayStart]);
   const introducedByDeck = new Map(introduced.map((r) => [r.deck ?? '', r.cnt]));
@@ -187,6 +207,13 @@ async function buildCandidates(source: ReviewSource): Promise<CandidateRow[]> {
 
 const bySoonest = (a: SessionCard, b: SessionCard) => a.dueAt - b.dueAt;
 
+const bucketOf = (c: SessionCard): keyof ReviewCounts =>
+  c.fsrsCard.reps === 0 || c.fsrsCard.state === State.New
+    ? 'new'
+    : c.fsrsCard.state === State.Learning || c.fsrsCard.state === State.Relearning
+      ? 'learning'
+      : 'review';
+
 export interface ReviewCounts {
   new: number;
   learning: number;
@@ -199,11 +226,24 @@ export interface ReviewState {
   done: boolean;
   reviewedCount: number;
   counts: ReviewCounts;
+  /** Which count the current card belongs to — Anki underlines that number in the top bar. */
+  currentBucket: keyof ReviewCounts | null;
+  /** When the session is paused on learning cards due later today, the earliest such due time (ms). */
+  nextLearningDueAt: number | null;
   shown: boolean;
   current: { cardId: string; fields: NoteFields; generic: GenericCard | null } | null;
   gradePreviews: GradePreview[];
+  canUndo: boolean;
   reveal: () => void;
   rate: (grade: Grade) => void;
+  /** Undo the last answer (Anki `Z`): removes its review_log, restores the card, and re-shows it. */
+  undo: () => void;
+}
+
+/** One answered card, kept so the review can be undone (Anki-style undo). */
+interface UndoEntry {
+  card: SessionCard;
+  logId: string;
 }
 
 export function useReview(source: ReviewSource): ReviewState {
@@ -214,6 +254,8 @@ export function useReview(source: ReviewSource): ReviewState {
   const [initialTotal, setInitialTotal] = useState(0);
   const [shown, setShown] = useState(false);
   const [reviewedCount, setReviewedCount] = useState(0);
+  const [history, setHistory] = useState<UndoEntry[]>([]);
+  const [, setClock] = useState(0);
   const shownAt = useRef<number>(Date.now());
 
   const sourceKey = JSON.stringify(source);
@@ -249,22 +291,39 @@ export function useReview(source: ReviewSource): ReviewState {
       const items: SessionCard[] = rows.map((r) => {
         const cfg = deckConfig({ fsrs_params: r.fsrs_params });
         const needsReplay = r.state === State.Learning || r.state === State.Relearning;
-        const fsrsCard = needsReplay ? deriveCard(logsByCard.get(r.id) ?? [], r.created, cfg) : cardFromRow(r, r.created);
-        // Reviews keep their (past) due so the most overdue come first; new cards queue at "now".
-        const dueAt = fsrsCard.reps === 0 ? now : fsrsCard.due.getTime();
+        const fsrsCard = needsReplay ? deriveCard(logsByCard.get(r.id) ?? [], r.created, cfg, r.id) : cardFromRow(r, r.created, r.id);
         // Imported (non-vocab) note types render via the generic Anki template renderer.
         let generic: GenericCard | null = null;
         if (r.nt_name && r.nt_name !== NOTE_TYPE_NAME) {
           const tmpls = parseTemplates(r.nt_templates);
           const t = tmpls[r.tmpl] ?? tmpls[0];
-          if (t) generic = { fields: parseStrMap(r.fields), front: t.front, back: t.back, css: r.nt_css ?? '', ord: r.tmpl };
+          if (t) {
+            generic = {
+              fields: parseStrMap(r.fields),
+              front: t.front,
+              back: t.back,
+              css: r.nt_css ?? '',
+              ord: r.tmpl,
+              tags: r.tags ?? '',
+              deckName: r.deck_name ?? '',
+              noteTypeName: r.nt_name,
+              templateName: t.name,
+            };
+          }
         }
-        return { cardId: r.id, fields: parseNoteFields(r.fields), generic, fsrsCard, cfg, dueAt };
+        // Reviews due later today are available immediately (day granularity, like Anki);
+        // (re)learning cards keep their intraday timestamps so steps are honoured within the session.
+        const dueAt =
+          fsrsCard.reps === 0 ? now
+          : fsrsCard.state === State.Review ? Math.min(fsrsCard.due.getTime(), now)
+          : fsrsCard.due.getTime();
+        return { cardId: r.id, noteId: r.note_id, tags: r.tags ?? '', fields: parseNoteFields(r.fields), generic, fsrsCard, cfg, dueAt };
       });
       items.sort(bySoonest);
       setQueue(items);
       setInitialTotal(items.length);
       setReviewedCount(0);
+      setHistory([]);
       setShown(false);
       shownAt.current = Date.now();
       setLoading(false);
@@ -275,21 +334,34 @@ export function useReview(source: ReviewSource): ReviewState {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKey]);
 
-  const current = queue[0] ?? null;
+  // Anki's learn-ahead: the head card is served up to 20 minutes early when nothing else is ready.
+  // Learning cards due later than that pause the session ("next learning card in N minutes").
+  const head = queue[0] ?? null;
+  const current = head && head.dueAt <= Date.now() + LEARN_AHEAD_MS ? head : null;
   const isEmpty = !loading && initialTotal === 0;
-  const done = !loading && initialTotal > 0 && queue.length === 0;
+  const done = !loading && initialTotal > 0 && !current;
+  const nextLearningDueAt = done && head ? head.dueAt : null;
+
+  // While paused on a future learning card, tick so it surfaces when its step elapses.
+  useEffect(() => {
+    if (!head || current) return;
+    const t = setInterval(() => setClock((c) => c + 1), 10_000);
+    return () => clearInterval(t);
+  }, [head, current]);
 
   const counts = useMemo<ReviewCounts>(() => {
     let n = 0;
     let l = 0;
     let r = 0;
     for (const c of queue) {
-      if (c.fsrsCard.reps === 0 || c.fsrsCard.state === State.New) n++;
-      else if (c.fsrsCard.state === State.Learning || c.fsrsCard.state === State.Relearning) l++;
+      if (bucketOf(c) === 'new') n++;
+      else if (bucketOf(c) === 'learning') l++;
       else r++;
     }
     return { new: n, learning: l, review: r };
   }, [queue]);
+
+  const currentBucket = current ? bucketOf(current) : null;
 
   const gradePreviews = useMemo(
     () => (current && shown ? previews(current.fsrsCard, new Date(), current.cfg) : []),
@@ -305,31 +377,41 @@ export function useReview(source: ReviewSource): ReviewState {
       const elapsedMs = Math.max(0, Date.now() - shownAt.current);
       const next = scheduler(current.cfg).next(current.fsrsCard, now, grade);
       const row = toCardRow(next.card);
+      const logId = crypto.randomUUID();
+      // Anki's default leech action (tag only): tag the note at 8 lapses, again every 4 after.
+      const lapsed = next.card.lapses > current.fsrsCard.lapses;
+      const atLeechPoint =
+        next.card.lapses >= LEECH_THRESHOLD && (next.card.lapses - LEECH_THRESHOLD) % Math.max(1, LEECH_THRESHOLD / 2) === 0;
+      const tagLeech = lapsed && atLeechPoint && !hasLeechTag(current.tags);
+      const newTags = tagLeech ? (current.tags ? `${current.tags} leech` : 'leech') : current.tags;
       void db.writeTransaction(async (tx) => {
         await tx.execute(
           `INSERT INTO review_logs (id, user_id, card_id, rating, review_time, elapsed_ms, scheduled_days)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [crypto.randomUUID(), userId, current.cardId, grade, now.toISOString(), elapsedMs, next.card.scheduled_days],
+          [logId, userId, current.cardId, grade, now.toISOString(), elapsedMs, next.card.scheduled_days],
         );
         await tx.execute(
           `UPDATE cards SET due = ?, stability = ?, difficulty = ?, reps = ?, lapses = ?, state = ?, last_review = ? WHERE id = ?`,
           [row.due, row.stability, row.difficulty, row.reps, row.lapses, row.state, row.last_review, current.cardId],
         );
+        if (tagLeech) await tx.execute(`UPDATE notes SET tags = ? WHERE id = ?`, [newTags, current.noteId]);
       });
 
-      // Re-queue if still in a (re)learning step that lands within the day; otherwise it graduates.
+      // Re-queue if still in a (re)learning step due before the day rollover; otherwise it leaves the
+      // session (interday learning steps and graduated cards come back on a later study day).
       const dueMs = next.card.due.getTime();
+      const dayEndMs = studyDayEnd(now, usePrefs.getState().dayCutoffHour).getTime();
       const stillLearning =
-        (next.card.state === State.Learning || next.card.state === State.Relearning) &&
-        dueMs - now.getTime() < DAY_MS;
+        (next.card.state === State.Learning || next.card.state === State.Relearning) && dueMs < dayEndMs;
       setQueue((q) => {
         const rest = q.slice(1);
         if (stillLearning) {
-          rest.push({ ...current, fsrsCard: next.card, dueAt: dueMs });
+          rest.push({ ...current, tags: newTags, fsrsCard: next.card, dueAt: dueMs });
           rest.sort(bySoonest);
         }
         return rest;
       });
+      setHistory((h) => [...h, { card: current, logId }]);
       setReviewedCount((n) => n + 1);
       setShown(false);
       shownAt.current = Date.now();
@@ -337,16 +419,40 @@ export function useReview(source: ReviewSource): ReviewState {
     [current, userId],
   );
 
+  // Anki-style undo: remove the answer's log, restore the card's cached state, and put it back on top.
+  const undo = useCallback(() => {
+    const last = history[history.length - 1];
+    if (!last) return;
+    const row = toCardRow(last.card.fsrsCard);
+    void db.writeTransaction(async (tx) => {
+      await tx.execute(`DELETE FROM review_logs WHERE id = ?`, [last.logId]);
+      await tx.execute(
+        `UPDATE cards SET due = ?, stability = ?, difficulty = ?, reps = ?, lapses = ?, state = ?, last_review = ? WHERE id = ?`,
+        [row.due, row.stability, row.difficulty, row.reps, row.lapses, row.state, row.last_review, last.card.cardId],
+      );
+    });
+    // The card may have been re-queued mid-learning — drop that copy and re-show the original now.
+    setQueue((q) => [{ ...last.card, dueAt: Date.now() }, ...q.filter((c) => c.cardId !== last.card.cardId)]);
+    setHistory((h) => h.slice(0, -1));
+    setReviewedCount((n) => Math.max(0, n - 1));
+    setShown(false);
+    shownAt.current = Date.now();
+  }, [history]);
+
   return {
     loading,
     isEmpty,
     done,
     reviewedCount,
     counts,
+    currentBucket,
+    nextLearningDueAt,
     shown,
     current: current ? { cardId: current.cardId, fields: current.fields, generic: current.generic } : null,
     gradePreviews,
+    canUndo: history.length > 0,
     reveal,
     rate,
+    undo,
   };
 }

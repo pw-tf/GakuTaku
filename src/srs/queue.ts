@@ -11,11 +11,25 @@ import { type DeckConfig } from './fsrs';
 /** Anki-style day rollover hour (default 4am): reviews before this count toward the previous day. */
 export const DEFAULT_DAY_CUTOFF_HOUR = 4;
 
+/** Anki's "learn ahead limit": learning cards due within this window are served when nothing else is ready. */
+export const LEARN_AHEAD_MS = 20 * 60_000;
+
 /** Start of the current study day in local time, honouring the configurable rollover hour. */
 export function studyDayStart(now: Date, cutoffHour: number): Date {
   const d = new Date(now);
   d.setHours(cutoffHour, 0, 0, 0);
   if (now.getHours() < cutoffHour) d.setDate(d.getDate() - 1);
+  return d;
+}
+
+/**
+ * End of the current study day (= the next rollover). Like Anki, scheduling is day-granular: a card
+ * due *any time* before the next rollover counts as due today and is studiable now, instead of
+ * trickling in at its exact timestamp through the day.
+ */
+export function studyDayEnd(now: Date, cutoffHour: number): Date {
+  const d = studyDayStart(now, cutoffHour);
+  d.setDate(d.getDate() + 1);
   return d;
 }
 
@@ -31,9 +45,9 @@ export interface DeckToday {
 export interface DeckRaw {
   /** reps = 0. */
   newCount: number;
-  /** state ∈ {Learning, Relearning} and due ≤ now. */
+  /** state ∈ {Learning, Relearning} and due before the next day rollover. */
   learningCount: number;
-  /** state = Review and due ≤ now. */
+  /** state = Review and due before the next day rollover (Anki-style day granularity). */
   reviewCount: number;
 }
 
@@ -67,7 +81,9 @@ export function capDeckQueue(cfg: DeckConfig, raw: DeckRaw, today: DeckToday): D
 
 /**
  * Per-deck raw counts from the `cards` cache. Splits the old lumped "due" into Learning (state 1/3)
- * vs Review (state 2) so the UI can show Anki's three numbers. Bind `[nowISO, nowISO, nowISO]`.
+ * vs Review (state 2) so the UI can show Anki's three numbers. Bind `[dayEndISO, dayEndISO]` — like
+ * Anki, anything due before the next day rollover counts as due today (learning cards due later
+ * today stay in the red count; review cards are day-granular).
  */
 export const RAW_DECK_COUNTS_SQL = `SELECT d.id AS deck, d.name AS name, d.fsrs_params AS fsrs_params, d.created_at AS created_at,
     COUNT(c.id) AS total,

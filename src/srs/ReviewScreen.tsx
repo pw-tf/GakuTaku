@@ -33,13 +33,35 @@ export function ReviewScreen({ source, onExit }: Props) {
   const { current, shown, gradePreviews, counts } = review;
   const [editing, setEditing] = useState<string | null>(null);
 
-  // Keyboard: space/enter reveals, 1–4 rate once revealed.
+  // Keyboard, matching Anki desktop: space/enter reveals — or answers Good once revealed;
+  // 1–4 rate; Z (or Ctrl+Z / U) undoes the last answer.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // composedPath so inputs inside the card's Shadow DOM (e.g. {{type:…}} boxes) are seen.
+      const target = (e.composedPath?.()[0] ?? e.target) as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        // Enter in Anki's type-answer box reveals the answer.
+        if (e.key === 'Enter' && current && !shown && target.classList.contains('typeans')) {
+          e.preventDefault();
+          review.reveal();
+        }
+        return;
+      }
+      if (e.key === 'z' || e.key === 'Z' || e.key === 'u' || e.key === 'U') {
+        if (review.canUndo) {
+          e.preventDefault();
+          review.undo();
+        }
+        return;
+      }
       if (!current) return;
-      if (!shown && (e.key === ' ' || e.key === 'Enter')) {
+      if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
-        review.reveal();
+        if (!shown) review.reveal();
+        else {
+          const good = gradePreviews[2];
+          if (good) review.rate(good.grade);
+        }
       } else if (shown && e.key >= '1' && e.key <= '4') {
         const p = gradePreviews[Number(e.key) - 1];
         if (p) review.rate(p.grade);
@@ -81,17 +103,21 @@ export function ReviewScreen({ source, onExit }: Props) {
   }
 
   if (review.done || !current) {
+    const waitMin = review.nextLearningDueAt ? Math.max(1, Math.ceil((review.nextLearningDueAt - Date.now()) / 60000)) : null;
     return (
       <div className="review-wrap">
         <div className="rv-top"><span className="back" onClick={onExit}><Icon.chevL s={18} /> Done</span></div>
         <div className="rv-stage">
           <div className="rv-done">
             <div className="jpbig" lang="ja">お疲れさま</div>
-            <div className="big">Session complete</div>
+            <div className="big">{waitMin != null ? 'Done for now' : 'Congratulations!'}</div>
             <p style={{ color: 'var(--ink-soft)', fontSize: 15, lineHeight: 1.6 }}>
-              You made {review.reviewedCount} {review.reviewedCount === 1 ? 'review' : 'reviews'}. Scheduling is saved and synced.
+              {waitMin != null
+                ? `The next learning card will be ready in ${waitMin === 1 ? 'a minute' : `${waitMin} minutes`} — it will appear here automatically.`
+                : `You have finished this deck for now. You made ${review.reviewedCount} ${review.reviewedCount === 1 ? 'review' : 'reviews'}; scheduling is saved and synced.`}
             </p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 24 }}>
+              {review.canUndo && <Btn onClick={review.undo}>Undo last answer</Btn>}
               <Btn variant="primary" onClick={onExit}>Back to library</Btn>
             </div>
           </div>
@@ -108,19 +134,44 @@ export function ReviewScreen({ source, onExit }: Props) {
       <div className="rv-top">
         <span className="back" onClick={onExit}><Icon.close s={18} /></span>
         <span className="rv-counts" title="New · Learning · Due">
-          <span className="c new">{counts.new}</span>
-          <span className="c learn">{counts.learning}</span>
-          <span className="c review">{counts.review}</span>
+          <span className={'c new' + (review.currentBucket === 'new' ? ' cur' : '')}>{counts.new}</span>
+          <span className={'c learn' + (review.currentBucket === 'learning' ? ' cur' : '')}>{counts.learning}</span>
+          <span className={'c review' + (review.currentBucket === 'review' ? ' cur' : '')}>{counts.review}</span>
         </span>
         <span className="spacer" style={{ flex: 1 }} />
+        {review.canUndo && (
+          <button className="rv-edit" title="Undo last answer (Z)" onClick={review.undo}><Icon.undo s={16} /></button>
+        )}
         <button className="rv-edit" title="Edit card" onClick={() => setEditing(current.cardId)}><Icon.study s={16} /></button>
         <Chip>{label}</Chip>
       </div>
 
-      <div className="rv-stage" onClick={() => !shown && review.reveal()}>
+      <div
+        className="rv-stage"
+        onClick={(e) => {
+          // Don't reveal when interacting with elements inside the card (type box, hints, audio).
+          const t = (e.nativeEvent.composedPath?.()[0] ?? e.target) as HTMLElement;
+          if (t.tagName === 'INPUT' || t.tagName === 'A' || !!t.closest?.('.anki-audio')) return;
+          if (!shown) review.reveal();
+        }}
+      >
         {current.generic ? (
           <div className="card-face">
-            <CardTemplate front={current.generic.front} back={current.generic.back} fields={current.generic.fields} css={current.generic.css} ord={current.generic.ord} shown={shown} userId={userId} />
+            <CardTemplate
+              front={current.generic.front}
+              back={current.generic.back}
+              fields={current.generic.fields}
+              css={current.generic.css}
+              ord={current.generic.ord}
+              shown={shown}
+              userId={userId}
+              meta={{
+                tags: current.generic.tags,
+                deckName: current.generic.deckName,
+                noteTypeName: current.generic.noteTypeName,
+                templateName: current.generic.templateName,
+              }}
+            />
             {!shown && <div className="show-hint">Tap to reveal · space</div>}
           </div>
         ) : (
@@ -148,8 +199,8 @@ export function ReviewScreen({ source, onExit }: Props) {
           <div className="rate-grid">
             {RATINGS.map(([k, lab, color], ki) => (
               <div className="rate-btn" key={k} onClick={() => gradePreviews[ki] && review.rate(gradePreviews[ki].grade)}>
-                <div className="rlab"><span className="rdot" style={{ background: color }} />{lab}</div>
                 <div className="rivl">{gradePreviews[ki]?.interval ?? ''}</div>
+                <div className="rlab" style={{ color }}>{lab}</div>
                 <div className="rate-key">{ki + 1}</div>
               </div>
             ))}

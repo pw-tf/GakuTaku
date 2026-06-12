@@ -2,8 +2,10 @@ import {
   createEmptyCard,
   fsrs,
   generatorParameters,
+  GenSeedStrategyWithCardId,
   Rating,
   State,
+  StrategyMode,
   type Card,
   type FSRS,
   type FSRSParameters,
@@ -35,27 +37,47 @@ export const GRADES: Grade[] = [Rating.Again, Rating.Hard, Rating.Good, Rating.E
 
 const DEFAULT_NEW_PER_DAY = 20;
 const DEFAULT_REVIEWS_PER_DAY = 200;
+/** Anki's FSRS defaults: 90% desired retention, 100-year interval ceiling. */
+export const DEFAULT_DESIRED_RETENTION = 0.9;
+export const DEFAULT_MAXIMUM_INTERVAL = 36500;
 
 /**
- * FSRS scheduler. Fuzz is disabled so scheduling is a pure function of (params, card, time,
- * rating): replaying the same review_logs on any device yields byte-identical card state, which
- * is what makes the event-sourced convergence in §3.3 of the build plan hold.
+ * FSRS scheduler. Interval fuzz is on (matching Anki), but seeded from `card_id` + reps — the same
+ * strategy Anki uses — so scheduling is still a pure function of (params, card, rating): replaying
+ * the same review_logs on any device yields byte-identical card state, which is what makes the
+ * event-sourced convergence in §3.3 of the build plan hold, and the interval shown on a rating
+ * button always matches the interval that rating actually applies.
  */
 const schedulerCache = new Map<string, FSRS>();
 
+/** Cards fed to the scheduler may carry their row id so fuzz is seeded per card like Anki. */
+export type SeededCard = Card & { card_id?: string };
+
 /**
  * FSRS scheduler for a deck config. `enable_short_term` is on (required for Anki-style learning
- * steps); per-deck `learningSteps`/`relearningSteps` and optimized `w` are applied when present.
+ * steps); per-deck `learningSteps`/`relearningSteps`, `desiredRetention`, `maximumInterval` and
+ * optimized `w` are applied when present.
  */
 export function scheduler(cfg?: DeckConfig): FSRS {
-  const key = JSON.stringify({ w: cfg?.w ?? null, ls: cfg?.learningSteps ?? null, rs: cfg?.relearningSteps ?? null });
+  const key = JSON.stringify({
+    w: cfg?.w ?? null,
+    ls: cfg?.learningSteps ?? null,
+    rs: cfg?.relearningSteps ?? null,
+    dr: cfg?.desiredRetention ?? null,
+    mi: cfg?.maximumInterval ?? null,
+  });
   let s = schedulerCache.get(key);
   if (!s) {
-    const params: Partial<FSRSParameters> = { enable_fuzz: false, enable_short_term: true };
+    const params: Partial<FSRSParameters> = {
+      enable_fuzz: true,
+      enable_short_term: true,
+      request_retention: cfg?.desiredRetention ?? DEFAULT_DESIRED_RETENTION,
+      maximum_interval: cfg?.maximumInterval ?? DEFAULT_MAXIMUM_INTERVAL,
+    };
     if (cfg?.w) params.w = cfg.w;
     if (cfg?.learningSteps?.length) params.learning_steps = cfg.learningSteps as Steps;
     if (cfg?.relearningSteps?.length) params.relearning_steps = cfg.relearningSteps as Steps;
-    s = fsrs(generatorParameters(params));
+    s = fsrs(generatorParameters(params)).useStrategy(StrategyMode.SEED, GenSeedStrategyWithCardId('card_id'));
     schedulerCache.set(key, s);
   }
   return s;
@@ -69,6 +91,10 @@ export function scheduler(cfg?: DeckConfig): FSRS {
 export interface DeckConfig {
   newPerDay: number;
   reviewsPerDay: number;
+  /** FSRS target retention (Anki "Desired retention", 0.70–0.99, default 0.90). */
+  desiredRetention: number;
+  /** Interval ceiling in days (Anki "Maximum interval", default 36500). */
+  maximumInterval: number;
   learningSteps?: string[];
   relearningSteps?: string[];
   w?: number[];
@@ -83,6 +109,8 @@ export function deckConfig(deck: Pick<DeckRecord, 'fsrs_params'>): DeckConfig {
   const parsed = parseJsonObject(deck.fsrs_params) as {
     newPerDay?: unknown;
     reviewsPerDay?: unknown;
+    desiredRetention?: unknown;
+    maximumInterval?: unknown;
     learningSteps?: unknown;
     relearningSteps?: unknown;
     w?: unknown;
@@ -91,6 +119,12 @@ export function deckConfig(deck: Pick<DeckRecord, 'fsrs_params'>): DeckConfig {
   return {
     newPerDay: typeof parsed.newPerDay === 'number' ? parsed.newPerDay : DEFAULT_NEW_PER_DAY,
     reviewsPerDay: typeof parsed.reviewsPerDay === 'number' ? parsed.reviewsPerDay : DEFAULT_REVIEWS_PER_DAY,
+    desiredRetention:
+      typeof parsed.desiredRetention === 'number' && parsed.desiredRetention > 0 && parsed.desiredRetention < 1
+        ? parsed.desiredRetention
+        : DEFAULT_DESIRED_RETENTION,
+    maximumInterval:
+      typeof parsed.maximumInterval === 'number' && parsed.maximumInterval >= 1 ? parsed.maximumInterval : DEFAULT_MAXIMUM_INTERVAL,
     learningSteps: asStringArray(parsed.learningSteps),
     relearningSteps: asStringArray(parsed.relearningSteps),
     w: Array.isArray(parsed.w) && parsed.w.every((x) => typeof x === 'number') ? (parsed.w as number[]) : undefined,
@@ -101,6 +135,8 @@ export function deckConfig(deck: Pick<DeckRecord, 'fsrs_params'>): DeckConfig {
 /** Serialize deck config back to the `fsrs_params` text column (preserving optimized weights/steps). */
 export function serializeDeckConfig(cfg: DeckConfig): string {
   const out: Record<string, unknown> = { newPerDay: cfg.newPerDay, reviewsPerDay: cfg.reviewsPerDay };
+  if (cfg.desiredRetention !== DEFAULT_DESIRED_RETENTION) out.desiredRetention = cfg.desiredRetention;
+  if (cfg.maximumInterval !== DEFAULT_MAXIMUM_INTERVAL) out.maximumInterval = cfg.maximumInterval;
   if (cfg.learningSteps?.length) out.learningSteps = cfg.learningSteps;
   if (cfg.relearningSteps?.length) out.relearningSteps = cfg.relearningSteps;
   if (cfg.w) out.w = cfg.w;
@@ -124,9 +160,10 @@ function orderLogs(logs: ReviewLogRecord[]): ReviewLogRecord[] {
  * the empty card; each log advances it via `next()`. Logs are sorted by time (id breaks ties) so
  * the fold is deterministic regardless of insertion/sync order.
  */
-export function deriveCard(logs: ReviewLogRecord[], createdAt: string, cfg?: DeckConfig): Card {
+export function deriveCard(logs: ReviewLogRecord[], createdAt: string, cfg?: DeckConfig, cardId?: string): Card {
   const f = scheduler(cfg);
-  let card = createEmptyCard(new Date(createdAt));
+  let card: SeededCard = createEmptyCard(new Date(createdAt));
+  if (cardId) card.card_id = cardId;
   for (const log of orderLogs(logs)) {
     if (log.rating == null || !log.review_time) continue;
     card = f.next(card, new Date(log.review_time), log.rating as Grade).card;
@@ -244,10 +281,15 @@ export interface CardCacheRow {
  * `learning_steps` only matters mid-(re)learning (those cards are replayed instead, see useReview),
  * so for New/Review cards this is exact. New cards (reps 0) become a fresh empty card.
  */
-export function cardFromRow(row: CardCacheRow, createdAt: string): Card {
+export function cardFromRow(row: CardCacheRow, createdAt: string, cardId?: string): SeededCard {
   const reps = row.reps ?? 0;
-  if (reps === 0) return createEmptyCard(new Date(createdAt));
+  if (reps === 0) {
+    const card: SeededCard = createEmptyCard(new Date(createdAt));
+    if (cardId) card.card_id = cardId;
+    return card;
+  }
   return {
+    card_id: cardId,
     due: new Date(row.due ?? createdAt),
     stability: row.stability ?? 0,
     difficulty: row.difficulty ?? 0,

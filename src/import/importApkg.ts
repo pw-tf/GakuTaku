@@ -118,11 +118,13 @@ export async function importApkg(
     cardInfo.push({ id, noteId, created: noteCreated.get(noteId) ?? now, ord: c.ord });
   }
 
-  // --- review_logs (revlog), skipping manual reschedules (ease 0) and cram (type 3) ---
+  // --- review_logs (revlog) --- Entries that don't affect scheduling are skipped, matching what
+  // Anki feeds FSRS: manual reschedules/resets (ease 0) and filtered-deck reviews done with
+  // rescheduling disabled (type 3 with factor 0). Filtered reviews that did reschedule are kept.
   const reviewRows: Row[] = [];
   const logsByCard = new Map<string, ReviewLogRecord[]>();
   for (const r of parsed.revlog) {
-    if (r.ease < 1 || r.type === 3) continue;
+    if (r.ease < 1 || (r.type === 3 && r.factor === 0)) continue;
     const cardId = cardIdMap.get(r.cid);
     if (!cardId) continue;
     const id = crypto.randomUUID();
@@ -143,7 +145,7 @@ export async function importApkg(
   const cardRows: Row[] = [];
   for (let i = 0; i < cardInfo.length; i++) {
     const { id, noteId, created, ord } = cardInfo[i];
-    const card = deriveCard(logsByCard.get(id) ?? [], created, defaultCfg);
+    const card = deriveCard(logsByCard.get(id) ?? [], created, defaultCfg, id);
     cardRows.push([
       id, userId, noteId, ord,
       card.due.toISOString(),
@@ -177,7 +179,7 @@ export async function importApkg(
   let mediaFiles = 0;
   if (referenced.size > 0) {
     onProgress?.({ phase: 'media', done: 0, total: referenced.size });
-    mediaFiles = await uploadMedia(parsed.zip, parsed.media, referenced, userId, importId,
+    mediaFiles = await uploadMedia(parsed.zip, parsed.media, referenced, userId, importId, parsed.mediaCompressed,
       (done, total) => onProgress?.({ phase: 'media', done, total }));
   }
 
