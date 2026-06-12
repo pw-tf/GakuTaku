@@ -75,6 +75,9 @@ export type ReviewSource =
 
 interface SessionCard {
   cardId: string;
+  noteId: string;
+  /** The note's tags (space-separated, Anki style) — needed for leech tagging. */
+  tags: string;
   fields: NoteFields;
   /** Present for imported note types; null for the built-in vocab card. */
   generic: GenericCard | null;
@@ -84,8 +87,14 @@ interface SessionCard {
   dueAt: number;
 }
 
+/** Anki's default leech threshold: tag at 8 lapses, then again every half-threshold (12, 16, …). */
+const LEECH_THRESHOLD = 8;
+
+const hasLeechTag = (tags: string) => /(^|\s)leech(\s|$)/i.test(tags);
+
 interface CandidateRow {
   id: string;
+  note_id: string;
   tmpl: number;
   state: number;
   // Cached FSRS columns — let us rebuild the ts-fsrs Card without replaying logs (see loader).
@@ -108,7 +117,7 @@ interface CandidateRow {
 
 const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, c.state AS state,
     c.due AS due, c.stability AS stability, c.difficulty AS difficulty, c.reps AS reps, c.lapses AS lapses, c.last_review AS last_review,
-    n.fields AS fields, n.tags AS tags, n.created_at AS created, n.deck_id,
+    n.id AS note_id, n.fields AS fields, n.tags AS tags, n.created_at AS created, n.deck_id,
     d.name AS deck_name, d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates, nt.css AS nt_css
   FROM cards c JOIN notes n ON n.id = c.note_id
   LEFT JOIN decks d ON d.id = n.deck_id
@@ -308,7 +317,7 @@ export function useReview(source: ReviewSource): ReviewState {
           fsrsCard.reps === 0 ? now
           : fsrsCard.state === State.Review ? Math.min(fsrsCard.due.getTime(), now)
           : fsrsCard.due.getTime();
-        return { cardId: r.id, fields: parseNoteFields(r.fields), generic, fsrsCard, cfg, dueAt };
+        return { cardId: r.id, noteId: r.note_id, tags: r.tags ?? '', fields: parseNoteFields(r.fields), generic, fsrsCard, cfg, dueAt };
       });
       items.sort(bySoonest);
       setQueue(items);
@@ -369,6 +378,12 @@ export function useReview(source: ReviewSource): ReviewState {
       const next = scheduler(current.cfg).next(current.fsrsCard, now, grade);
       const row = toCardRow(next.card);
       const logId = crypto.randomUUID();
+      // Anki's default leech action (tag only): tag the note at 8 lapses, again every 4 after.
+      const lapsed = next.card.lapses > current.fsrsCard.lapses;
+      const atLeechPoint =
+        next.card.lapses >= LEECH_THRESHOLD && (next.card.lapses - LEECH_THRESHOLD) % Math.max(1, LEECH_THRESHOLD / 2) === 0;
+      const tagLeech = lapsed && atLeechPoint && !hasLeechTag(current.tags);
+      const newTags = tagLeech ? (current.tags ? `${current.tags} leech` : 'leech') : current.tags;
       void db.writeTransaction(async (tx) => {
         await tx.execute(
           `INSERT INTO review_logs (id, user_id, card_id, rating, review_time, elapsed_ms, scheduled_days)
@@ -379,6 +394,7 @@ export function useReview(source: ReviewSource): ReviewState {
           `UPDATE cards SET due = ?, stability = ?, difficulty = ?, reps = ?, lapses = ?, state = ?, last_review = ? WHERE id = ?`,
           [row.due, row.stability, row.difficulty, row.reps, row.lapses, row.state, row.last_review, current.cardId],
         );
+        if (tagLeech) await tx.execute(`UPDATE notes SET tags = ? WHERE id = ?`, [newTags, current.noteId]);
       });
 
       // Re-queue if still in a (re)learning step due before the day rollover; otherwise it leaves the
@@ -390,7 +406,7 @@ export function useReview(source: ReviewSource): ReviewState {
       setQueue((q) => {
         const rest = q.slice(1);
         if (stillLearning) {
-          rest.push({ ...current, fsrsCard: next.card, dueAt: dueMs });
+          rest.push({ ...current, tags: newTags, fsrsCard: next.card, dueAt: dueMs });
           rest.sort(bySoonest);
         }
         return rest;
