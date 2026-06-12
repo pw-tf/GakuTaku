@@ -37,7 +37,16 @@ export function ReviewScreen({ source, onExit }: Props) {
   // 1–4 rate; Z (or Ctrl+Z / U) undoes the last answer.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.target as HTMLElement | null)?.tagName === 'INPUT' || (e.target as HTMLElement | null)?.tagName === 'TEXTAREA') return;
+      // composedPath so inputs inside the card's Shadow DOM (e.g. {{type:…}} boxes) are seen.
+      const target = (e.composedPath?.()[0] ?? e.target) as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        // Enter in Anki's type-answer box reveals the answer.
+        if (e.key === 'Enter' && current && !shown && target.classList.contains('typeans')) {
+          e.preventDefault();
+          review.reveal();
+        }
+        return;
+      }
       if (e.key === 'z' || e.key === 'Z' || e.key === 'u' || e.key === 'U') {
         if (review.canUndo) {
           e.preventDefault();
@@ -137,10 +146,32 @@ export function ReviewScreen({ source, onExit }: Props) {
         <Chip>{label}</Chip>
       </div>
 
-      <div className="rv-stage" onClick={() => !shown && review.reveal()}>
+      <div
+        className="rv-stage"
+        onClick={(e) => {
+          // Don't reveal when interacting with elements inside the card (type box, hints, audio).
+          const t = (e.nativeEvent.composedPath?.()[0] ?? e.target) as HTMLElement;
+          if (t.tagName === 'INPUT' || t.tagName === 'A' || !!t.closest?.('.anki-audio')) return;
+          if (!shown) review.reveal();
+        }}
+      >
         {current.generic ? (
           <div className="card-face">
-            <CardTemplate front={current.generic.front} back={current.generic.back} fields={current.generic.fields} css={current.generic.css} ord={current.generic.ord} shown={shown} userId={userId} />
+            <CardTemplate
+              front={current.generic.front}
+              back={current.generic.back}
+              fields={current.generic.fields}
+              css={current.generic.css}
+              ord={current.generic.ord}
+              shown={shown}
+              userId={userId}
+              meta={{
+                tags: current.generic.tags,
+                deckName: current.generic.deckName,
+                noteTypeName: current.generic.noteTypeName,
+                templateName: current.generic.templateName,
+              }}
+            />
             {!shown && <div className="show-hint">Tap to reveal · space</div>}
           </div>
         ) : (

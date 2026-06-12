@@ -29,6 +29,11 @@ export interface GenericCard {
   css: string;
   /** The card's template/cloze ordinal (Anki `ord`) — the active cloze is ord + 1. */
   ord: number;
+  /** Context for Anki's special fields: {{Tags}}, {{Deck}}, {{Subdeck}}, {{Card}}, {{Type}}. */
+  tags: string;
+  deckName: string;
+  noteTypeName: string;
+  templateName: string;
 }
 
 function parseStrMap(text: string | null | undefined): Record<string, string> {
@@ -38,13 +43,17 @@ function parseStrMap(text: string | null | undefined): Record<string, string> {
   return out;
 }
 
-function parseTemplates(text: string | null | undefined): { front: string; back: string }[] {
+function parseTemplates(text: string | null | undefined): { name: string; front: string; back: string }[] {
   if (!text) return [];
   try {
     let v: unknown = JSON.parse(text);
     if (typeof v === 'string') v = JSON.parse(v);
     if (!Array.isArray(v)) return [];
-    return v.map((t) => ({ front: String((t as { front?: unknown })?.front ?? ''), back: String((t as { back?: unknown })?.back ?? '') }));
+    return v.map((t) => ({
+      name: String((t as { name?: unknown })?.name ?? ''),
+      front: String((t as { front?: unknown })?.front ?? ''),
+      back: String((t as { back?: unknown })?.back ?? ''),
+    }));
   } catch {
     return [];
   }
@@ -87,8 +96,10 @@ interface CandidateRow {
   lapses: number | null;
   last_review: string | null;
   fields: string;
+  tags: string | null;
   created: string;
   deck_id: string | null;
+  deck_name: string | null;
   fsrs_params: string | null;
   nt_name: string | null;
   nt_templates: string | null;
@@ -97,8 +108,8 @@ interface CandidateRow {
 
 const SELECT_CARD = `SELECT c.id, c.template_index AS tmpl, c.state AS state,
     c.due AS due, c.stability AS stability, c.difficulty AS difficulty, c.reps AS reps, c.lapses AS lapses, c.last_review AS last_review,
-    n.fields AS fields, n.created_at AS created, n.deck_id,
-    d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates, nt.css AS nt_css
+    n.fields AS fields, n.tags AS tags, n.created_at AS created, n.deck_id,
+    d.name AS deck_name, d.fsrs_params, nt.name AS nt_name, nt.card_templates AS nt_templates, nt.css AS nt_css
   FROM cards c JOIN notes n ON n.id = c.note_id
   LEFT JOIN decks d ON d.id = n.deck_id
   LEFT JOIN note_types nt ON nt.id = n.note_type_id`;
@@ -277,7 +288,19 @@ export function useReview(source: ReviewSource): ReviewState {
         if (r.nt_name && r.nt_name !== NOTE_TYPE_NAME) {
           const tmpls = parseTemplates(r.nt_templates);
           const t = tmpls[r.tmpl] ?? tmpls[0];
-          if (t) generic = { fields: parseStrMap(r.fields), front: t.front, back: t.back, css: r.nt_css ?? '', ord: r.tmpl };
+          if (t) {
+            generic = {
+              fields: parseStrMap(r.fields),
+              front: t.front,
+              back: t.back,
+              css: r.nt_css ?? '',
+              ord: r.tmpl,
+              tags: r.tags ?? '',
+              deckName: r.deck_name ?? '',
+              noteTypeName: r.nt_name,
+              templateName: t.name,
+            };
+          }
         }
         // Reviews due later today are available immediately (day granularity, like Anki);
         // (re)learning cards keep their intraday timestamps so steps are honoured within the session.
