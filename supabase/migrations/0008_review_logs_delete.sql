@@ -1,4 +1,4 @@
--- 0007_review_logs_delete.sql — allow deleting one's own review logs, for Anki-style undo.
+-- 0008_review_logs_delete.sql — allow deleting one's own review logs, for Anki-style undo.
 --
 -- Undo of an answer (Anki's Z) removes the answer's revlog entry. review_logs was
 -- select+insert only (0002), so a synced undo's DELETE was rejected server-side (42501)

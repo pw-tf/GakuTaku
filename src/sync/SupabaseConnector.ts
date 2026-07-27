@@ -17,7 +17,7 @@ import { supabase, powersyncUrl } from './supabase';
  * forever. Everything else (network blips, 5xx, etc.) is rethrown to trigger
  * PowerSync's retry/backoff.
  */
-// Note: review_logs deletes are legitimate since 0007 (Anki-style undo removes the log),
+// Note: review_logs deletes are legitimate since 0008 (Anki-style undo removes the log),
 // so a 42501 on them indicates a server missing that migration, not a client bug.
 const FATAL_RESPONSE_CODES = [/^22\d{3}$/, /^23\d{3}$/, /^42501$/];
 

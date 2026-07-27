@@ -1,6 +1,6 @@
--- 0006_srs_card_state.sql — Anki-parity card state + deck option presets.
+-- 0007_srs_card_state.sql — Anki-parity card state + deck option presets.
 --
--- DEPLOY ORDER MATTERS: (1) run this SQL (and 0007), (2) redeploy the PowerSync sync
+-- DEPLOY ORDER MATTERS: (1) run this SQL (and 0008), (2) redeploy the PowerSync sync
 -- rules (the `user_data` bucket uses `select *`, so the new `cards` columns only start
 -- flowing to clients after a sync-rules redeploy re-syncs the table — expect a one-off
 -- re-download of `cards` for every user), (3) ship the client build.
