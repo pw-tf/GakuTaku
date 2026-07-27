@@ -1,4 +1,5 @@
 import type { DeckStat } from './srsHooks';
+import { capTreeQueue } from './queue';
 
 /**
  * Anki-style subdeck hierarchy derived from deck *names* (`Parent::Child::Leaf`) — no schema change,
@@ -45,14 +46,23 @@ export function buildDeckTree(decks: DeckStat[]): DeckNode[] {
     ensure(path).deck = d;
   }
 
-  const roll = (n: DeckNode): DeckNode['roll'] => {
+  // Roll counts up to ancestors. A real deck's own limits also cap its subtree's sum (Anki v3:
+  // the limits of the deck you study apply to the whole tree), using the subtree's combined
+  // today-activity; synthetic intermediate nodes have no config and just sum.
+  const roll = (n: DeckNode): { roll: DeckNode['roll']; today: { introduced: number; reviewed: number } } => {
     const r = n.deck ? { new: n.deck.new, learning: n.deck.learning, due: n.deck.due, total: n.deck.total } : empty();
+    const today = n.deck ? { ...n.deck.today } : { introduced: 0, reviewed: 0 };
     for (const c of n.children) {
       const cr = roll(c);
-      r.new += cr.new; r.learning += cr.learning; r.due += cr.due; r.total += cr.total;
+      r.new += cr.roll.new; r.learning += cr.roll.learning; r.due += cr.roll.due; r.total += cr.roll.total;
+      today.introduced += cr.today.introduced; today.reviewed += cr.today.reviewed;
+    }
+    if (n.deck) {
+      const capped = capTreeQueue(n.deck.cfg, r, today);
+      r.new = capped.new; r.learning = capped.learning; r.due = capped.due;
     }
     n.roll = r;
-    return r;
+    return { roll: r, today };
   };
   const sort = (nodes: DeckNode[]) => {
     nodes.sort((a, b) => a.label.localeCompare(b.label));

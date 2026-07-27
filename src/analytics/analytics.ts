@@ -94,7 +94,8 @@ export function computeAnalytics(cards: AnalyticsCard[], logs: AnalyticsLog[], n
   let totalReviews = 0;
 
   for (const log of logs) {
-    if (!log.review_time) continue;
+    // rating 0 rows are manual events (forget / set due date), not reviews.
+    if (!log.review_time || (log.rating ?? 0) < 1) continue;
     const t = new Date(log.review_time).getTime();
     if (Number.isNaN(t)) continue;
     totalReviews++;
@@ -123,7 +124,7 @@ export function computeAnalytics(cards: AnalyticsCard[], logs: AnalyticsLog[], n
   );
 
   const streak = computeStreak(
-    logs.map((l) => l.review_time),
+    logs.filter((l) => (l.rating ?? 0) >= 1).map((l) => l.review_time),
     now,
   );
 

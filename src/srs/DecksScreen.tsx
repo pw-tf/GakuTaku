@@ -9,6 +9,7 @@ import { buildDeckTree, descendantDeckIds, findNodeByDeckId, flattenVisible, typ
 import { EditCardModal } from './EditCardModal';
 import { DEFAULT_MAXIMUM_INTERVAL, cardStateLabel, deckConfig, formatInterval, serializeDeckConfig, type DeckConfig } from './fsrs';
 import { addCardForWord, createDeck, deleteDeck, renameDeck } from './mining';
+import { saveDeckOverrides } from './presetOps';
 import { optimizeDeck } from '../analytics/optimizer';
 
 interface Props {
@@ -240,12 +241,12 @@ function DeckDetail({ deck, childNodes, onBack, onOpenDeck, onReview }: {
 
       <div className="dd-head">
         <h2 className="dd-name">{deck.name}</h2>
-        {deck.description && <p className="dd-desc">{deck.description}</p>}
+        {deck.cfg.description && <p className="dd-desc">{deck.cfg.description}</p>}
         <div className="dd-stats">
           <span><b>{deck.new}</b> new</span>
           <span><b>{deck.learning}</b> learning</span>
           <span><b>{deck.due}</b> due</span>
-          <span className="muted">{deck.total} cards · {deck.newPerDay}/day new · {deck.reviewsPerDay}/day reviews</span>
+          <span className="muted">{deck.total} cards · {deck.cfg.newPerDay}/day new · {deck.cfg.reviewsPerDay}/day reviews</span>
         </div>
         <div className="dd-actions">
           <Btn variant="primary" onClick={onReview} disabled={deck.new + deck.learning + deck.due === 0}>
@@ -348,12 +349,12 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 function DeckOptionsModal({ deck, onClose }: { deck: DeckStat; onClose: () => void }) {
-  const [newPerDay, setNewPerDay] = useState(String(deck.newPerDay));
-  const [reviewsPerDay, setReviewsPerDay] = useState(String(deck.reviewsPerDay));
-  const [learn, setLearn] = useState((deck.learningSteps ?? []).join(' '));
-  const [relearn, setRelearn] = useState((deck.relearningSteps ?? []).join(' '));
-  const [retention, setRetention] = useState(String(Math.round(deck.desiredRetention * 100)));
-  const [maxIvl, setMaxIvl] = useState(String(deck.maximumInterval));
+  const [newPerDay, setNewPerDay] = useState(String(deck.cfg.newPerDay));
+  const [reviewsPerDay, setReviewsPerDay] = useState(String(deck.cfg.reviewsPerDay));
+  const [learn, setLearn] = useState((deck.cfg.learningSteps ?? []).join(' '));
+  const [relearn, setRelearn] = useState((deck.cfg.relearningSteps ?? []).join(' '));
+  const [retention, setRetention] = useState(String(Math.round(deck.cfg.desiredRetention * 100)));
+  const [maxIvl, setMaxIvl] = useState(String(deck.cfg.maximumInterval));
 
   async function save() {
     // Anki clamps desired retention to 0.70–0.99.
@@ -437,9 +438,9 @@ function OptimizeRow({ deck }: { deck: DeckStat }) {
 }
 
 function DescriptionModal({ deck, onClose }: { deck: DeckStat; onClose: () => void }) {
-  const [text, setText] = useState(deck.description ?? '');
+  const [text, setText] = useState(deck.cfg.description ?? '');
   async function save() {
-    await updateDeckConfig(deck.id, { description: text.trim() || undefined });
+    await saveDeckOverrides(deck.id, { description: text.trim() || undefined });
     onClose();
   }
   return (

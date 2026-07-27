@@ -35,8 +35,8 @@ export function parseJsonObject(text: string | null | undefined): Record<string,
 /** The four user-facing grades, in display order (Again..Easy = 1..4). */
 export const GRADES: Grade[] = [Rating.Again, Rating.Hard, Rating.Good, Rating.Easy];
 
-const DEFAULT_NEW_PER_DAY = 20;
-const DEFAULT_REVIEWS_PER_DAY = 200;
+export const DEFAULT_NEW_PER_DAY = 20;
+export const DEFAULT_REVIEWS_PER_DAY = 200;
 /** Anki's FSRS defaults: 90% desired retention, 100-year interval ceiling. */
 export const DEFAULT_DESIRED_RETENTION = 0.9;
 export const DEFAULT_MAXIMUM_INTERVAL = 36500;
@@ -145,6 +145,45 @@ export function serializeDeckConfig(cfg: DeckConfig): string {
 }
 
 /**
+ * Anki's manual-scheduling revlog convention: `rating = 0` rows are not answers but manual events
+ * (Anki writes `ease = 0` for them). They participate in the event-sourced fold so a Forget or
+ * Set-due-date survives any replay, but they are never counted as reviews by analytics/limits.
+ * Encoding, mirrored by cardOps and the .apkg importer:
+ *   scheduled_days < 0 (or null) → Forget: the fold resets to an empty card at that timestamp.
+ *   scheduled_days = N ≥ 0       → Set due date: due = review_time + N days. A not-yet-Review card
+ *                                  becomes Review with stability ≥ N — a documented approximation;
+ *                                  Anki likewise leaves FSRS memory state untouched here and lets
+ *                                  the next real review re-estimate it.
+ */
+export const MANUAL_RATING = 0;
+
+/** Neutral FSRS difficulty for a card manually scheduled before its first real review. */
+const NEUTRAL_DIFFICULTY = 5;
+
+/** Apply one manual (rating-0) log to a card — shared by the replay fold and cardOps' cache writes. */
+export function applyManualEvent(
+  card: SeededCard,
+  log: Pick<ReviewLogRecord, 'review_time' | 'scheduled_days'>,
+): SeededCard {
+  const t = new Date(log.review_time ?? Date.now());
+  const days = log.scheduled_days;
+  if (days == null || days < 0) {
+    const fresh: SeededCard = createEmptyCard(t);
+    fresh.card_id = card.card_id;
+    return fresh;
+  }
+  const next: SeededCard = { ...card, due: new Date(t.getTime() + days * 86_400_000), scheduled_days: days };
+  if (card.state !== State.Review) {
+    next.state = State.Review;
+    next.stability = Math.max(card.stability, Math.max(1, days));
+    if (!next.difficulty) next.difficulty = NEUTRAL_DIFFICULTY;
+    next.last_review = t;
+    next.learning_steps = 0;
+  }
+  return next;
+}
+
+/**
  * Order logs deterministically: by `review_time`, with `id` breaking ties. Replaying in this order
  * makes the event-sourced fold independent of insertion/sync order (§3.3).
  */
@@ -166,6 +205,10 @@ export function deriveCard(logs: ReviewLogRecord[], createdAt: string, cfg?: Dec
   if (cardId) card.card_id = cardId;
   for (const log of orderLogs(logs)) {
     if (log.rating == null || !log.review_time) continue;
+    if (log.rating === MANUAL_RATING) {
+      card = applyManualEvent(card, log);
+      continue;
+    }
     card = f.next(card, new Date(log.review_time), log.rating as Grade).card;
   }
   return card;
@@ -195,6 +238,11 @@ export function replaySteps(logs: ReviewLogRecord[], createdAt: string, cfg?: De
   const steps: ReplayStep[] = [];
   for (const log of orderLogs(logs)) {
     if (log.rating == null || !log.review_time) continue;
+    // Manual events change the fold's state but are not reviews — no step emitted.
+    if (log.rating === MANUAL_RATING) {
+      card = applyManualEvent(card, log);
+      continue;
+    }
     steps.push({
       prevState: card.state,
       prevReps: card.reps,
