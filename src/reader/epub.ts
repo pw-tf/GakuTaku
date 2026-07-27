@@ -1,6 +1,12 @@
 import ePub from 'epubjs';
 
-const BLOCK = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE']);
+// Containers count too (SECTION, UL, …): a chapter whose body is one <section> must recurse into
+// it, not collapse into a single giant "paragraph" — pagination anchors depend on real paragraphs.
+const BLOCK = new Set([
+  'P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE',
+  'SECTION', 'ARTICLE', 'ASIDE', 'MAIN', 'NAV', 'HEADER', 'FOOTER',
+  'FIGURE', 'FIGCAPTION', 'UL', 'OL', 'DL', 'DT', 'DD', 'PRE', 'TABLE', 'CENTER',
+]);
 
 /** Extract readable paragraphs from a chapter document element (leaf block elements). */
 function extractParagraphs(root: Element): string[] {
