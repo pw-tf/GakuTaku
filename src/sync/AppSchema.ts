@@ -15,7 +15,16 @@ import { column, Schema, Table } from '@powersync/web';
 const decks = new Table({
   user_id: column.text,
   name: column.text,
-  fsrs_params: column.text, // jsonb
+  fsrs_params: column.text, // jsonb — per-deck data only (description + limit overrides); scheduling lives on the preset
+  preset_id: column.text, // deck_presets.id; null = legacy deck whose fsrs_params still carries full config
+  created_at: column.text,
+});
+
+// Anki's shared "options group": all scheduling config, referenced by many decks.
+const deck_presets = new Table({
+  user_id: column.text,
+  name: column.text,
+  config: column.text, // jsonb (DeckPresetConfig)
   created_at: column.text,
 });
 
@@ -52,8 +61,15 @@ const cards = new Table(
     lapses: column.integer,
     state: column.integer,
     last_review: column.text,
+    // USER state, deliberately not derivable from review_logs (no revlog entry in Anki either).
+    // queue matches Anki's values: 0 active, -1 suspended, -2 sched-buried, -3 user-buried.
+    // Synced columns are nullable client-side — always read via COALESCE(queue, 0) etc.
+    queue: column.integer,
+    flag: column.integer, // Anki colored flags, 0 = none, 1..7
+    position: column.integer, // Anki new-card ordinal; null = legacy (created_at order)
+    buried_until: column.text, // study-day end at bury time; buried iff queue <= -2 AND buried_until > now
   },
-  { indexes: { by_note: ['note_id'], by_due: ['due'], by_state_due: ['state', 'due'] } },
+  { indexes: { by_note: ['note_id'], by_due: ['due'], by_state_due: ['state', 'due'], by_queue: ['queue'] } },
 );
 
 const review_logs = new Table(
@@ -117,6 +133,7 @@ const user_settings = new Table({
 
 export const AppSchema = new Schema({
   decks,
+  deck_presets,
   note_types,
   notes,
   cards,
@@ -130,6 +147,7 @@ export const AppSchema = new Schema({
 
 export type Database = (typeof AppSchema)['types'];
 export type DeckRecord = Database['decks'];
+export type DeckPresetRecord = Database['deck_presets'];
 export type NoteRecord = Database['notes'];
 export type CardRecord = Database['cards'];
 export type ReviewLogRecord = Database['review_logs'];

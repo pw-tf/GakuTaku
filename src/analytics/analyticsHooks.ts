@@ -21,15 +21,20 @@ export function useAnalytics(): AnalyticsData {
     id: string;
     created_at: string | null;
     fsrs_params: string | null;
+    preset_id: string | null;
+    preset_config: string | null;
     due: string | null;
     reps: number;
     state: number;
     last_review: string | null;
+    queue: number | null;
   }>(
-    `SELECT c.id, n.created_at, d.fsrs_params, c.due, c.reps, c.state, c.last_review
+    `SELECT c.id, n.created_at, d.fsrs_params, d.preset_id, dp.config AS preset_config,
+       c.due, c.reps, c.state, c.last_review, COALESCE(c.queue, 0) AS queue
      FROM cards c
      JOIN notes n ON n.id = c.note_id
-     LEFT JOIN decks d ON d.id = n.deck_id`,
+     LEFT JOIN decks d ON d.id = n.deck_id
+     LEFT JOIN deck_presets dp ON dp.id = d.preset_id`,
   );
 
   const { data: logRows } = useQuery<AnalyticsLog>(
@@ -41,10 +46,13 @@ export function useAnalytics(): AnalyticsData {
       id: r.id,
       createdAt: r.created_at ?? new Date(0).toISOString(),
       fsrsParams: r.fsrs_params,
+      presetId: r.preset_id,
+      presetConfig: r.preset_config,
       due: r.due,
       reps: r.reps,
       state: r.state,
       lastReview: r.last_review,
+      suspended: (r.queue ?? 0) === -1,
     }));
     return computeAnalytics(cards, logRows, new Date(now));
   }, [cardRows, logRows, now]);
@@ -56,6 +64,7 @@ export function useAnalytics(): AnalyticsData {
  */
 export function useStreak(): number {
   const now = useStableNow();
-  const { data } = useQuery<{ review_time: string | null }>(`SELECT review_time FROM review_logs`);
+  // rating >= 1: manual events (forget / set due date) don't count toward the streak.
+  const { data } = useQuery<{ review_time: string | null }>(`SELECT review_time FROM review_logs WHERE rating >= 1`);
   return useMemo(() => computeStreak(data.map((r) => r.review_time), new Date(now)), [data, now]);
 }

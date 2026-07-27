@@ -1,5 +1,7 @@
 import { db } from '../sync/system';
-import { deckConfig, parseJsonObject, serializeDeckConfig } from './fsrs';
+import { parseJsonObject } from './fsrs';
+import { ensureDefaultPreset, resolveDeckConfigById } from './presetOps';
+import { nextNewPosition } from './cardOps';
 
 /**
  * Mining: turn a looked-up word into a real note + card (build plan M4). The lookup popup's
@@ -35,12 +37,13 @@ export function parseNoteFields(json: string | null | undefined): NoteFields {
   };
 }
 
-/** Insert a new deck with default config; returns its id. */
+/** Insert a new deck assigned to the user's Default preset (Anki: new decks use the default options group). */
 export async function createDeck(userId: string, name: string): Promise<string> {
   const id = crypto.randomUUID();
+  const presetId = await ensureDefaultPreset(userId);
   await db.execute(
-    'INSERT INTO decks (id, user_id, name, fsrs_params, created_at) VALUES (?, ?, ?, ?, ?)',
-    [id, userId, name.trim() || DEFAULT_DECK_NAME, serializeDeckConfig(deckConfig({ fsrs_params: null })), new Date().toISOString()],
+    'INSERT INTO decks (id, user_id, name, fsrs_params, preset_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, userId, name.trim() || DEFAULT_DECK_NAME, '{}', presetId, new Date().toISOString()],
   );
   return id;
 }
@@ -185,6 +188,9 @@ export async function addCardForWord(userId: string, input: AddWordInput): Promi
   const noteId = crypto.randomUUID();
   const cardId = crypto.randomUUID();
   const now = new Date().toISOString();
+  // Anki position ordinal, per the deck preset's insertion order (sequential = oldest first).
+  const cfg = await resolveDeckConfigById(deckId);
+  const position = await nextNewPosition(cfg.insertionOrder);
   const fields: NoteFields = {
     Term: input.term,
     Reading: input.reading,
@@ -200,9 +206,9 @@ export async function addCardForWord(userId: string, input: AddWordInput): Promi
     );
     // New card: due now, state New (0), no reviews yet. FSRS columns are derived from review_logs.
     await tx.execute(
-      `INSERT INTO cards (id, user_id, note_id, template_index, due, stability, difficulty, reps, lapses, state, last_review)
-       VALUES (?, ?, ?, 0, ?, NULL, NULL, 0, 0, 0, NULL)`,
-      [cardId, userId, noteId, now],
+      `INSERT INTO cards (id, user_id, note_id, template_index, due, stability, difficulty, reps, lapses, state, last_review, queue, flag, position)
+       VALUES (?, ?, ?, 0, ?, NULL, NULL, 0, 0, 0, NULL, 0, 0, ?)`,
+      [cardId, userId, noteId, now, position],
     );
     await tx.execute(
       `INSERT INTO mined_words (id, user_id, term, reading, context, document_id, looked_up_at)

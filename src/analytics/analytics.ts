@@ -1,5 +1,6 @@
 import type { ReviewLogRecord } from '../sync/AppSchema';
-import { Rating, State, cardStateLabel, deckConfig, replaySteps } from '../srs/fsrs';
+import { Rating, State, cardStateLabel, replaySteps } from '../srs/fsrs';
+import { parsePresetConfig, resolveDeckConfig } from '../srs/presets';
 
 /**
  * Analytics computation (build plan M5). Pure functions over the synced `review_logs` + `cards`
@@ -21,10 +22,15 @@ export interface AnalyticsCard {
   id: string;
   createdAt: string;
   fsrsParams: string | null;
+  /** The deck's preset reference + config text, for resolving the replay's scheduler config. */
+  presetId?: string | null;
+  presetConfig?: string | null;
   due: string | null;
   reps: number;
   state: number;
   lastReview: string | null;
+  /** Suspended cards stay out of the maturity buckets and the due forecast (like Anki). */
+  suspended?: boolean;
 }
 
 /** A review log row. `card_id` groups logs per card for the retention replay. */
@@ -94,7 +100,8 @@ export function computeAnalytics(cards: AnalyticsCard[], logs: AnalyticsLog[], n
   let totalReviews = 0;
 
   for (const log of logs) {
-    if (!log.review_time) continue;
+    // rating 0 rows are manual events (forget / set due date), not reviews.
+    if (!log.review_time || (log.rating ?? 0) < 1) continue;
     const t = new Date(log.review_time).getTime();
     if (Number.isNaN(t)) continue;
     totalReviews++;
@@ -123,7 +130,7 @@ export function computeAnalytics(cards: AnalyticsCard[], logs: AnalyticsLog[], n
   );
 
   const streak = computeStreak(
-    logs.map((l) => l.review_time),
+    logs.filter((l) => (l.rating ?? 0) >= 1).map((l) => l.review_time),
     now,
   );
 
@@ -135,6 +142,7 @@ export function computeAnalytics(cards: AnalyticsCard[], logs: AnalyticsLog[], n
   const forecastCounts = new Array<number>(FORECAST_DAYS).fill(0);
 
   for (const c of cards) {
+    if (c.suspended) continue;
     const label = cardStateLabel({
       state: c.state,
       reps: c.reps,
@@ -171,8 +179,11 @@ export function computeAnalytics(cards: AnalyticsCard[], logs: AnalyticsLog[], n
   for (const [cardId, cardLogs] of logsByCard) {
     const meta = cardById.get(cardId);
     const createdAt = meta?.createdAt ?? cardLogs[0]?.review_time ?? new Date(0).toISOString();
-    const cfg = deckConfig({ fsrs_params: meta?.fsrsParams ?? null });
-    for (const step of replaySteps(cardLogs as ReviewLogRecord[], createdAt, cfg)) {
+    const cfg = resolveDeckConfig(
+      { preset_id: meta?.presetId ?? null, fsrs_params: meta?.fsrsParams ?? null },
+      meta?.presetConfig ? parsePresetConfig(meta.presetConfig) : null,
+    );
+    for (const step of replaySteps(cardLogs as ReviewLogRecord[], createdAt, cfg, cardId)) {
       if (step.prevState !== State.Review) continue;
       retTotal++;
       if (step.rating !== Rating.Again) retPass++;

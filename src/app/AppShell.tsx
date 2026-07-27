@@ -1,5 +1,7 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
+import { ensurePresetsMigrated } from '../srs/presetOps';
+import { sweepExpiredBuried } from '../srs/cardOps';
 import { Icon, type IconName } from '../ui/icons';
 import { Settings, SettingsContent } from '../ui/Settings';
 import { Attribution } from '../ui/Attribution';
@@ -51,6 +53,21 @@ export function AppShell() {
   const due = useStudyCount();
   const streak = useStreak();
   const dueCount = due.count;
+
+  // SRS housekeeping: migrate legacy per-deck config into presets (one-shot, idempotent) and
+  // converge expired burials back to active — Anki's day-rollover unbury — on load and whenever
+  // the tab comes back into view (it may have been open across a rollover).
+  const userId = session?.user.id;
+  useEffect(() => {
+    if (!userId) return;
+    void ensurePresetsMigrated(userId).catch(() => undefined);
+    void sweepExpiredBuried().catch(() => undefined);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void sweepExpiredBuried().catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [userId]);
 
   function openBook(b: DocumentRecord) {
     setBook(b);

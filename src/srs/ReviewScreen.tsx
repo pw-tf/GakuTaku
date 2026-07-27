@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { useAuth } from '../auth/AuthProvider';
+import { db } from '../sync/system';
 import { CardTemplate } from './CardTemplate';
 import { EditCardModal } from './EditCardModal';
 import { useReview, type ReviewSource } from './useReview';
+import { buryCards, forgetCards, setDueDate, setFlag, suspendCards } from './cardOps';
+import { FLAG_COLORS, FLAG_NAMES, parseDueDateSpec } from './cardPlans';
 
 interface Props {
   source: ReviewSource;
@@ -32,9 +35,74 @@ export function ReviewScreen({ source, onExit }: Props) {
   const review = useReview(source);
   const { current, shown, gradePreviews, counts } = review;
   const [editing, setEditing] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const userId = session?.user.id ?? '';
+
+  // --- Card actions (Anki parity). Bury/suspend/forget/set-due remove the card from the session;
+  // they are deliberately not Z-undoable — only answers are, matching this session model.
+  const noteCardIds = useCallback(async (noteId: string): Promise<string[]> => {
+    const rows = await db.getAll<{ id: string }>('SELECT id FROM cards WHERE note_id = ?', [noteId]);
+    return rows.map((r) => r.id);
+  }, []);
+
+  const toggleFlag = useCallback(
+    (n: number) => {
+      if (!current) return;
+      // Anki toggles: setting the already-active flag clears it.
+      const next = current.flag === n ? 0 : n;
+      void setFlag([current.cardId], next);
+      review.setCurrentFlag(next);
+    },
+    [current, review],
+  );
+
+  const buryCurrent = useCallback(
+    (wholeNote: boolean) => {
+      if (!current) return;
+      void (async () => {
+        const ids = wholeNote ? await noteCardIds(current.noteId) : [current.cardId];
+        await buryCards(ids, { manual: true });
+        review.excludeCards(ids);
+      })();
+    },
+    [current, review, noteCardIds],
+  );
+
+  const suspendCurrent = useCallback(
+    (wholeNote: boolean) => {
+      if (!current) return;
+      void (async () => {
+        const ids = wholeNote ? await noteCardIds(current.noteId) : [current.cardId];
+        await suspendCards(ids);
+        review.excludeCards(ids);
+      })();
+    },
+    [current, review, noteCardIds],
+  );
+
+  const forgetCurrent = useCallback(() => {
+    if (!current || !userId) return;
+    void (async () => {
+      await forgetCards(userId, [current.cardId]);
+      review.excludeCards([current.cardId]);
+    })();
+  }, [current, userId, review]);
+
+  const setDueCurrent = useCallback(() => {
+    if (!current || !userId) return;
+    const raw = window.prompt('Set due date: days from now (e.g. “5”), or a range (e.g. “3-7”)', '1');
+    if (raw == null) return;
+    const spec = parseDueDateSpec(raw);
+    if (!spec) return;
+    void (async () => {
+      await setDueDate(userId, [current.cardId], spec);
+      review.excludeCards([current.cardId]);
+    })();
+  }, [current, userId, review]);
 
   // Keyboard, matching Anki desktop: space/enter reveals — or answers Good once revealed;
-  // 1–4 rate; Z (or Ctrl+Z / U) undoes the last answer.
+  // 1–4 rate; Z (or Ctrl+Z / U) undoes; Ctrl+1..7 toggles flags; `-`/`=` bury card/note;
+  // `@`/`!` suspend card/note.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // composedPath so inputs inside the card's Shadow DOM (e.g. {{type:…}} boxes) are seen.
@@ -47,6 +115,13 @@ export function ReviewScreen({ source, onExit }: Props) {
         }
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '7') {
+        if (current) {
+          e.preventDefault();
+          toggleFlag(Number(e.key));
+        }
+        return;
+      }
       if (e.key === 'z' || e.key === 'Z' || e.key === 'u' || e.key === 'U') {
         if (review.canUndo) {
           e.preventDefault();
@@ -55,7 +130,19 @@ export function ReviewScreen({ source, onExit }: Props) {
         return;
       }
       if (!current) return;
-      if (e.key === ' ' || e.key === 'Enter') {
+      if (e.key === '-') {
+        e.preventDefault();
+        buryCurrent(false);
+      } else if (e.key === '=') {
+        e.preventDefault();
+        buryCurrent(true);
+      } else if (e.key === '@') {
+        e.preventDefault();
+        suspendCurrent(false);
+      } else if (e.key === '!') {
+        e.preventDefault();
+        suspendCurrent(true);
+      } else if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
         if (!shown) review.reveal();
         else {
@@ -69,7 +156,7 @@ export function ReviewScreen({ source, onExit }: Props) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [current, shown, gradePreviews, review]);
+  }, [current, shown, gradePreviews, review, toggleFlag, buryCurrent, suspendCurrent]);
 
   const label = sourceLabel(source);
 
@@ -127,7 +214,6 @@ export function ReviewScreen({ source, onExit }: Props) {
   }
 
   const f = current.fields;
-  const userId = session?.user.id ?? '';
 
   return (
     <div className="review-wrap">
@@ -138,11 +224,51 @@ export function ReviewScreen({ source, onExit }: Props) {
           <span className={'c learn' + (review.currentBucket === 'learning' ? ' cur' : '')}>{counts.learning}</span>
           <span className={'c review' + (review.currentBucket === 'review' ? ' cur' : '')}>{counts.review}</span>
         </span>
+        {current.flag > 0 && (
+          <span
+            title={`Flag: ${FLAG_NAMES[current.flag]}`}
+            style={{ width: 10, height: 10, borderRadius: 3, background: FLAG_COLORS[current.flag], display: 'inline-block' }}
+          />
+        )}
         <span className="spacer" style={{ flex: 1 }} />
         {review.canUndo && (
           <button className="rv-edit" title="Undo last answer (Z)" onClick={review.undo}><Icon.undo s={16} /></button>
         )}
         <button className="rv-edit" title="Edit card" onClick={() => setEditing(current.cardId)}><Icon.study s={16} /></button>
+        <span className="deck-add" style={{ position: 'relative' }}>
+          <button className="rv-edit" title="Card actions" onClick={() => setMenuOpen((o) => !o)}><Icon.gear s={16} /></button>
+          {menuOpen && (
+            <>
+              <div className="popmenu-backdrop" onClick={() => setMenuOpen(false)} />
+              <div className="popmenu" style={{ right: 0 }}>
+                <div style={{ display: 'flex', gap: 6, padding: '8px 12px', alignItems: 'center' }}>
+                  {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+                    <button
+                      key={n}
+                      title={`${FLAG_NAMES[n]} (Ctrl+${n})`}
+                      onClick={() => { setMenuOpen(false); toggleFlag(n); }}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: 5,
+                        border: current.flag === n ? '2px solid var(--ink)' : '1px solid transparent',
+                        background: FLAG_COLORS[n],
+                        cursor: 'pointer',
+                        padding: 0,
+                      }}
+                    />
+                  ))}
+                </div>
+                <button onClick={() => { setMenuOpen(false); buryCurrent(false); }}><Icon.moon s={15} /> Bury card <span className="rate-key">-</span></button>
+                <button onClick={() => { setMenuOpen(false); buryCurrent(true); }}><Icon.moon s={15} /> Bury note <span className="rate-key">=</span></button>
+                <button onClick={() => { setMenuOpen(false); suspendCurrent(false); }}><Icon.pause s={15} /> Suspend card <span className="rate-key">@</span></button>
+                <button onClick={() => { setMenuOpen(false); suspendCurrent(true); }}><Icon.pause s={15} /> Suspend note <span className="rate-key">!</span></button>
+                <button onClick={() => { setMenuOpen(false); setDueCurrent(); }}><Icon.clock s={15} /> Set due date…</button>
+                <button className="danger" onClick={() => { setMenuOpen(false); forgetCurrent(); }}><Icon.undo s={15} /> Forget card</button>
+              </div>
+            </>
+          )}
+        </span>
         <Chip>{label}</Chip>
       </div>
 

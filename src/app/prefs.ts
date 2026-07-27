@@ -24,6 +24,8 @@ interface PrefsState {
   readerWidth: ReaderWidth;
   /** Anki-style day rollover hour (0–23). Reviews before this count toward the previous study day. */
   dayCutoffHour: number;
+  /** Anki's learn-ahead limit (Preferences → Scheduling), in minutes. */
+  learnAheadMinutes: number;
   setAccent: (a: string) => void;
   setDark: (d: boolean) => void;
   setFurigana: (f: FuriganaDensity) => void;
@@ -33,6 +35,7 @@ interface PrefsState {
   setReaderFontScale: (s: ReaderFontScale) => void;
   setReaderWidth: (w: ReaderWidth) => void;
   setDayCutoffHour: (h: number) => void;
+  setLearnAheadMinutes: (m: number) => void;
 }
 
 /**
@@ -52,6 +55,7 @@ export const usePrefs = create<PrefsState>()(
       readerFontScale: 'm',
       readerWidth: 'normal',
       dayCutoffHour: 4,
+      learnAheadMinutes: 20,
       setAccent: (accent) => set({ accent }),
       setDark: (dark) => set({ dark }),
       setFurigana: (furigana) => set({ furigana }),
@@ -61,6 +65,7 @@ export const usePrefs = create<PrefsState>()(
       setReaderFontScale: (readerFontScale) => set({ readerFontScale }),
       setReaderWidth: (readerWidth) => set({ readerWidth }),
       setDayCutoffHour: (dayCutoffHour) => set({ dayCutoffHour }),
+      setLearnAheadMinutes: (learnAheadMinutes) => set({ learnAheadMinutes }),
     }),
     { name: 'gakutaku-prefs' },
   ),

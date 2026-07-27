@@ -1,17 +1,18 @@
 import { useMemo } from 'react';
 import { useQuery } from '../sync/hooks';
 import { usePrefs } from '../app/prefs';
-import { deckConfig, parseJsonObject } from './fsrs';
+import { parseJsonObject } from './fsrs';
 import { NOTE_TYPE_NAME, parseNoteFields } from './mining';
 import {
-  INTRODUCED_TODAY_SQL,
-  RAW_DECK_COUNTS_SQL,
-  REVIEWED_TODAY_SQL,
   capDeckQueue,
+  introducedTodayQuery,
+  rawDeckCountsQuery,
+  reviewedTodayQuery,
   studyDayEnd,
   studyDayStart,
   type DeckToday,
 } from './queue';
+import { parseDeckOverrides, parsePresetConfig, resolveDeckConfig, type DeckOverrides, type ResolvedDeckConfig } from './presets';
 
 /**
  * Reactive SRS queries over the synced `cards` cache (thin wrappers around PowerSync's `useQuery`,
@@ -36,27 +37,35 @@ interface RawDeckCount {
   deck: string;
   name: string | null;
   fsrs_params: string | null;
+  preset_id: string | null;
   total: number;
   newc: number;
-  learnc: number;
+  learn_intraday: number;
+  learn_interday: number;
   reviewc: number;
+  suspendedc: number;
+  buriedc: number;
 }
 
 export interface DeckStat {
   id: string;
   name: string;
-  newPerDay: number;
-  reviewsPerDay: number;
-  desiredRetention: number;
-  maximumInterval: number;
-  learningSteps?: string[];
-  relearningSteps?: string[];
-  description?: string;
+  /** The deck's effective config (preset + per-deck overrides). */
+  cfg: ResolvedDeckConfig;
+  presetId: string | null;
+  presetName: string | null;
+  /** Per-deck limit overrides + description (Anki "this deck" values). */
+  overrides: DeckOverrides;
+  /** Today's activity — needed so the deck tree can apply a parent's limits to the subtree sum. */
+  today: DeckToday;
   /** Daily-capped counts (what's actually studiable today) — match the review session and the badge. */
   new: number;
   learning: number;
   due: number;
   total: number;
+  /** Affordances: buried (still within their bury window) and suspended cards in this deck. */
+  buried: number;
+  suspended: number;
 }
 
 export interface DeckStatsResult {
@@ -65,41 +74,55 @@ export interface DeckStatsResult {
   loading: boolean;
 }
 
-/** Per-deck Anki-style counts (New / Learning / Due, daily-capped) plus the deck's config. */
+/** Per-deck Anki-style counts (New / Learning / Due, daily-capped) plus each deck's resolved config. */
 export function useDeckStats(): DeckStatsResult {
   const dayEnd = useStudyDayEnd();
   const dayStart = useStudyDayStart();
-  const rawParams = useMemo(() => [dayEnd, dayEnd], [dayEnd]);
-  const introParams = useMemo(() => [dayStart, dayStart], [dayStart]);
-  const revParams = useMemo(() => [dayStart], [dayStart]);
-  const { data: raw, isLoading: lRaw } = useQuery<RawDeckCount>(RAW_DECK_COUNTS_SQL, rawParams);
-  const { data: intro, isLoading: lIntro } = useQuery<{ deck: string | null; cnt: number }>(INTRODUCED_TODAY_SQL, introParams);
-  const { data: rev, isLoading: lRev } = useQuery<{ deck: string | null; cnt: number }>(REVIEWED_TODAY_SQL, revParams);
+  const rawQ = useMemo(() => rawDeckCountsQuery(dayStart, dayEnd), [dayStart, dayEnd]);
+  const introQ = useMemo(() => introducedTodayQuery(dayStart), [dayStart]);
+  const revQ = useMemo(() => reviewedTodayQuery(dayStart), [dayStart]);
+  const presetParams = useMemo(() => [], []);
+  const { data: raw, isLoading: lRaw } = useQuery<RawDeckCount>(rawQ.sql, rawQ.params);
+  const { data: intro, isLoading: lIntro } = useQuery<{ deck: string | null; cnt: number }>(introQ.sql, introQ.params);
+  const { data: rev, isLoading: lRev } = useQuery<{ deck: string | null; cnt: number }>(revQ.sql, revQ.params);
+  const { data: presets, isLoading: lPresets } = useQuery<{ id: string; name: string; config: string | null }>(
+    'SELECT id, name, config FROM deck_presets',
+    presetParams,
+  );
   const decks = useMemo(() => {
     const introByDeck = new Map(intro.map((r) => [r.deck ?? '', r.cnt]));
     const revByDeck = new Map(rev.map((r) => [r.deck ?? '', r.cnt]));
+    const presetById = new Map(presets.map((p) => [p.id, p]));
     return raw.map((r) => {
-      const cfg = deckConfig({ fsrs_params: r.fsrs_params });
+      const preset = r.preset_id ? presetById.get(r.preset_id) : undefined;
+      const cfg = resolveDeckConfig(
+        { preset_id: r.preset_id, fsrs_params: r.fsrs_params },
+        preset ? parsePresetConfig(preset.config) : null,
+      );
       const today: DeckToday = { introduced: introByDeck.get(r.deck) ?? 0, reviewed: revByDeck.get(r.deck) ?? 0 };
-      const q = capDeckQueue(cfg, { newCount: r.newc, learningCount: r.learnc, reviewCount: r.reviewc }, today);
+      const q = capDeckQueue(
+        cfg,
+        { newCount: r.newc, learnIntraday: r.learn_intraday, learnInterday: r.learn_interday, reviewCount: r.reviewc },
+        today,
+      );
       return {
         id: r.deck,
         name: r.name ?? 'Untitled',
-        newPerDay: cfg.newPerDay,
-        reviewsPerDay: cfg.reviewsPerDay,
-        desiredRetention: cfg.desiredRetention,
-        maximumInterval: cfg.maximumInterval,
-        learningSteps: cfg.learningSteps,
-        relearningSteps: cfg.relearningSteps,
-        description: cfg.description,
+        cfg,
+        presetId: preset?.id ?? null,
+        presetName: preset?.name ?? null,
+        overrides: preset ? parseDeckOverrides(r.fsrs_params) : {},
+        today,
         new: q.new,
         learning: q.learning,
         due: q.due,
         total: r.total,
+        buried: r.buriedc,
+        suspended: r.suspendedc,
       };
     });
-  }, [raw, intro, rev]);
-  return { decks, loading: lRaw || lIntro || lRev };
+  }, [raw, intro, rev, presets]);
+  return { decks, loading: lRaw || lIntro || lRev || lPresets };
 }
 
 export interface StudyCountResult {
@@ -127,6 +150,11 @@ export interface CardRow {
   reps: number;
   state: number;
   last_review: string | null;
+  /** Anki queue value: 0 active, -1 suspended, -2/-3 buried. */
+  queue: number;
+  buried_until: string | null;
+  flag: number;
+  position: number | null;
 }
 
 interface RawCardRow {
@@ -139,10 +167,14 @@ interface RawCardRow {
   reps: number;
   state: number;
   last_review: string | null;
+  queue: number | null;
+  buried_until: string | null;
+  flag: number | null;
+  position: number | null;
 }
 
 const CARD_SELECT = `SELECT c.id, d.name AS deck, n.fields AS fields, nt.name AS nt_name, nt.fields AS nt_fields,
-    c.due, c.reps, c.state, c.last_review
+    c.due, c.reps, c.state, c.last_review, COALESCE(c.queue, 0) AS queue, c.buried_until, COALESCE(c.flag, 0) AS flag, c.position
   FROM cards c
   JOIN notes n ON n.id = c.note_id
   LEFT JOIN decks d ON d.id = n.deck_id
@@ -163,7 +195,18 @@ function plainText(s: string): string {
 
 /** Map a raw row to display fields, handling both the built-in vocab type and imported note types. */
 function toCardRow(r: RawCardRow): CardRow {
-  const base = { id: r.id, deck: r.deck ?? '—', due: r.due, reps: r.reps, state: r.state, last_review: r.last_review };
+  const base = {
+    id: r.id,
+    deck: r.deck ?? '—',
+    due: r.due,
+    reps: r.reps,
+    state: r.state,
+    last_review: r.last_review,
+    queue: r.queue ?? 0,
+    buried_until: r.buried_until,
+    flag: r.flag ?? 0,
+    position: r.position,
+  };
   if (!r.nt_name || r.nt_name === NOTE_TYPE_NAME) {
     const f = parseNoteFields(r.fields);
     return { ...base, front: f.Term, reading: f.Reading, back: f.Meaning };
@@ -185,11 +228,27 @@ function toCardRow(r: RawCardRow): CardRow {
   return { ...base, front, reading: '', back };
 }
 
+/** Optional filters for the deck card table (Anki browser-style flag/status filtering). */
+export interface DeckCardsFilter {
+  /** 1..7 = only that flag. */
+  flag?: number;
+  status?: 'all' | 'suspended' | 'buried';
+}
+
 /** Cards in a single deck (newest first), for the deck detail browser. */
-export function useDeckCards(deckId: string): CardRow[] {
-  const params = useMemo(() => [deckId], [deckId]);
+export function useDeckCards(deckId: string, filter?: DeckCardsFilter): CardRow[] {
+  const flag = filter?.flag ?? 0;
+  const status = filter?.status ?? 'all';
+  const params = useMemo(() => (flag ? [deckId, flag] : [deckId]), [deckId, flag]);
+  const statusSql =
+    status === 'suspended'
+      ? ' AND COALESCE(c.queue, 0) = -1'
+      : status === 'buried'
+        ? ' AND COALESCE(c.queue, 0) <= -2'
+        : '';
+  const flagSql = flag ? ' AND COALESCE(c.flag, 0) = ?' : '';
   const { data } = useQuery<RawCardRow>(
-    `${CARD_SELECT} WHERE n.deck_id = ? ORDER BY n.created_at DESC LIMIT 500`,
+    `${CARD_SELECT} WHERE n.deck_id = ?${flagSql}${statusSql} ORDER BY n.created_at DESC LIMIT 500`,
     params,
   );
   return data.map(toCardRow);

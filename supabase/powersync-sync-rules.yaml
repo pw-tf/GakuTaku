@@ -10,6 +10,7 @@ bucket_definitions:
     parameters: select request.user_id() as user_id
     data:
       - select * from decks where user_id = bucket.user_id
+      - select * from deck_presets where user_id = bucket.user_id
       - select * from note_types where user_id = bucket.user_id
       - select * from notes where user_id = bucket.user_id
       - select * from cards where user_id = bucket.user_id
