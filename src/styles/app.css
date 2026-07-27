@@ -95,6 +95,20 @@ body { overflow: hidden; }
 .feed-row .fmeta .ft { font-weight:600; font-size: 14px; display:flex; align-items:center; gap:10px; }
 .feed-row .fmeta .fl { font-family: var(--jp-mincho); font-size: 14px; color: var(--ink-soft); margin-top: 3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .feed-row .ftime { font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); letter-spacing:0.06em; white-space:nowrap; }
+.feed-err { color: var(--ink-faint); font-style: italic; }
+
+/* Feed manage rows (toggle defaults on/off, remove custom feeds). */
+.mng-row { display:flex; align-items:center; gap: 12px; padding: 12px 4px; border-top: 1px solid var(--rule); }
+.mng-row .fic { width:32px; height:32px; border-radius: 8px; background: var(--paper-sunk); border:1px solid var(--rule); display:flex; align-items:center; justify-content:center; color: var(--accent); flex:none; }
+.mng-row .fmeta { flex:1; min-width:0; }
+.mng-row .fmeta .ft { font-weight:600; font-size: 14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.mng-row .fmeta .fl { font-family:var(--mono); font-size: 11px; color: var(--ink-faint); margin-top: 3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* Small on/off switch (feed enable toggle). */
+.switch { width: 36px; height: 20px; border-radius: 99px; background: var(--rule-strong); position: relative; cursor: pointer; transition: background .15s; flex:none; }
+.switch::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background: var(--paper-raised); box-shadow: 0 1px 2px oklch(0.2 0.02 60/.35); transition: left .15s; }
+.switch.on { background: var(--accent); }
+.switch.on::after { left: 18px; }
 
 /* ---------- Reader ---------- */
 .reader { position: fixed; inset: 0; z-index: 50; display:flex; flex-direction: column; background: var(--paper); }

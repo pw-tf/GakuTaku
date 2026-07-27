@@ -27,6 +27,8 @@ const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 interface Props {
   title: string;
+  /** Label for the back button (defaults to "Library"; RSS articles pass their feed's name). */
+  backLabel?: string;
   direction: 'ltr' | 'rtl';
   chapterIndex: number;
   chapterCount: number;
@@ -479,7 +481,7 @@ export function Reader(props: Props) {
     <div className="reader">
       <div className="rd-top">
         <span className="back" onClick={props.onClose}>
-          <Icon.chevL s={18} /> <span className="back-lbl">Library</span>
+          <Icon.chevL s={18} /> <span className="back-lbl" lang="ja">{props.backLabel ?? 'Library'}</span>
         </span>
         <span style={{ width: 1, height: 22, background: 'var(--rule)' }} />
         <span className="rtitle" lang="ja">{props.title}</span>

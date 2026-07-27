@@ -1,11 +1,14 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
-import { Btn, Chip, Kicker, Spinner } from '../ui/atoms';
+import { Btn, Kicker, Spinner } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
 import { useDocuments, useReadingPositions } from '../sync/hooks';
 import type { DocumentRecord } from '../sync/AppSchema';
-import { SAMPLE_FEEDS } from '../data/sample';
+import { FeedsSection } from '../feeds/FeedsSection';
+import { FeedArticles } from '../feeds/FeedArticles';
+import type { FeedArticle } from '../feeds/parse';
+import type { FeedView } from '../feeds/useFeeds';
 
 const TONES = ['#b8492f', '#5b6b58', '#3d5a6b', '#6b5b3d', '#7d4a86', '#3f5bb0', '#2f6b4f'];
 function toneFor(id: string): string {
@@ -16,18 +19,21 @@ function toneFor(id: string): string {
 
 interface Props {
   onOpenBook: (doc: DocumentRecord) => void;
+  onOpenArticle: (article: FeedArticle, feed: FeedView) => void;
   due: number;
   dueLoading: boolean;
   streak: number;
 }
 
-export function LibraryScreen({ onOpenBook, due, dueLoading, streak }: Props) {
+export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, streak }: Props) {
   const { session } = useAuth();
   const { data: docs } = useDocuments();
   const { data: positions } = useReadingPositions();
   const fileRef = useRef<HTMLInputElement>(null);
   // Progress lives in the global task store (BackgroundTasks banner) so it survives navigating away.
   const busy = useImporting();
+  // Drill-down into one feed's article list (survives opening/closing the article overlay).
+  const [openFeed, setOpenFeed] = useState<FeedView | null>(null);
 
   const pctById = useMemo(() => {
     const m = new Map<string, number>();
@@ -114,25 +120,15 @@ export function LibraryScreen({ onOpenBook, due, dueLoading, streak }: Props) {
         </div>
       )}
 
-      <div className="sec-bar" style={{ marginTop: 40 }}>
-        <h2>Feeds</h2>
-        <span className="count">articles</span>
-        <span className="more"><Btn size="sm" disabled title="Coming in M7"><Icon.plus s={15} /> Add feed</Btn></span>
-      </div>
-      <div className="feed-list">
-        {SAMPLE_FEEDS.map((f) => (
-          <div className="feed-row" key={f.id}>
-            <div className="fic"><Icon.rss s={18} /></div>
-            <div className="fmeta">
-              <div className="ft" lang="ja">
-                {f.title} <Chip>{f.level}</Chip> {f.unread > 0 && <Chip accent>{f.unread} new</Chip>}
-              </div>
-              <div className="fl" lang="ja">{f.latest}</div>
-            </div>
-            <div className="ftime" lang="ja">{f.time}</div>
-          </div>
-        ))}
-      </div>
+      {openFeed ? (
+        <FeedArticles
+          feed={openFeed}
+          onBack={() => setOpenFeed(null)}
+          onOpenArticle={(a) => onOpenArticle(a, openFeed)}
+        />
+      ) : (
+        <FeedsSection onOpenFeed={setOpenFeed} />
+      )}
     </div>
   );
 }
