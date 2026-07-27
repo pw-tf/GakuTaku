@@ -1,10 +1,11 @@
 /**
  * Sample data ported from the design prototype (gt-data.jsx). Used to populate screens whose
  * real backend is a later milestone:
- *   - Books / Feeds (Library)  → M3 (epub upload) / M7 (RSS)
+ *   - Books (Library) → M3 (epub upload)
  *   - Review queue + intervals → M4 (FSRS)
  *   - Decks sample + cards table → M4
- * Analytics samples were removed once M5 wired the dashboard to real review_logs.
+ * Analytics samples were removed once M5 wired the dashboard to real review_logs; feed
+ * samples were removed once M7 wired the Library to real RSS (src/feeds/).
  * Replace each remaining one with real queries as those milestones land.
  */
 
@@ -28,15 +29,6 @@ export interface SampleBook {
   chapter: string;
   tone: string;
   current?: boolean;
-}
-
-export interface SampleFeed {
-  id: string;
-  title: string;
-  level: string;
-  unread: number;
-  latest: string;
-  time: string;
 }
 
 export interface SampleDeck {
@@ -72,12 +64,6 @@ export const SAMPLE_BOOKS: SampleBook[] = [
   { id: 'rashomon', title: '羅生門', author: '芥川龍之介', romaji: 'Akutagawa Ryūnosuke', type: 'EPUB', pct: 12, chapter: '序', tone: '#5b6b58' },
   { id: 'kokoro', title: 'こころ', author: '夏目漱石', romaji: 'Natsume Sōseki', type: 'EPUB', pct: 0, chapter: '未読', tone: '#3d5a6b' },
   { id: 'ginga', title: '銀河鉄道の夜', author: '宮沢賢治', romaji: 'Miyazawa Kenji', type: 'EPUB', pct: 88, chapter: '第九章', tone: '#6b5b3d' },
-];
-
-export const SAMPLE_FEEDS: SampleFeed[] = [
-  { id: 'nhk', title: 'NHK NEWS WEB やさしい', level: 'N4–N3', unread: 6, latest: '円相場、1ドル150円台に　約2か月ぶりの水準', time: '2時間前' },
-  { id: 'asahi', title: '朝日新聞デジタル', level: 'N2–N1', unread: 21, latest: '桜前線、例年より早く北上の見込み', time: '4時間前' },
-  { id: 'note', title: 'note・エッセイ', level: 'N3–N2', unread: 3, latest: '小さな本屋を続けるということ', time: '昨日' },
 ];
 
 export const SAMPLE_DECKS: SampleDeck[] = [

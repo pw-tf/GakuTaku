@@ -93,6 +93,9 @@ const feeds = new Table({
   user_id: column.text,
   url: column.text,
   title: column.text,
+  kind: column.text, // 'rss' (generic RSS/Atom/RDF) | 'nhk-easy' (NHK News Web Easy JSON list)
+  enabled: column.integer, // 1|0 — 0 hides the feed from the Library list
+  builtin_id: column.text, // set when this row overrides a built-in default feed's state
   added_at: column.text,
 });
 
@@ -131,3 +134,4 @@ export type NoteRecord = Database['notes'];
 export type CardRecord = Database['cards'];
 export type ReviewLogRecord = Database['review_logs'];
 export type DocumentRecord = Database['documents'];
+export type FeedRecord = Database['feeds'];
