@@ -1,13 +1,16 @@
 import * as Comlink from 'comlink';
 import { db } from '../sync/system';
 import { deckConfig, serializeDeckConfig } from '../srs/fsrs';
+import { parsePresetConfig, serializePresetConfig } from '../srs/presets';
 import type { OptimizerApi, TrainingSet } from './optimizer.worker';
 
 /**
- * Main-thread driver for the FSRS optimizer (build plan M5). Reads a deck's append-only review_logs,
+ * Main-thread driver for the FSRS optimizer (build plan M5). Reads the append-only review_logs,
  * shapes them into per-card sequences, trains weights in {@link optimizer.worker}, and writes the
- * result back to `decks.fsrs_params`. `scheduler()` already applies `cfg.w` (src/srs/fsrs.ts), so
- * optimized weights take effect on the next review with no other wiring.
+ * result back. Like Anki, FSRS weights live on the deck options *preset*: {@link optimizePreset}
+ * trains on the combined history of every deck using the preset and stores `w` in its config.
+ * `scheduler()` already applies `cfg.w` (src/srs/fsrs.ts), so optimized weights take effect on the
+ * next review with no other wiring. {@link optimizeDeck} remains for legacy decks without a preset.
  */
 
 const DAY_MS = 86_400_000;
@@ -105,18 +108,8 @@ export interface OptimizeResult {
   reviewCount: number;
 }
 
-/** Optimize one deck's FSRS weights from its review_logs and persist them to `decks.fsrs_params`. */
-export async function optimizeDeck(deckId: string): Promise<OptimizeResult> {
-  const rows = await db.getAll<LogRow>(
-    `SELECT rl.card_id, rl.rating, rl.review_time
-     FROM review_logs rl
-     JOIN cards c ON c.id = rl.card_id
-     JOIN notes n ON n.id = c.note_id
-     WHERE n.deck_id = ? AND rl.review_time IS NOT NULL
-     ORDER BY rl.review_time ASC`,
-    [deckId],
-  );
-
+/** Train weights from a set of log rows; shared by the preset and legacy-deck paths. */
+async function trainWeights(rows: LogRow[]): Promise<OptimizeResult> {
   const { set, reviewCount, cardCount } = buildTrainingSet(rows);
   if (cardCount === 0) {
     return {
@@ -138,12 +131,52 @@ export async function optimizeDeck(deckId: string): Promise<OptimizeResult> {
   if (!weights?.length || weights.some((w) => !Number.isFinite(w))) {
     return { ok: false, reason: 'Optimizer returned invalid weights.', reviewCount };
   }
+  return { ok: true, weights, reviewCount };
+}
+
+/**
+ * Optimize a preset's FSRS weights from the review history of every deck using it, and persist
+ * them into `deck_presets.config` — Anki's model exactly (FSRS params belong to the options group).
+ */
+export async function optimizePreset(presetId: string): Promise<OptimizeResult> {
+  const rows = await db.getAll<LogRow>(
+    `SELECT rl.card_id, rl.rating, rl.review_time
+     FROM review_logs rl
+     JOIN cards c ON c.id = rl.card_id
+     JOIN notes n ON n.id = c.note_id
+     JOIN decks d ON d.id = n.deck_id
+     WHERE d.preset_id = ? AND rl.review_time IS NOT NULL
+     ORDER BY rl.review_time ASC`,
+    [presetId],
+  );
+  const result = await trainWeights(rows);
+  if (!result.ok || !result.weights) return result;
+
+  const preset = await db.getOptional<{ config: string | null }>(`SELECT config FROM deck_presets WHERE id = ?`, [presetId]);
+  const cfg = parsePresetConfig(preset?.config);
+  cfg.w = result.weights;
+  await db.execute(`UPDATE deck_presets SET config = ? WHERE id = ?`, [serializePresetConfig(cfg), presetId]);
+  return result;
+}
+
+/** Legacy path: optimize a preset-less deck from its own logs into `decks.fsrs_params`. */
+export async function optimizeDeck(deckId: string): Promise<OptimizeResult> {
+  const rows = await db.getAll<LogRow>(
+    `SELECT rl.card_id, rl.rating, rl.review_time
+     FROM review_logs rl
+     JOIN cards c ON c.id = rl.card_id
+     JOIN notes n ON n.id = c.note_id
+     WHERE n.deck_id = ? AND rl.review_time IS NOT NULL
+     ORDER BY rl.review_time ASC`,
+    [deckId],
+  );
+  const result = await trainWeights(rows);
+  if (!result.ok || !result.weights) return result;
 
   // Merge into the deck's existing config so newPerDay / steps are preserved.
   const deck = await db.getOptional<{ fsrs_params: string | null }>(`SELECT fsrs_params FROM decks WHERE id = ?`, [deckId]);
   const cfg = deckConfig({ fsrs_params: deck?.fsrs_params ?? null });
-  cfg.w = weights;
+  cfg.w = result.weights;
   await db.execute(`UPDATE decks SET fsrs_params = ? WHERE id = ?`, [serializeDeckConfig(cfg), deckId]);
-
-  return { ok: true, weights, reviewCount };
+  return result;
 }

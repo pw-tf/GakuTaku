@@ -12,7 +12,7 @@ import {
   studyDayStart,
   type DeckToday,
 } from './queue';
-import { parsePresetConfig, resolveDeckConfig, type ResolvedDeckConfig } from './presets';
+import { parseDeckOverrides, parsePresetConfig, resolveDeckConfig, type DeckOverrides, type ResolvedDeckConfig } from './presets';
 
 /**
  * Reactive SRS queries over the synced `cards` cache (thin wrappers around PowerSync's `useQuery`,
@@ -54,6 +54,8 @@ export interface DeckStat {
   cfg: ResolvedDeckConfig;
   presetId: string | null;
   presetName: string | null;
+  /** Per-deck limit overrides + description (Anki "this deck" values). */
+  overrides: DeckOverrides;
   /** Today's activity — needed so the deck tree can apply a parent's limits to the subtree sum. */
   today: DeckToday;
   /** Daily-capped counts (what's actually studiable today) — match the review session and the badge. */
@@ -109,6 +111,7 @@ export function useDeckStats(): DeckStatsResult {
         cfg,
         presetId: preset?.id ?? null,
         presetName: preset?.name ?? null,
+        overrides: preset ? parseDeckOverrides(r.fsrs_params) : {},
         today,
         new: q.new,
         learning: q.learning,

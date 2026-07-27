@@ -319,6 +319,9 @@ body { overflow: hidden; }
 .state-learning { color: var(--amber); border-color: color-mix(in oklch,var(--amber) 40%,var(--rule)); }
 .state-young { color: var(--sage); border-color: color-mix(in oklch,var(--sage) 35%,var(--rule)); }
 .state-mature { color: var(--ink-soft); }
+/* User state overrides the maturity pill (Anki: yellow suspended, dimmed buried). */
+.state-suspended { color: var(--amber); border-color: color-mix(in oklch,var(--amber) 45%,var(--rule)); background: color-mix(in oklch,var(--amber) 12%,transparent); }
+.state-buried { color: var(--ink-faint); border-style: dashed; }
 
 /* ---------- Analytics ---------- */
 .stat-row { display:grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 26px; }
