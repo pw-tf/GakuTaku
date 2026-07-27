@@ -15,12 +15,20 @@ const NEXT_SCALE: Record<ReaderFontScale, ReaderFontScale> = { s: 'm', m: 'l', l
 /** Inter-page gutter for horizontal multi-column paging (px). */
 const PAGE_GAP = 56;
 const SWIPE_MIN = 44;
+/** Wheel/trackpad paging: flip once this much delta accumulates… */
+const WHEEL_MIN = 60;
+/** …then swallow the gesture's inertia tail so one flick turns one page. */
+const WHEEL_COOLDOWN_MS = 350;
+/** A quiet gap this long starts a fresh gesture (drops a stale part-accumulated delta). */
+const WHEEL_GESTURE_GAP_MS = 300;
 /** Background-task id for the one-time offline dictionary download (shared with the shell banner). */
 const DICT_TASK = 'dict-download';
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 interface Props {
   title: string;
+  /** Label for the back button (defaults to "Library"; RSS articles pass their feed's name). */
+  backLabel?: string;
   direction: 'ltr' | 'rtl';
   chapterIndex: number;
   chapterCount: number;
@@ -45,6 +53,8 @@ interface Geom {
   stride: number;
   total: number;
   count: number;
+  /** Vertical only: start-side (right) padding — where the first text line begins. 0 when horizontal. */
+  padStart: number;
 }
 /** A paragraph anchor's position along the reading axis (px from the chapter's start). */
 interface Anchor {
@@ -78,7 +88,7 @@ export function Reader(props: Props) {
   const [activeKey, setActiveKey] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [pageCount, setPageCount] = useState(1);
-  const [metrics, setMetrics] = useState({ total: 0, viewSize: 0, stride: 0 });
+  const [metrics, setMetrics] = useState({ total: 0, viewSize: 0, stride: 0, padStart: 0 });
   // Only user page-turns animate; programmatic jumps (restore, chapter load, resize) are instant.
   const [instant, setInstant] = useState(true);
 
@@ -103,6 +113,17 @@ export function Reader(props: Props) {
     }
     jpCore.isDictionaryLoaded().then((l) => setDictStatus(l ? 'ready' : 'need'));
   }, []);
+  // The download may have been started by an earlier Reader mount; the shared task is the source of
+  // truth, so mirror its progress and completion here rather than only tracking our own call.
+  const dictTask = useTasks((s) => s.tasks.find((t) => t.id === DICT_TASK));
+  useEffect(() => {
+    if (!dictTask) return;
+    if (dictTask.status === 'running') {
+      setDictStatus('loading');
+      if (dictTask.total > 0) setDictPct(Math.round((dictTask.done / dictTask.total) * 100));
+    } else if (dictTask.status === 'success') setDictStatus('ready');
+    else setDictStatus('need');
+  }, [dictTask]);
   async function downloadDict() {
     if (isTaskRunning(DICT_TASK)) return;
     setDictStatus('loading');
@@ -111,14 +132,10 @@ export function Reader(props: Props) {
     tasks.update(DICT_TASK, { message: 'For offline word lookup — one time.' });
     try {
       await jpCore.ensureDictionary(proxy((p: LoadProgress) => {
-        const pct = p.total ? Math.round((p.loaded / p.total) * 100) : 0;
-        setDictPct(pct);
         tasks.update(DICT_TASK, { done: p.loaded, total: p.total });
       }));
-      setDictStatus('ready');
       tasks.finish(DICT_TASK, 'success', 'Dictionary ready — lookup works offline.');
     } catch (err) {
-      setDictStatus('need');
       tasks.finish(DICT_TASK, 'error', err instanceof Error ? err.message : 'Dictionary download failed.');
     }
   }
@@ -145,10 +162,26 @@ export function Reader(props: Props) {
     const pages = pagesRef.current;
     if (!view || !pages) return null;
     const W = Math.max(1, view.clientWidth);
-    const stride = vertical ? W : W + PAGE_GAP;
     const total = pages.scrollWidth;
-    const count = vertical ? Math.max(1, Math.ceil(total / W)) : Math.max(1, Math.round((total + PAGE_GAP) / stride));
-    return { view, pages, W, stride, total, count };
+    if (vertical) {
+      // Tategaki is a continuous vertical-rl flow (no CSS fragmentation), so a page is a window
+      // over it. Quantize the window advance to whole line-heights or every page boundary slices
+      // a line of text in half; the leftover margins are hidden by the edge masks.
+      const cs = getComputedStyle(pages);
+      const padStart = parseFloat(cs.paddingRight) || 0;
+      const padEnd = parseFloat(cs.paddingLeft) || 0;
+      let lineAdv = parseFloat(cs.lineHeight);
+      if (!Number.isFinite(lineAdv) || lineAdv <= 0) lineAdv = 2.2;
+      if (lineAdv < 8) lineAdv *= parseFloat(cs.fontSize) || 16; // unitless line-height
+      const usable = Math.max(lineAdv, W - padStart - padEnd);
+      const stride = Math.max(1, Math.floor(usable / lineAdv)) * lineAdv;
+      const content = Math.max(1, total - padStart - padEnd);
+      const count = Math.max(1, Math.ceil((content - 0.5) / stride));
+      return { view, pages, W, stride, total, count, padStart };
+    }
+    const stride = W + PAGE_GAP;
+    const count = Math.max(1, Math.round((total + PAGE_GAP) / stride));
+    return { view, pages, W, stride, total, count, padStart: 0 };
   }
 
   /**
@@ -217,7 +250,9 @@ export function Reader(props: Props) {
 
   const translate = (() => {
     if (!paged) return undefined;
-    if (vertical) return `translateX(${page * metrics.viewSize - (metrics.total - metrics.viewSize)}px)`;
+    // Vertical-rl content starts at the element's RIGHT edge; slide so the current page's first
+    // line lands at the viewport's right margin, advancing right→left by one stride per page.
+    if (vertical) return `translateX(${page * metrics.stride - (metrics.total - metrics.viewSize)}px)`;
     return `translateX(${-page * metrics.stride}px)`;
   })();
 
@@ -227,7 +262,7 @@ export function Reader(props: Props) {
     if (paged) {
       const g = geom();
       if (!g) return;
-      const lead = leadAt(pagedAnchors(g), page * g.stride, g.total);
+      const lead = leadAt(pagedAnchors(g), g.padStart + page * g.stride, g.total);
       lastPos.current = { pi: lead.paragraphIndex, frac: lead.fraction };
       props.onProgress({ ...lead, chapterFraction: g.count > 1 ? page / (g.count - 1) : 0 }, immediate);
     } else {
@@ -251,7 +286,12 @@ export function Reader(props: Props) {
       if (!g) return;
       let target = 0;
       if (t.kind === 'end') target = g.count - 1;
-      else if (t.kind === 'anchor') target = Math.round(axisOf(pagedAnchors(g), t.paragraphIndex, t.fraction, g.total) / g.stride);
+      else if (t.kind === 'anchor') {
+        const axis = axisOf(pagedAnchors(g), t.paragraphIndex, t.fraction, g.total);
+        // Vertical positions are measured from the element edge, so shift past the start padding
+        // and floor: an anchor N lines in is on page floor(N / linesPerPage), never the next one.
+        target = vertical ? Math.floor((axis - g.padStart) / g.stride + 0.001) : Math.round(axis / g.stride);
+      }
       setPage(Math.min(Math.max(0, target), g.count - 1));
     } else {
       const el = scrollRef.current;
@@ -277,13 +317,13 @@ export function Reader(props: Props) {
       pages.style.columnWidth = `${W}px`;
       pages.style.columnGap = `${PAGE_GAP}px`;
     }
-    const total = pages.scrollWidth;
-    const stride = vertical ? W : W + PAGE_GAP;
-    const count = vertical ? Math.max(1, Math.ceil(total / W)) : Math.max(1, Math.round((total + PAGE_GAP) / stride));
+    const g = geom();
+    if (!g) return;
     setInstant(true); // re-layout shouldn't animate the page jump
-    setMetrics({ total, viewSize: W, stride });
-    setPageCount(count);
-    setPage((p) => Math.min(p, count - 1));
+    setMetrics({ total: g.total, viewSize: g.W, stride: g.stride, padStart: g.padStart });
+    setPageCount(g.count);
+    setPage((p) => Math.min(p, g.count - 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paged, vertical]);
 
   // Re-enable the slide one frame after an instant jump has painted (transform unchanged → no animation).
@@ -371,7 +411,36 @@ export function Reader(props: Props) {
     if (sx == null) return;
     const dx = e.changedTouches[0].clientX - sx;
     if (Math.abs(dx) < SWIPE_MIN) return;
-    if (dx < 0) nextPage();
+    // Tategaki pages advance right→left (RTL), so a rightward swipe turns forward — same flip as
+    // the on-screen nav arrows and the arrow keys.
+    const fwd = vertical ? dx > 0 : dx < 0;
+    if (fwd) nextPage();
+    else prevPage();
+  }
+
+  /** Wheel/trackpad paging: the paged views clip (no native scroll), so map scroll to page turns. */
+  const wheel = useRef({ acc: 0, until: 0, last: 0 });
+  function onWheel(e: React.WheelEvent) {
+    if (!paged) return;
+    const now = performance.now();
+    const w = wheel.current;
+    if (now < w.until) {
+      w.last = now;
+      return; // inertia tail of the flip we just made
+    }
+    if (now - w.last > WHEEL_GESTURE_GAP_MS) w.acc = 0;
+    w.last = now;
+    const scale = e.deltaMode === 1 ? 24 : e.deltaMode === 2 ? 120 : 1; // lines/pages → px
+    const horiz = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+    // Scrolling down always reads forward; a horizontal pan follows the page-advance direction
+    // (leftward in vertical RTL, rightward in horizontal LTR).
+    const delta = (horiz ? (vertical ? -e.deltaX : e.deltaX) : e.deltaY) * scale;
+    w.acc += delta;
+    if (Math.abs(w.acc) < WHEEL_MIN) return;
+    const fwd = w.acc > 0;
+    w.acc = 0;
+    w.until = now + WHEEL_COOLDOWN_MS;
+    if (fwd) nextPage();
     else prevPage();
   }
 
@@ -412,7 +481,7 @@ export function Reader(props: Props) {
     <div className="reader">
       <div className="rd-top">
         <span className="back" onClick={props.onClose}>
-          <Icon.chevL s={18} /> <span className="back-lbl">Library</span>
+          <Icon.chevL s={18} /> <span className="back-lbl" lang="ja">{props.backLabel ?? 'Library'}</span>
         </span>
         <span style={{ width: 1, height: 22, background: 'var(--rule)' }} />
         <span className="rtitle" lang="ja">{props.title}</span>
@@ -446,10 +515,19 @@ export function Reader(props: Props) {
             ref={viewRef}
             onTouchStart={(e) => (touchX.current = e.touches[0].clientX)}
             onTouchEnd={onTouchEnd}
+            onWheel={onWheel}
           >
             <div className={`rd-pages fs-${fontScale} w-${width}`} ref={pagesRef} lang="ja" style={{ transform: translate, transition: instant ? 'none' : 'transform .26s ease' }}>
               {props.paragraphs.length === 0 ? <p style={{ color: 'var(--ink-faint)' }}>(No text on this page.)</p> : paras()}
             </div>
+            {vertical && metrics.stride > 0 && (
+              <>
+                {/* Continuous tategaki flow means the neighbouring page's edge line sits just past
+                    the stride boundary — these opaque margins hide it instead of showing a sliver. */}
+                <div className="rd-edge-mask" style={{ left: 0, width: Math.max(0, metrics.viewSize - metrics.padStart - metrics.stride) }} />
+                <div className="rd-edge-mask" style={{ right: 0, width: metrics.padStart }} />
+              </>
+            )}
             {pageCount > 1 && (
               <>
                 <button className="rd-page-nav left" aria-label="Page left" onClick={vertical ? nextPage : prevPage}>

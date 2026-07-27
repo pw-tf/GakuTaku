@@ -5,8 +5,8 @@ repetition. See [`japanese-reader-build-plan.md`](./japanese-reader-build-plan.m
 full 8-milestone spec.
 
 **Status:** M0 (scaffold) + M1 (auth & sync) + M2 (Japanese core: tokenizer, furigana,
-offline dictionary lookup, shared popup) complete. M3+ (reader, SRS, analytics, import, RSS)
-not yet built — their `src/` folders are placeholders.
+offline dictionary lookup, shared popup) + M3–M6 (reader, SRS, analytics, Anki import) +
+M7 (RSS feeds: real Japanese news with furigana + lookup) complete.
 
 ## Stack
 
@@ -26,11 +26,10 @@ cp .env.example .env   # then fill in the three VITE_ values
 
 ### 2. Supabase
 
-1. Create a project. In the SQL editor, run, in order:
-   - [`supabase/migrations/0001_init.sql`](./supabase/migrations/0001_init.sql) — schema, the
-     `powersync` publication, and Data-API grants.
-   - [`supabase/migrations/0002_rls.sql`](./supabase/migrations/0002_rls.sql) — RLS policies
-     (owner-only; `review_logs` is append-only).
+1. Create a project. In the SQL editor, run every file in
+   [`supabase/migrations/`](./supabase/migrations) in order (`0001_init.sql` → schema +
+   `powersync` publication + Data-API grants, `0002_rls.sql` → RLS policies, then the
+   numbered follow-ups, e.g. `0006_feeds_rss.sql` for the RSS feed columns).
 2. Auth → Providers: enable **Email** and **Google** (add Google OAuth client id/secret;
    set the redirect URL to your app origin).
 3. Copy the project URL + anon key into `.env`.
@@ -62,7 +61,22 @@ Supabase Storage and downloaded by the app on first use.
    ```
    In the app, open **Japanese core → Download dictionary** once; it's then cached in IndexedDB.
 
-### 5. Run
+### 5. RSS feed proxy (M7) — one-time deploy
+
+Feeds and articles are fetched through a small Supabase Edge Function (browsers can't
+fetch third-party feeds directly because of CORS, and legacy Japanese charsets like
+Shift_JIS need server-side decoding):
+
+```bash
+supabase functions deploy rss-proxy   # from the repo root (uses supabase/functions/rss-proxy)
+```
+
+JWT verification stays on (the default), so only signed-in app users can call it. The
+built-in defaults (NHK やさしいニュース via the News Web Easy list, plus NHK 主要/社会/科学・文化/経済
+RSS) are defined in [`src/feeds/defaults.ts`](./src/feeds/defaults.ts); users can turn them
+off and add their own RSS/Atom feeds from the Library's **Feeds → Manage / Add feed** UI.
+
+### 6. Run
 
 ```bash
 npm run dev       # http://localhost:5173
@@ -93,3 +107,13 @@ npm run build && npm run preview   # production build (PWA-installable)
 3. Download the dictionary (above), then tap a word → popup shows readings + glosses; tap a name
    (e.g. 田中) → JMnedict hit; a kanji shows KANJIDIC info. 食べた resolves to 食べる.
 4. **＋ Add to deck** inserts a `mined_words` row (real card creation arrives in M4).
+
+## Verifying M7 (RSS)
+
+1. Deploy the `rss-proxy` function and run `0006_feeds_rss.sql` (setup §2/§5).
+2. Library → **Feeds** lists the NHK defaults with their latest headlines. Open
+   NHK やさしいニュース → an article → it renders with furigana, tap-to-lookup and
+   mining, exactly like a book (density/dictionary controls in the study rail).
+3. **Manage** → toggle a default off (it disappears from the list; the state syncs
+   across devices). **Add feed** → paste any RSS/Atom URL → its title is detected
+   and articles open the same way.

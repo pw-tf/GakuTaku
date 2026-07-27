@@ -15,9 +15,11 @@ import { useStudyCount, type DeckStat } from '../srs/srsHooks';
 import { useStreak } from '../analytics/analyticsHooks';
 import type { MinedItem } from '../ui/LookupPopup';
 import type { DocumentRecord } from '../sync/AppSchema';
+import type { FeedArticle } from '../feeds/parse';
+import type { FeedView } from '../feeds/useFeeds';
 
 type View = 'library' | 'decks' | 'analytics' | 'credits';
-type Overlay = null | 'reader' | 'review';
+type Overlay = null | 'reader' | 'article' | 'review';
 
 const NAV: { id: 'library' | 'review' | 'decks' | 'analytics'; label: string; icon: IconName; overlay?: boolean }[] = [
   { id: 'library', label: 'Library', icon: 'library' },
@@ -35,12 +37,14 @@ const TITLES: Record<View, [string, string]> = {
 
 // Lazy-loaded so the heavy ePUB stack (epubjs/jszip) only loads when a book is opened.
 const BookReader = lazy(() => import('../reader/BookReader').then((m) => ({ default: m.BookReader })));
+const ArticleReader = lazy(() => import('../feeds/ArticleReader').then((m) => ({ default: m.ArticleReader })));
 
 export function AppShell() {
   const { session, signOut } = useAuth();
   const [view, setView] = useState<View>('library');
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [book, setBook] = useState<DocumentRecord | null>(null);
+  const [articleView, setArticleView] = useState<{ article: FeedArticle; feed: FeedView } | null>(null);
   const [mined, setMined] = useState<MinedItem[]>([]);
   const [reviewSource, setReviewSource] = useState<ReviewSource>({ kind: 'due' });
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -68,6 +72,10 @@ export function AppShell() {
   function openBook(b: DocumentRecord) {
     setBook(b);
     setOverlay('reader');
+  }
+  function openArticle(article: FeedArticle, feed: FeedView) {
+    setArticleView({ article, feed });
+    setOverlay('article');
   }
   function mine(item: MinedItem) {
     setMined((m) => (m.find((x) => x.term === item.term) ? m : [...m, item]));
@@ -143,7 +151,7 @@ export function AppShell() {
           <div className="searchbox"><Icon.search s={16} /><input placeholder="Search words, books…" /></div>
         </div>
         <div className="scroll">
-          {view === 'library' && <LibraryScreen onOpenBook={openBook} due={dueCount} dueLoading={due.loading} streak={streak} />}
+          {view === 'library' && <LibraryScreen onOpenBook={openBook} onOpenArticle={openArticle} due={dueCount} dueLoading={due.loading} streak={streak} />}
           {view === 'decks' && <DecksScreen onReviewDeck={(d: DeckStat, ids: string[]) => startReview({ kind: 'deck', deckIds: ids, deckName: d.name })} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'credits' && <Attribution />}
@@ -168,6 +176,18 @@ export function AppShell() {
         <Suspense fallback={<div className="reader"><div className="rd-stage"><div className="rd-scroll"><div className="rd-col"><p style={{ color: 'var(--ink-faint)' }}>Opening reader…</p></div></div></div></div>}>
           <BookReader
             doc={book}
+            mined={mined}
+            onMine={mine}
+            onReviewMined={() => startReview({ kind: 'cards', cardIds: mined.map((m) => m.cardId), label: 'Mined this session' })}
+            onClose={() => setOverlay(null)}
+          />
+        </Suspense>
+      )}
+      {overlay === 'article' && articleView && (
+        <Suspense fallback={<div className="reader"><div className="rd-stage"><div className="rd-scroll"><div className="rd-col"><p style={{ color: 'var(--ink-faint)' }}>Opening article…</p></div></div></div></div>}>
+          <ArticleReader
+            article={articleView.article}
+            feed={articleView.feed}
             mined={mined}
             onMine={mine}
             onReviewMined={() => startReview({ kind: 'cards', cardIds: mined.map((m) => m.cardId), label: 'Mined this session' })}
