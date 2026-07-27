@@ -137,6 +137,8 @@ body { overflow: hidden; }
 .rd-page-view.vertical .rd-pages { width: max-content; padding: 7vh 56px; writing-mode: vertical-rl; line-height: 2.2; }
 .rd-page-view.vertical .rd-pages p { margin: 0; padding: 0; }
 .rd-page-view.vertical .rd-pages ruby rt { text-orientation: upright; }
+/* Opaque page margins for tategaki paging (widths set from measured geometry). */
+.rd-page-view.vertical .rd-edge-mask { position:absolute; top:0; bottom:0; background: var(--paper); z-index:2; pointer-events:none; }
 
 .rd-page-nav { position:absolute; top:50%; transform: translateY(-50%); width: 38px; height: 64px; display:flex; align-items:center; justify-content:center; border:none; border-radius: var(--radius); background: color-mix(in oklch, var(--paper) 65%, transparent); color: var(--ink-soft); cursor:pointer; z-index: 3; opacity: .5; transition: opacity .15s, background .15s, color .15s; }
 .rd-page-nav:hover { opacity: 1; background: var(--paper-raised); color: var(--ink); }
