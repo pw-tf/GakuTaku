@@ -42,7 +42,9 @@ interface LogRow {
 export function buildTrainingSet(rows: LogRow[]): { set: TrainingSet; reviewCount: number; cardCount: number } {
   const byCard = new Map<string, LogRow[]>();
   for (const r of rows) {
-    if (!r.card_id || r.rating == null || !r.review_time) continue;
+    // rating < 1 rows are manual events (forget / set due date), not reviews — fsrs-rs only
+    // understands the four answer grades.
+    if (!r.card_id || r.rating == null || r.rating < 1 || !r.review_time) continue;
     const arr = byCard.get(r.card_id) ?? [];
     arr.push(r);
     byCard.set(r.card_id, arr);

@@ -188,9 +188,10 @@ export interface ReplayStep {
  * counts only reviews of already-graduated cards) needs it, so we recover it by folding through the
  * same deterministic scheduler as {@link deriveCard}.
  */
-export function replaySteps(logs: ReviewLogRecord[], createdAt: string, cfg?: DeckConfig): ReplayStep[] {
+export function replaySteps(logs: ReviewLogRecord[], createdAt: string, cfg?: DeckConfig, cardId?: string): ReplayStep[] {
   const f = scheduler(cfg);
-  let card = createEmptyCard(new Date(createdAt));
+  let card: SeededCard = createEmptyCard(new Date(createdAt));
+  if (cardId) card.card_id = cardId;
   const steps: ReplayStep[] = [];
   for (const log of orderLogs(logs)) {
     if (log.rating == null || !log.review_time) continue;

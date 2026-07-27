@@ -172,7 +172,7 @@ export function computeAnalytics(cards: AnalyticsCard[], logs: AnalyticsLog[], n
     const meta = cardById.get(cardId);
     const createdAt = meta?.createdAt ?? cardLogs[0]?.review_time ?? new Date(0).toISOString();
     const cfg = deckConfig({ fsrs_params: meta?.fsrsParams ?? null });
-    for (const step of replaySteps(cardLogs as ReviewLogRecord[], createdAt, cfg)) {
+    for (const step of replaySteps(cardLogs as ReviewLogRecord[], createdAt, cfg, cardId)) {
       if (step.prevState !== State.Review) continue;
       retTotal++;
       if (step.rating !== Rating.Again) retPass++;
