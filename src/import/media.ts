@@ -2,6 +2,7 @@ import type JSZip from 'jszip';
 import { decompress } from 'fzstd';
 import { supabase } from '../sync/supabase';
 import { getMedia, putMedia } from './mediaCache';
+import { mimeForMedia, withMime } from './mediaMime';
 
 /**
  * Anki media handling for `.apkg` import (build plan M6). Note fields reference media as
@@ -66,10 +67,12 @@ export async function uploadMedia(
         }
       }
       if (bytes) {
-        const blob = new Blob([bytes as BlobPart]);
+        const blob = new Blob([bytes as BlobPart], { type: mimeForMedia(name) });
         const path = `${userId}/${importId}/${name}`;
-        const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { upsert: true });
-        if (!error) await putMedia(`${importId}/${name}`, blob);
+        // Cache locally first: an upload can fail (offline import, quota) and the deck should still
+        // play its audio on this device — the blob syncs up again on the next import of the same file.
+        await putMedia(`${importId}/${name}`, blob);
+        await supabase.storage.from(BUCKET).upload(path, blob, { upsert: true });
       }
     }
     onProgress?.(++done, total);
@@ -77,12 +80,32 @@ export async function uploadMedia(
   return done;
 }
 
-/** Object-URL cache so the same media blob isn't re-objectURL'd on every render. */
+/**
+ * Object-URL cache so the same media blob isn't re-objectURL'd on every render. Bounded and
+ * FIFO-evicted (revoking as it goes) — a long review session can touch thousands of files, and
+ * every live object URL pins its blob in memory until revoked.
+ */
 const urlCache = new Map<string, string>();
+const URL_CACHE_MAX = 250;
+
+function cacheUrl(key: string, blob: Blob): string {
+  const url = URL.createObjectURL(blob);
+  urlCache.set(key, url);
+  while (urlCache.size > URL_CACHE_MAX) {
+    const oldest = urlCache.keys().next();
+    if (oldest.done) break;
+    URL.revokeObjectURL(urlCache.get(oldest.value)!);
+    urlCache.delete(oldest.value);
+  }
+  return url;
+}
 
 /**
  * Resolve a `data-media`/`data-audio` token (`importId/encodedName`) to an object URL — from the
  * local cache, else downloaded once from Storage and cached. Returns null if unavailable offline.
+ *
+ * Blobs are re-typed on the way out ({@link withMime}): decks imported before media carried a MIME
+ * type are cached as `application/octet-stream`, which media elements refuse to play.
  */
 export async function resolveMedia(token: string, userId: string): Promise<string | null> {
   const slash = token.indexOf('/');
@@ -94,14 +117,12 @@ export async function resolveMedia(token: string, userId: string): Promise<strin
   const cachedUrl = urlCache.get(key);
   if (cachedUrl) return cachedUrl;
 
-  let blob = await getMedia(key);
-  if (!blob) {
-    const { data } = await supabase.storage.from(BUCKET).download(`${userId}/${key}`);
-    if (!data) return null;
-    blob = data;
-    await putMedia(key, blob);
-  }
-  const url = URL.createObjectURL(blob);
-  urlCache.set(key, url);
-  return url;
+  const cached = await getMedia(key);
+  if (cached) return cacheUrl(key, withMime(cached, name));
+
+  const { data } = await supabase.storage.from(BUCKET).download(`${userId}/${key}`);
+  if (!data) return null;
+  const blob = withMime(data, name);
+  await putMedia(key, blob);
+  return cacheUrl(key, blob);
 }

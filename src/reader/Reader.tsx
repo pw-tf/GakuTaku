@@ -103,15 +103,25 @@ export function Reader(props: Props) {
   /** Swallow the scroll event caused by a programmatic restore (so it can't clobber the saved spot). */
   const ignoreScroll = useRef(false);
 
+  // Lookup works straight away — the dictionary is fetched a bucket at a time as words are tapped
+  // (src/dictionary/store.ts). This tracks only the *optional* whole-dictionary download, for
+  // readers who want every word available offline rather than just the ones they've looked up.
   const [dictStatus, setDictStatus] = useState<'checking' | 'need' | 'loading' | 'ready'>('checking');
   const [dictPct, setDictPct] = useState(0);
+  const [dictMb, setDictMb] = useState<number | null>(null);
   useEffect(() => {
     // If a download is already running (e.g. started, then the reader was reopened), reflect that.
     if (isTaskRunning(DICT_TASK)) {
       setDictStatus('loading');
       return;
     }
-    jpCore.isDictionaryLoaded().then((l) => setDictStatus(l ? 'ready' : 'need'));
+    jpCore
+      .offlineStatus()
+      .then((s) => {
+        setDictMb(Math.round(s.totalBytes / (1024 * 1024)));
+        setDictStatus(s.complete ? 'ready' : 'need');
+      })
+      .catch(() => setDictStatus('need'));
   }, []);
   // The download may have been started by an earlier Reader mount; the shared task is the source of
   // truth, so mirror its progress and completion here rather than only tracking our own call.
@@ -128,13 +138,13 @@ export function Reader(props: Props) {
     if (isTaskRunning(DICT_TASK)) return;
     setDictStatus('loading');
     const tasks = useTasks.getState();
-    tasks.start(DICT_TASK, 'Downloading dictionary');
-    tasks.update(DICT_TASK, { message: 'For offline word lookup — one time.' });
+    tasks.start(DICT_TASK, 'Saving dictionary for offline');
+    tasks.update(DICT_TASK, { message: 'Lookup already works — this makes every word available offline.' });
     try {
       await jpCore.ensureDictionary(proxy((p: LoadProgress) => {
         tasks.update(DICT_TASK, { done: p.loaded, total: p.total });
       }));
-      tasks.finish(DICT_TASK, 'success', 'Dictionary ready — lookup works offline.');
+      tasks.finish(DICT_TASK, 'success', 'Whole dictionary saved — lookup works offline.');
     } catch (err) {
       tasks.finish(DICT_TASK, 'error', err instanceof Error ? err.message : 'Dictionary download failed.');
     }
@@ -577,17 +587,19 @@ export function Reader(props: Props) {
 
               {dictStatus !== 'ready' && (
                 <div className="rail-sec">
-                  <div className="rs-h"><Kicker>Dictionary</Kicker></div>
+                  <div className="rs-h"><Kicker>Offline dictionary</Kicker></div>
                   {dictStatus === 'loading' ? (
                     <div style={{ height: 8, width: '100%', overflow: 'hidden', borderRadius: 99, background: 'var(--rule)' }}>
                       <div style={{ height: '100%', width: `${dictPct}%`, background: 'var(--accent)', transition: 'width .3s' }} />
                     </div>
                   ) : (
                     <Btn size="sm" onClick={downloadDict} disabled={dictStatus === 'checking'} style={{ justifyContent: 'center' }}>
-                      Download dictionary
+                      Save for offline{dictMb ? ` (${dictMb} MB)` : ''}
                     </Btn>
                   )}
-                  <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6 }}>Needed for word lookup. One-time, then offline.</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6 }}>
+                    Word lookup already works — words you tap are kept for offline use. This saves the rest too.
+                  </div>
                 </div>
               )}
 

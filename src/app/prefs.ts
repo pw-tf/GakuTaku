@@ -26,6 +26,8 @@ interface PrefsState {
   dayCutoffHour: number;
   /** Anki's learn-ahead limit (Preferences → Scheduling), in minutes. */
   learnAheadMinutes: number;
+  /** Play a card's `[sound:…]` audio automatically on show/reveal (Anki's default). */
+  autoplayAudio: boolean;
   setAccent: (a: string) => void;
   setDark: (d: boolean) => void;
   setFurigana: (f: FuriganaDensity) => void;
@@ -36,6 +38,7 @@ interface PrefsState {
   setReaderWidth: (w: ReaderWidth) => void;
   setDayCutoffHour: (h: number) => void;
   setLearnAheadMinutes: (m: number) => void;
+  setAutoplayAudio: (a: boolean) => void;
 }
 
 /**
@@ -56,6 +59,7 @@ export const usePrefs = create<PrefsState>()(
       readerWidth: 'normal',
       dayCutoffHour: 4,
       learnAheadMinutes: 20,
+      autoplayAudio: true,
       setAccent: (accent) => set({ accent }),
       setDark: (dark) => set({ dark }),
       setFurigana: (furigana) => set({ furigana }),
@@ -66,6 +70,7 @@ export const usePrefs = create<PrefsState>()(
       setReaderWidth: (readerWidth) => set({ readerWidth }),
       setDayCutoffHour: (dayCutoffHour) => set({ dayCutoffHour }),
       setLearnAheadMinutes: (learnAheadMinutes) => set({ learnAheadMinutes }),
+      setAutoplayAudio: (autoplayAudio) => set({ autoplayAudio }),
     }),
     { name: 'gakutaku-prefs' },
   ),

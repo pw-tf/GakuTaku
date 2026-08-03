@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import { Btn, Kicker, Spinner } from '../ui/atoms';
 import { Icon } from '../ui/icons';
@@ -15,6 +15,29 @@ function toneFor(id: string): string {
   let h = 0;
   for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return TONES[h % TONES.length];
+}
+
+/**
+ * How many cards fit on one row of a CSS grid. `grid-template-columns` computes to an explicit
+ * list of pixel tracks, so counting them is exact — no need to mirror the `minmax()`/`gap` values
+ * from the stylesheet (which the mobile breakpoint overrides anyway). The collapsed shelf shows
+ * exactly one row at any width, so the library can't push the Feeds section below the fold.
+ */
+function useGridColumns(ref: React.RefObject<HTMLElement>, enabled: boolean): number {
+  const [cols, setCols] = useState(6);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !enabled) return;
+    const measure = () => {
+      const tracks = getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length;
+      if (tracks > 0) setCols(tracks);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, enabled]);
+  return cols;
 }
 
 interface Props {
@@ -34,6 +57,12 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
   const busy = useImporting();
   // Drill-down into one feed's article list (survives opening/closing the article overlay).
   const [openFeed, setOpenFeed] = useState<FeedView | null>(null);
+  // The shelf shows one row until expanded, so a big library doesn't bury the Feeds section.
+  const [showAllBooks, setShowAllBooks] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const cols = useGridColumns(gridRef, docs.length > 0);
+  const visibleDocs = showAllBooks ? docs : docs.slice(0, cols);
+  const hiddenCount = docs.length - visibleDocs.length;
 
   const pctById = useMemo(() => {
     const m = new Map<string, number>();
@@ -101,8 +130,8 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
       {docs.length === 0 ? (
         <p style={{ color: 'var(--ink-faint)' }}>No books yet. Upload a Japanese ePUB to start reading.</p>
       ) : (
-        <div className="book-grid">
-          {docs.map((b) => {
+        <div className="book-grid" ref={gridRef}>
+          {visibleDocs.map((b) => {
             const pct = pctById.get(b.id) ?? 0;
             const tone = toneFor(b.id);
             return (
@@ -118,6 +147,13 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
             );
           })}
         </div>
+      )}
+
+      {(hiddenCount > 0 || showAllBooks) && (
+        <button className="shelf-more" onClick={() => setShowAllBooks((s) => !s)}>
+          {showAllBooks ? 'Show less' : `Show all ${docs.length} books`}
+          <Icon.chevR s={14} />
+        </button>
       )}
 
       {openFeed ? (

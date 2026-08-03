@@ -50,6 +50,22 @@ function checkUrl(raw: string): URL {
   return url;
 }
 
+/**
+ * Request headers. Several Japanese news sites (NHK among them) sit behind a CDN that rejects
+ * requests which don't look like a browser fetching the page's own assets, so we send an
+ * ordinary Accept/Accept-Language set and a same-origin Referer alongside the identifying UA.
+ */
+function requestHeaders(url: URL): HeadersInit {
+  return {
+    'User-Agent':
+      'Mozilla/5.0 (compatible; GakuTaku/1.0; +https://github.com/pw-tf/gakutaku) personal RSS reader',
+    Accept:
+      'application/rss+xml, application/atom+xml, application/xml, text/xml, text/html, application/json, */*',
+    'Accept-Language': 'ja,en;q=0.8',
+    Referer: url.origin + '/',
+  };
+}
+
 /** Follow redirects manually so every hop goes through checkUrl. */
 async function fetchWithGuards(start: URL): Promise<{ res: Response; url: URL }> {
   let url = start;
@@ -57,11 +73,7 @@ async function fetchWithGuards(start: URL): Promise<{ res: Response; url: URL }>
     const res = await fetch(url, {
       redirect: 'manual',
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      headers: {
-        'User-Agent': 'GakuTaku/1.0 (personal RSS reader)',
-        Accept:
-          'application/rss+xml, application/atom+xml, application/xml, text/xml, text/html, application/json, */*',
-      },
+      headers: requestHeaders(url),
     });
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get('location');
@@ -112,6 +124,17 @@ function detectCharset(contentType: string, bytes: Uint8Array): string {
   return 'utf-8';
 }
 
+/** Turn an upstream status into something a reader can act on. */
+function upstreamMessage(status: number): string {
+  if (status === 401 || status === 403) {
+    return `The site refused this request (${status}) — the feed may now require a login, or have moved.`;
+  }
+  if (status === 404 || status === 410) return `This feed no longer exists at that address (${status}).`;
+  if (status === 429) return 'The site is rate-limiting requests (429). Try again in a few minutes.';
+  if (status >= 500) return `The site is having trouble right now (${status}).`;
+  return `Upstream responded ${status}`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
@@ -124,7 +147,7 @@ Deno.serve(async (req) => {
     const { res, url } = await fetchWithGuards(checkUrl(raw));
     if (!res.ok) {
       await res.body?.cancel();
-      return json(502, { error: `Upstream responded ${res.status}` });
+      return json(502, { error: upstreamMessage(res.status), status: res.status, url: url.toString() });
     }
     const bytes = await readCapped(res);
     const contentType = res.headers.get('content-type') ?? '';

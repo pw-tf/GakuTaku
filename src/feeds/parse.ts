@@ -115,35 +115,74 @@ function parseAtom(root: Element, baseUrl: string): { title: string; articles: F
 interface NhkEasyItem {
   news_id?: string;
   title?: string;
+  title_with_ruby?: string;
   news_prearranged_time?: string; // "YYYY-MM-DD HH:mm:ss" in JST
+  news_publication_time?: string;
 }
 
-/** Parse NHK Easy's news-list.json: `[ { "YYYY-MM-DD": [ {news_id, title, …} ] } ]`. */
-export function parseNhkEasyList(jsonText: string): FeedArticle[] {
+const NHK_EASY_LIMIT = 30;
+
+/** Ruby markup in NHK titles (`<ruby>日本<rt>にほん</rt></ruby>`) — the app renders its own furigana. */
+function stripRuby(s: string): string {
+  return s.replace(/<rt>.*?<\/rt>/gi, '').replace(/<[^>]*>/g, '').trim();
+}
+
+/**
+ * Flatten either NHK Easy list shape into items:
+ *  - date-keyed:  `[ { "YYYY-MM-DD": [ {news_id, …} ] } ]`  (news-list.json)
+ *  - flat array:  `[ {news_id, …} ]`                        (top-list.json)
+ */
+function nhkEasyItems(data: unknown): NhkEasyItem[] {
+  const out: NhkEasyItem[] = [];
+  const visit = (node: unknown, depth: number) => {
+    if (depth > 3 || !node) return;
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child, depth + 1);
+      return;
+    }
+    if (typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    if (typeof obj.news_id === 'string') {
+      out.push(obj as NhkEasyItem);
+      return;
+    }
+    for (const child of Object.values(obj)) visit(child, depth + 1);
+  };
+  visit(data, 0);
+  return out;
+}
+
+/**
+ * Parse an NHK Easy news list. `baseUrl` is the address that actually answered, so article links
+ * follow the host the list came from rather than a hard-coded one (NHK moved hosts in Oct 2025).
+ */
+export function parseNhkEasyList(jsonText: string, baseUrl: string): FeedArticle[] {
   let data: unknown;
   try {
     data = JSON.parse(jsonText);
   } catch {
     throw new Error('NHK Easy news list was not valid JSON');
   }
-  const days = (Array.isArray(data) ? data[0] : data) as Record<string, NhkEasyItem[]> | null;
   const out: FeedArticle[] = [];
-  for (const items of Object.values(days ?? {})) {
-    if (!Array.isArray(items)) continue;
-    for (const it of items) {
-      if (!it?.news_id || !it.title) continue;
-      out.push({
-        id: it.news_id,
-        title: it.title,
-        link: `https://www3.nhk.or.jp/news/easy/${it.news_id}/${it.news_id}.html`,
-        summary: '',
-        published: it.news_prearranged_time ? toIso(`${it.news_prearranged_time.replace(' ', 'T')}+09:00`) : null,
-        content: null,
-      });
-    }
+  const seen = new Set<string>();
+  for (const it of nhkEasyItems(data)) {
+    const id = it.news_id;
+    const title = stripRuby(it.title ?? it.title_with_ruby ?? '');
+    if (!id || !title || seen.has(id)) continue;
+    seen.add(id);
+    const when = it.news_prearranged_time ?? it.news_publication_time;
+    out.push({
+      id,
+      title,
+      link: resolveUrl(`/news/easy/${id}/${id}.html`, baseUrl),
+      summary: '',
+      published: when ? toIso(`${when.replace(' ', 'T')}+09:00`) : null,
+      content: null,
+    });
   }
+  if (out.length === 0) throw new Error('NHK Easy news list had no articles — the format may have changed.');
   out.sort((a, b) => (b.published ?? '').localeCompare(a.published ?? ''));
-  return out.slice(0, 30);
+  return out.slice(0, NHK_EASY_LIMIT);
 }
 
 // ---- Article-body extraction --------------------------------------------------
@@ -154,7 +193,8 @@ const STRIP_SELECTOR =
 
 /** Known article-body containers first (NHK variants), then generic conventions. */
 const BODY_SELECTORS = [
-  '#js-article-body', // NHK News Web Easy
+  '#js-article-body', // NHK News Web Easy (pre-2025 markup)
+  '.article-main__body', // NHK やさしいことばニュース / News Web (post-NHK ONE markup)
   '.content--detail-body', // NHK News Web
   '#news_textbody',
   '[itemprop="articleBody"]',

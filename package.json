@@ -12,7 +12,8 @@
     "build:dict": "tsx scripts/build-dict.ts",
     "upload:dict": "tsx --env-file=.env scripts/upload-dict.ts",
     "verify:analytics": "tsx scripts/verify-analytics.ts",
-    "verify:srs": "tsx scripts/verify-srs.ts"
+    "verify:srs": "tsx scripts/verify-srs.ts",
+    "verify:dict": "tsx scripts/verify-dict.ts"
   },
   "dependencies": {
     "@journeyapps/wa-sqlite": "^1.7.0",

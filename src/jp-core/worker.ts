@@ -2,7 +2,7 @@ import * as Comlink from 'comlink';
 import Tokenizer, { type IpadicToken } from '@sglkc/kuromoji/src/Tokenizer';
 import BrowserDictionaryLoader from '@sglkc/kuromoji/src/loader/BrowserDictionaryLoader';
 import { alignFurigana, type FuriSegment } from './furigana';
-import { ensureDictionary, isDictionaryLoaded, type LoadProgress } from '../dictionary/loader';
+import { ensureDictionary, isDictionaryLoaded, offlineStatus, type LoadProgress } from '../dictionary/loader';
 import { lookup as dictLookup, advancedKanji } from '../dictionary/lookup';
 import type { LookupResult } from '../dictionary/types';
 
@@ -64,8 +64,8 @@ const api = {
   async furiganaFor(text: string): Promise<FuriToken[]> {
     const tokenizer = await getTokenizer();
     const tokens = tokenizer.tokenize(text);
-    // Advanced-kanji set for "N3+" density (only when the dictionary is available).
-    const advList = (await isDictionaryLoaded()) ? await advancedKanji(text) : null;
+    // Advanced-kanji set for "N3+" density; null when the kanji index can't be reached.
+    const advList = await advancedKanji(text);
     const advSet = advList ? new Set(advList) : null;
     return tokens.map((t: IpadicToken) => {
       const reading = cleanReading(t.reading);
@@ -83,7 +83,7 @@ const api = {
   /** Batched furigana for many paragraphs (one chapter) — computes the advanced-kanji set once. */
   async furiganaForMany(texts: string[]): Promise<FuriToken[][]> {
     const tokenizer = await getTokenizer();
-    const advList = (await isDictionaryLoaded()) ? await advancedKanji(texts.join('')) : null;
+    const advList = await advancedKanji(texts.join(''));
     const advSet = advList ? new Set(advList) : null;
     return texts.map((text) =>
       tokenizer.tokenize(text).map((t: IpadicToken) => {
@@ -101,6 +101,7 @@ const api = {
   },
 
   isDictionaryLoaded,
+  offlineStatus,
 
   async ensureDictionary(onProgress?: (p: LoadProgress) => void): Promise<void> {
     await ensureDictionary(onProgress ? (p) => void onProgress(p) : undefined);

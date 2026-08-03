@@ -17,6 +17,8 @@ export interface FeedView {
   builtinId: string | null;
   title: string;
   url: string;
+  /** Fallback addresses for built-ins whose upstream has moved; tried in order after `url`. */
+  altUrls?: string[];
   kind: FeedKind;
   level?: string;
   enabled: boolean;
@@ -42,6 +44,7 @@ export function useFeeds(): { feeds: FeedView[]; loading: boolean } {
         builtinId: d.id,
         title: d.title,
         url: d.url,
+        altUrls: d.altUrls,
         kind: d.kind,
         level: d.level,
         enabled: o ? o.enabled !== 0 : true,

@@ -9,16 +9,34 @@ import type { FeedView } from './useFeeds';
  */
 
 const TTL_MS = 10 * 60 * 1000;
-const cache = new Map<string, { at: number; articles: FeedArticle[] }>();
+const cache = new Map<string, { at: number; url: string; articles: FeedArticle[] }>();
 
+function parseFor(feed: FeedView, body: string, url: string): FeedArticle[] {
+  return feed.kind === 'nhk-easy' ? parseNhkEasyList(body, url) : parseFeedXml(body, url).articles;
+}
+
+/**
+ * Fetch and parse a feed, trying its fallback addresses in turn. A built-in feed whose upstream
+ * has moved (NHK's Oct 2025 reorganisation, say) keeps working off `altUrls` without a redeploy;
+ * the first error is what surfaces, since that is the address the feed is *supposed* to live at.
+ */
 export async function loadFeedArticles(feed: FeedView, force = false): Promise<FeedArticle[]> {
   const hit = cache.get(feed.key);
-  if (!force && hit && Date.now() - hit.at < TTL_MS) return hit.articles;
-  const res = await proxyFetch(feed.url);
-  const articles =
-    feed.kind === 'nhk-easy' ? parseNhkEasyList(res.body) : parseFeedXml(res.body, res.url || feed.url).articles;
-  cache.set(feed.key, { at: Date.now(), articles });
-  return articles;
+  if (!force && hit && hit.url === feed.url && Date.now() - hit.at < TTL_MS) return hit.articles;
+
+  const candidates = [feed.url, ...(feed.altUrls ?? [])].filter(Boolean);
+  let firstError: unknown;
+  for (const candidate of candidates) {
+    try {
+      const res = await proxyFetch(candidate);
+      const articles = parseFor(feed, res.body, res.url || candidate);
+      cache.set(feed.key, { at: Date.now(), url: feed.url, articles });
+      return articles;
+    } catch (e) {
+      firstError ??= e;
+    }
+  }
+  throw firstError ?? new Error('Feed could not be loaded');
 }
 
 const seenKey = (feedKey: string) => `gt-feed-seen:${feedKey}`;

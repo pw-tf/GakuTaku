@@ -143,7 +143,11 @@ interface RenderOpts {
 
 function renderSide(tmpl: string, fields: Record<string, string>, opts: RenderOpts): string {
   let html = applyConditionals(tmpl, fields);
-  if (opts.frontSide != null) html = html.replace(/\{\{FrontSide\}\}/g, opts.frontSide);
+  // The FrontSide copy is marked (display:contents, so it can't disturb the deck's own layout) so
+  // answer-side autoplay can skip audio the user already heard on the question — as Anki does.
+  if (opts.frontSide != null) {
+    html = html.replace(/\{\{FrontSide\}\}/g, `<span data-frontside style="display:contents">${opts.frontSide}</span>`);
+  }
   // Cloze fields are processed before generic substitution so their {{cN::…}} markers aren't mangled.
   html = html.replace(/\{\{cloze:([^}]+)\}\}/g, (_m, f: string) => {
     const name = f.split(':').pop()!.trim();
@@ -175,7 +179,51 @@ const BASE_CSS = `
   .anki-audio { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px;
     border-radius: 999px; background: color-mix(in oklch, var(--accent) 14%, transparent); color: var(--accent);
     cursor: pointer; font-size: 15px; margin: 6px; user-select: none; }
+  .anki-audio.playing { background: color-mix(in oklch, var(--accent) 32%, transparent); }
+  .anki-audio.missing { background: color-mix(in oklch, var(--ink-faint) 14%, transparent); color: var(--ink-faint);
+    cursor: default; }
 `;
+
+/**
+ * Playback for a card's `[sound:…]` refs. Anki plays the question's audio when the question is
+ * shown and the answer's own audio on reveal, in document order, one after another; a click on any
+ * speaker replays just that clip. Only one clip is ever audible at a time.
+ */
+class AudioPlayer {
+  private el: HTMLAudioElement | null = null;
+  /** Bumped on every new play/stop so a slow `resolveMedia` can't start a clip that was superseded. */
+  private gen = 0;
+
+  stop(): void {
+    this.gen++;
+    this.el?.pause();
+    this.el = null;
+  }
+
+  /** Play tokens in order, stopping early if anything else takes over playback. */
+  async playSequence(tokens: string[], userId: string): Promise<void> {
+    this.stop();
+    const gen = this.gen;
+    for (const token of tokens) {
+      const url = await resolveMedia(token, userId);
+      if (gen !== this.gen) return;
+      if (!url) continue;
+      const el = new Audio(url);
+      this.el = el;
+      try {
+        await el.play();
+      } catch {
+        return; // autoplay blocked, or the clip is undecodable — don't stall the rest of the card
+      }
+      const ended = await new Promise<boolean>((resolve) => {
+        el.onended = () => resolve(true);
+        el.onerror = () => resolve(false);
+        el.onpause = () => resolve(false);
+      });
+      if (gen !== this.gen || !ended) return;
+    }
+  }
+}
 
 /** Context for Anki's special fields. */
 export interface CardMeta {
@@ -197,12 +245,30 @@ interface Props {
   meta?: CardMeta;
 }
 
+/**
+ * Replay the audio the current card just auto-played (Anki's "R"). Registered by the mounted
+ * CardTemplate; a no-op when the card has no audio or none is mounted.
+ */
+export let replayCardAudio: () => void = () => {};
+
 export function CardTemplate({ front, back, fields, css, ord, shown, userId, meta }: Props) {
   const dark = usePrefs((s) => s.dark);
+  const autoplayAudio = usePrefs((s) => s.autoplayAudio);
   const hostRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
   /** What the user typed into a {{type:…}} box on the question side, kept across the reveal. */
   const typedRef = useRef('');
+  const playerRef = useRef<AudioPlayer | null>(null);
+  const replayRef = useRef<() => void>(() => {});
+  // Read through a ref: toggling autoplay in Settings shouldn't re-render the card and replay it.
+  const autoplayRef = useRef(autoplayAudio);
+  autoplayRef.current = autoplayAudio;
+  useEffect(() => {
+    replayCardAudio = () => replayRef.current();
+    return () => {
+      replayCardAudio = () => {};
+    };
+  }, []);
 
   const html = useMemo(() => {
     const deck = meta?.deckName ?? '';
@@ -229,6 +295,8 @@ export function CardTemplate({ front, back, fields, css, ord, shown, userId, met
     root.innerHTML = `<style>${BASE_CSS}${css || ''}</style><div class="${nm.trim()}"><div class="card">${html}</div></div>`;
 
     let alive = true;
+    const player = (playerRef.current ??= new AudioPlayer());
+    player.stop(); // a card change (or a reveal) supersedes whatever was playing
     root.querySelectorAll<HTMLElement>('[data-media]').forEach((node) => {
       const token = node.getAttribute('data-media');
       if (!token) return;
@@ -236,16 +304,33 @@ export function CardTemplate({ front, back, fields, css, ord, shown, userId, met
         if (url && alive && node.tagName === 'IMG') (node as HTMLImageElement).src = url;
       });
     });
-    root.querySelectorAll<HTMLElement>('[data-audio]').forEach((node) => {
-      const token = node.getAttribute('data-audio');
-      if (!token) return;
+    const audioNodes = Array.from(root.querySelectorAll<HTMLElement>('[data-audio]')).filter((n) =>
+      n.getAttribute('data-audio'),
+    );
+    for (const node of audioNodes) {
+      const token = node.getAttribute('data-audio')!;
       node.classList.add('anki-audio');
       node.textContent = '►';
-      node.onclick = async () => {
-        const url = await resolveMedia(token, userId);
-        if (url) void new Audio(url).play().catch(() => {});
+      node.title = 'Play audio';
+      // Mark refs whose blob isn't available (never imported, or offline before first download) so a
+      // dead speaker button reads as dead instead of silently doing nothing when clicked.
+      void resolveMedia(token, userId).then((url) => {
+        if (!url && alive) {
+          node.classList.add('missing');
+          node.title = 'Audio unavailable — reimport this deck, or go online once to fetch it';
+        }
+      });
+      node.onclick = (e) => {
+        e.stopPropagation(); // don't let a replay also reveal the answer
+        void player.playSequence([token], userId);
       };
-    });
+    }
+    // Anki's autoplay: the question's clips on the question, the answer's own clips on reveal
+    // (anything inside the {{FrontSide}} copy was already heard).
+    const autoNodes = shown ? audioNodes.filter((n) => !n.closest('[data-frontside]')) : audioNodes;
+    const autoTokens = autoNodes.map((n) => n.getAttribute('data-audio')!);
+    replayRef.current = () => void player.playSequence(autoTokens, userId);
+    if (autoplayRef.current && autoTokens.length) replayRef.current();
     // {{hint:…}}: clicking the field-name link reveals the hidden content (like Anki).
     root.querySelectorAll<HTMLAnchorElement>('a[data-hint]').forEach((a) => {
       a.onclick = (e) => {
@@ -268,8 +353,11 @@ export function CardTemplate({ front, back, fields, css, ord, shown, userId, met
     if (compare) {
       compare.innerHTML = typeDiffHtml(typedRef.current.trim(), decodeURIComponent(compare.getAttribute('data-expected') ?? ''));
     }
-    return () => { alive = false; };
-  }, [html, css, dark, userId]);
+    return () => {
+      alive = false;
+      player.stop();
+    };
+  }, [html, css, dark, userId, shown]);
 
   return <div className="card-shadow-host" ref={hostRef} lang="ja" />;
 }
