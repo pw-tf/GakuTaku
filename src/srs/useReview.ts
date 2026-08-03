@@ -654,7 +654,16 @@ export function useReview(source: ReviewSource): ReviewState {
           setQueue((q) => q.filter((c) => !ids.has(c.cardId)));
         }
         setHistory((h) => [...h, { card: current, logId, newTags, suspended: lp.suspend, buriedSiblings }]);
-      })();
+      })().catch((e) => {
+        // The card already left the queue optimistically. If the write failed, the answer was not
+        // recorded and is not in `history`, so it can't be undone either — say so rather than
+        // letting the review silently lose it.
+        console.error('Failed to record review', e);
+        setQueue((q) => (q.some((c) => c.cardId === current.cardId) ? q : [current, ...q]));
+        setPinnedId(current.cardId);
+        setReviewedCount((n) => Math.max(0, n - 1));
+        setShown(false);
+      });
     },
     [current, userId],
   );
@@ -665,7 +674,7 @@ export function useReview(source: ReviewSource): ReviewState {
     const last = history[history.length - 1];
     if (!last) return;
     const row = toCardRow(last.card.fsrsCard);
-    void db.writeTransaction(async (tx) => {
+    db.writeTransaction(async (tx) => {
       await tx.execute(`DELETE FROM review_logs WHERE id = ?`, [last.logId]);
       await tx.execute(
         `UPDATE cards SET due = ?, stability = ?, difficulty = ?, reps = ?, lapses = ?, state = ?, last_review = ?, queue = 0, buried_until = NULL WHERE id = ?`,
@@ -677,7 +686,7 @@ export function useReview(source: ReviewSource): ReviewState {
       for (const s of last.buriedSiblings) {
         await tx.execute(`UPDATE cards SET queue = ?, buried_until = ? WHERE id = ?`, [s.prevQueue, s.prevBuriedUntil, s.id]);
       }
-    });
+    }).catch((e) => console.error('Failed to undo review', e));
     // The card may have been re-queued mid-learning — drop that copy, restore buried siblings'
     // session entries, and re-show the original card now.
     setQueue((q) => {

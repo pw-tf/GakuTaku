@@ -173,10 +173,14 @@ export interface AddWordResult {
 export async function addCardForWord(userId: string, input: AddWordInput): Promise<AddWordResult> {
   const { deckId } = input;
 
-  // Dedup: if a note in this deck already has the same Term, reuse its card.
+  // Dedup: if a note in this deck already has the same Term, reuse its card. The LIKE narrows the
+  // scan to plausible rows (mining into a large imported deck would otherwise parse every note's
+  // fields on every tap); the parsed comparison below stays authoritative, so LIKE wildcards inside
+  // a term can only cost an extra candidate, never a wrong match.
   const existing = await db.getAll<{ cid: string; fields: string }>(
-    'SELECT c.id AS cid, n.fields AS fields FROM cards c JOIN notes n ON n.id = c.note_id WHERE n.deck_id = ?',
-    [deckId],
+    `SELECT c.id AS cid, n.fields AS fields FROM cards c JOIN notes n ON n.id = c.note_id
+     WHERE n.deck_id = ? AND n.fields LIKE ?`,
+    [deckId, `%"Term":${JSON.stringify(input.term)}%`],
   );
   for (const row of existing) {
     if (parseNoteFields(row.fields).Term === input.term) {
