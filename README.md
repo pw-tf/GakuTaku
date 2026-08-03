@@ -46,8 +46,8 @@ cp .env.example .env   # then fill in the three VITE_ values
 ### 4. Dictionary (M2) — one-time build & upload
 
 The tokenizer/furigana work out of the box (kuromoji dict is vendored in `public/dict/kuromoji/`).
-The lookup dictionary (full JMdict + JMnedict names + KANJIDIC) is large, so it's hosted on
-Supabase Storage and downloaded by the app on first use.
+The lookup dictionary (full JMdict + JMnedict names + KANJIDIC) is hosted on Supabase Storage and
+fetched **on demand** — there is no first-run download to sit through.
 
 1. Download the latest JSON files from
    [jmdict-simplified releases](https://github.com/scriptin/jmdict-simplified/releases/latest)
@@ -56,10 +56,24 @@ Supabase Storage and downloaded by the app on first use.
 3. Add `SUPABASE_SERVICE_ROLE_KEY` to `.env` (local only — gitignored).
 4. Build + upload:
    ```bash
-   npm run build:dict     # → dict-build/ (sharded, gzipped NDJSON + manifest.json)
-   npm run upload:dict    # → uploads to the `dictionary` bucket
+   npm run build:dict     # → dict-build/ (4096 gzipped buckets + kanji index + manifest.json)
+   npm run upload:dict    # → uploads to the `dictionary` bucket (manifest published last)
    ```
-   In the app, open **Japanese core → Download dictionary** once; it's then cached in IndexedDB.
+
+**How lookup works.** Every entry is filed under each headword it can be found by, and each
+headword lives in the bucket its hash selects (`bucketOf` in
+[`src/dictionary/types.ts`](./src/dictionary/types.ts) — the build script and the runtime share
+that one function, so they cannot drift). A lookup therefore fetches only the one or two buckets
+its candidate forms fall in, roughly 20 KB, and caches them in IndexedDB; a word looked up once
+works offline afterwards. KANJIDIC's JLPT levels ship as one small separate index, because the
+reader's "N3+" furigana density needs a level for every kanji on screen.
+
+Tapping **Save for offline** in the reader's study rail warms every remaining bucket, for full
+offline coverage. It is optional, resumable, and safe to run twice.
+
+Re-running `build:dict` mints a new manifest version; clients notice on their next start, drop
+their cached buckets and refetch lazily. `upload:dict` also removes objects left over from a
+previous build.
 
 ### 5. RSS feed proxy (M7) — one-time deploy
 
@@ -72,9 +86,16 @@ supabase functions deploy rss-proxy   # from the repo root (uses supabase/functi
 ```
 
 JWT verification stays on (the default), so only signed-in app users can call it. The
-built-in defaults (NHK やさしいニュース via the News Web Easy list, plus NHK 主要/社会/科学・文化/経済
+built-in defaults (NHK やさしいことばニュース via its news list, plus NHK 主要/社会/科学・文化/経済
 RSS) are defined in [`src/feeds/defaults.ts`](./src/feeds/defaults.ts); users can turn them
 off and add their own RSS/Atom feeds from the Library's **Feeds → Manage / Add feed** UI.
+
+> **NHK moved (Oct 2025).** The NHK ONE launch retired `www3.nhk.or.jp` as the news host, and
+> requests to the old paths now hit the account gate and come back **401**. NEWS WEB EASY became
+> 「NHKやさしいことばニュース」. The defaults point at `news.web.nhk`, and each built-in carries
+> `altUrls` that are tried in turn — so if an endpoint moves again, the fix is a URL in
+> `defaults.ts`, not a code change. `parseNhkEasyList` accepts both list shapes NHK serves and
+> builds article links from whichever host actually answered.
 
 ### 6. Run
 
@@ -86,8 +107,12 @@ npm run build && npm run preview   # production build (PWA-installable)
 ## Architecture notes
 
 - **Two local data layers** (do not conflate): PowerSync SQLite holds *user data*
-  (decks, notes, cards, logs, …) and syncs to Postgres; the dictionary + document blobs
-  (M2/M3) will live in IndexedDB / Cache API and are **not** synced.
+  (decks, notes, cards, logs, …) and syncs to Postgres; the dictionary buckets, imported Anki
+  media and document blobs (M2/M3/M6) live in IndexedDB and are **not** synced.
+- **Anki media needs an explicit MIME type.** `@supabase/storage-js` ignores its `contentType`
+  option for `Blob` bodies, so the type has to be set on the Blob itself or media comes back as
+  `application/octet-stream` — which `<img>` survives but `HTMLMediaElement` refuses to play.
+  See `src/import/mediaMime.ts`.
 - **Conflict strategy:** `review_logs` is append-only and the source of truth for scheduling
   (FSRS state is derived by replaying logs). Content tables use last-write-wins via the
   connector's `upsert`/`update`. See `src/sync/SupabaseConnector.ts`.
@@ -104,15 +129,16 @@ npm run build && npm run preview   # production build (PWA-installable)
 
 1. Open the **Japanese core** tab; the sample text tokenizes with furigana (toggle on/off).
 2. Reload in airplane mode — tokenization still works (kuromoji dict is cached).
-3. Download the dictionary (above), then tap a word → popup shows readings + glosses; tap a name
-   (e.g. 田中) → JMnedict hit; a kanji shows KANJIDIC info. 食べた resolves to 食べる.
+3. With no download and a fresh profile, tap a word → the popup shows readings + glosses within a
+   round trip; tap a name (e.g. 田中) → JMnedict hit; a kanji shows KANJIDIC info. 食べた resolves
+   to 食べる. Go offline and tap the same word again — it still resolves (its bucket is cached).
 4. **＋ Add to deck** inserts a `mined_words` row (real card creation arrives in M4).
 
 ## Verifying M7 (RSS)
 
 1. Deploy the `rss-proxy` function and run `0006_feeds_rss.sql` (setup §2/§5).
 2. Library → **Feeds** lists the NHK defaults with their latest headlines. Open
-   NHK やさしいニュース → an article → it renders with furigana, tap-to-lookup and
+   NHK やさしいことばニュース → an article → it renders with furigana, tap-to-lookup and
    mining, exactly like a book (density/dictionary controls in the study rail).
 3. **Manage** → toggle a default off (it disappears from the list; the state syncs
    across devices). **Add feed** → paste any RSS/Atom URL → its title is detected

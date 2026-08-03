@@ -3,7 +3,7 @@ import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { useAuth } from '../auth/AuthProvider';
 import { db } from '../sync/system';
-import { CardTemplate } from './CardTemplate';
+import { CardTemplate, replayCardAudio } from './CardTemplate';
 import { EditCardModal } from './EditCardModal';
 import { useReview, type ReviewSource } from './useReview';
 import { buryCards, forgetCards, setDueDate, setFlag, suspendCards } from './cardOps';
@@ -101,8 +101,8 @@ export function ReviewScreen({ source, onExit }: Props) {
   }, [current, userId, review]);
 
   // Keyboard, matching Anki desktop: space/enter reveals — or answers Good once revealed;
-  // 1–4 rate; Z (or Ctrl+Z / U) undoes; Ctrl+1..7 toggles flags; `-`/`=` bury card/note;
-  // `@`/`!` suspend card/note.
+  // 1–4 rate; Z (or Ctrl+Z / U) undoes; R replays the card's audio; Ctrl+1..7 toggles flags;
+  // `-`/`=` bury card/note; `@`/`!` suspend card/note.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // composedPath so inputs inside the card's Shadow DOM (e.g. {{type:…}} boxes) are seen.
@@ -130,6 +130,11 @@ export function ReviewScreen({ source, onExit }: Props) {
         return;
       }
       if (!current) return;
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        replayCardAudio();
+        return;
+      }
       if (e.key === '-') {
         e.preventDefault();
         buryCurrent(false);

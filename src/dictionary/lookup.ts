@@ -1,12 +1,15 @@
-import { dictDb } from './db';
-import type { DictRecord, KanjiData, LookupResult, NameData, WordData } from './types';
+import { entriesForForms, getKanjiJlpt } from './store';
+import type { KanjiData, LookupResult, NameData, WordData } from './types';
 import { deinflect } from '../jp-core/deinflect';
 
 const KANJI_RE = /[一-龯㐀-䶿]/;
 
 /**
  * Look up a term: tries the surface form, the (optional) kuromoji base form, and deinflection
- * candidates against the multiEntry `forms` index, then adds per-kanji info from KANJIDIC.
+ * candidates, then adds per-kanji info from KANJIDIC.
+ *
+ * Every form is resolved in one pass so the whole lookup costs however many *distinct buckets*
+ * the candidates hash into — usually one or two requests, and none once they are cached.
  */
 export async function lookup(term: string, basicForm?: string): Promise<LookupResult> {
   const candidates = new Set<string>([term]);
@@ -15,33 +18,27 @@ export async function lookup(term: string, basicForm?: string): Promise<LookupRe
   if (basicForm && basicForm !== '*') {
     for (const c of deinflect(basicForm)) candidates.add(c);
   }
+  const kanjiChars = [...new Set([...term].filter((ch) => KANJI_RE.test(ch)))];
 
-  const matches = await dictDb.entries.where('forms').anyOf([...candidates]).toArray();
+  const entries = await entriesForForms([...candidates, ...kanjiChars]);
 
   const words: WordData[] = [];
   const names: NameData[] = [];
-  const seen = new Set<string>();
-  for (const rec of matches) {
-    if (seen.has(rec.id)) continue;
-    seen.add(rec.id);
-    if (rec.type === 'word') words.push(rec.data as WordData);
-    else if (rec.type === 'name') names.push(rec.data as NameData);
+  const kanjiByLiteral = new Map<string, KanjiData>();
+  for (const entry of entries) {
+    if (entry.type === 'kanji') {
+      const k = entry.data as KanjiData;
+      kanjiByLiteral.set(k.literal, k);
+    } else if (entry.type === 'word') {
+      words.push(entry.data as WordData);
+    } else if (entry.type === 'name') {
+      names.push(entry.data as NameData);
+    }
   }
   // Common words first.
   words.sort((a, b) => Number(b.common) - Number(a.common));
 
-  // Per-kanji info for any kanji in the term.
-  const kanjiChars = [...new Set([...term].filter((ch) => KANJI_RE.test(ch)))];
-  let kanji: KanjiData[] = [];
-  if (kanjiChars.length) {
-    const kanjiRecs = (await dictDb.entries.where('forms').anyOf(kanjiChars).toArray()).filter(
-      (r: DictRecord) => r.type === 'kanji',
-    );
-    const order = new Map(kanjiChars.map((c, i) => [c, i]));
-    kanji = kanjiRecs
-      .map((r) => r.data as KanjiData)
-      .sort((a, b) => (order.get(a.literal) ?? 0) - (order.get(b.literal) ?? 0));
-  }
+  const kanji = kanjiChars.map((ch) => kanjiByLiteral.get(ch)).filter((k): k is KanjiData => !!k);
 
   return { query: term, words, names, kanji };
 }
@@ -49,21 +46,20 @@ export async function lookup(term: string, basicForm?: string): Promise<LookupRe
 /**
  * Set of "advanced" kanji in the text — those at old-JLPT level ≤2 (≈N1/N2) or not listed at all.
  * Used for the reader's "N3+" furigana density (show readings only for harder words). Best-effort,
- * per-kanji (not per-word). Returns an empty set if the dictionary isn't loaded.
+ * per-kanji (not per-word). Returns null when the dictionary can't be reached at all, so callers
+ * can tell "no advanced kanji here" apart from "we don't know".
  */
-export async function advancedKanji(text: string): Promise<string[]> {
+export async function advancedKanji(text: string): Promise<string[] | null> {
   const chars = [...new Set([...text].filter((ch) => KANJI_RE.test(ch)))];
   if (!chars.length) return [];
-  const recs = (await dictDb.entries.where('forms').anyOf(chars).toArray()).filter(
-    (r: DictRecord) => r.type === 'kanji',
-  );
-  const jlptByChar = new Map<string, number | undefined>();
-  for (const r of recs) {
-    const k = r.data as KanjiData;
-    jlptByChar.set(k.literal, k.jlpt);
+  let jlpt: Record<string, number>;
+  try {
+    jlpt = await getKanjiJlpt();
+  } catch {
+    return null; // offline before the index was ever cached
   }
   return chars.filter((ch) => {
-    const j = jlptByChar.get(ch);
+    const j = jlpt[ch];
     return j === undefined || j <= 2;
   });
 }

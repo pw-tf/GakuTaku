@@ -7,7 +7,10 @@ interface ContentProps {
 
 /** The settings controls (accent / dark / furigana / credits), reused by the desktop popover and the mobile menu. */
 export function SettingsContent({ onOpenCredits }: ContentProps) {
-  const { accent, dark, furigana, dayCutoffHour, setAccent, setDark, setFurigana, setDayCutoffHour } = usePrefs();
+  const {
+    accent, dark, furigana, dayCutoffHour, autoplayAudio,
+    setAccent, setDark, setFurigana, setDayCutoffHour, setAutoplayAudio,
+  } = usePrefs();
   return (
     <>
       <div className="set-sec">
@@ -39,6 +42,16 @@ export function SettingsContent({ onOpenCredits }: ContentProps) {
               {v === 'all' ? 'All' : v === 'n3' ? 'N3+' : 'Off'}
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="set-sec">
+        <div className="toggle-row">
+          <span>Autoplay card audio</span>
+          <input type="checkbox" checked={autoplayAudio} onChange={(e) => setAutoplayAudio(e.target.checked)} />
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6, lineHeight: 1.5 }}>
+          Plays a card's <code>[sound:…]</code> clips on show and on reveal, like Anki. Press R to replay.
         </div>
       </div>
 

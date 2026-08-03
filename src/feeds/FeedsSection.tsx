@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import { Btn, Chip } from '../ui/atoms';
 import { Icon } from '../ui/icons';
@@ -11,16 +11,23 @@ interface Preview {
   latest: string;
   time: string;
   unread: number;
-  error?: boolean;
+  error?: string;
 }
 
-/** Lazily fetch each enabled feed's newest article for the list rows (cached in articles.ts). */
+/**
+ * Lazily fetch each enabled feed's newest article for the list rows (cached in articles.ts).
+ * The set of feeds already requested is tracked in a ref rather than read off the state map, so
+ * the effect doesn't need the map in its deps — and can't re-request from a stale copy of it.
+ */
 function useFeedPreviews(feeds: FeedView[]): Record<string, Preview> {
   const [map, setMap] = useState<Record<string, Preview>>({});
+  const requested = useRef(new Set<string>());
+  const keys = feeds.map((f) => f.key).join(',');
   useEffect(() => {
     let alive = true;
     for (const f of feeds) {
-      if (map[f.key]) continue;
+      if (requested.current.has(f.key)) continue;
+      requested.current.add(f.key);
       loadFeedArticles(f)
         .then((arts) => {
           if (!alive) return;
@@ -34,13 +41,19 @@ function useFeedPreviews(feeds: FeedView[]): Record<string, Preview> {
             },
           }));
         })
-        .catch(() => alive && setMap((m) => ({ ...m, [f.key]: { latest: '', time: '', unread: 0, error: true } })));
+        .catch((e: unknown) => {
+          // Allow a retry on the next mount — a transient failure shouldn't stick for the session.
+          requested.current.delete(f.key);
+          if (!alive) return;
+          const message = e instanceof Error ? e.message : String(e);
+          setMap((m) => ({ ...m, [f.key]: { latest: '', time: '', unread: 0, error: message } }));
+        });
     }
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [feeds.map((f) => f.key).join(',')]);
+  }, [keys]);
   return map;
 }
 
@@ -111,7 +124,13 @@ export function FeedsSection({ onOpenFeed }: Props) {
                     {p && !p.error && p.unread > 0 && <Chip accent>{p.unread} new</Chip>}
                   </div>
                   <div className="fl" lang="ja">
-                    {!p ? 'Loading…' : p.error ? <span className="feed-err">Couldn't load — tap to retry</span> : p.latest}
+                    {!p ? (
+                      'Loading…'
+                    ) : p.error ? (
+                      <span className="feed-err" title={p.error}>Couldn't load — tap to retry</span>
+                    ) : (
+                      p.latest
+                    )}
                   </div>
                 </div>
                 <div className="ftime" lang="ja">{p && !p.error ? p.time : ''}</div>

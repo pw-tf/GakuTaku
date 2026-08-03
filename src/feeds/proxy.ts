@@ -7,6 +7,14 @@ export interface ProxyResult {
   url: string;
 }
 
+/** A failed proxy fetch, carrying the upstream HTTP status when there was one. */
+export class ProxyError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = 'ProxyError';
+  }
+}
+
 /**
  * Fetch a feed or article URL through the rss-proxy Edge Function (browser CORS +
  * legacy-charset decoding live server-side; see supabase/functions/rss-proxy).
@@ -14,12 +22,15 @@ export interface ProxyResult {
 export async function proxyFetch(target: string): Promise<ProxyResult> {
   const { data, error } = await supabase.functions.invoke('rss-proxy', { body: { url: target } });
   if (error) {
-    // Non-2xx responses carry our own { error } JSON; surface it instead of the generic message.
+    // Non-2xx responses carry our own { error, status } JSON; surface it instead of the generic message.
     let detail = '';
+    let status: number | undefined;
     const ctx = (error as { context?: unknown }).context;
     if (ctx instanceof Response) {
       try {
-        detail = ((await ctx.json()) as { error?: string }).error ?? '';
+        const payload = (await ctx.json()) as { error?: string; status?: number };
+        detail = payload.error ?? '';
+        status = payload.status;
       } catch {
         /* not JSON */
       }
@@ -27,7 +38,7 @@ export async function proxyFetch(target: string): Promise<ProxyResult> {
     if (!detail && /Failed to send|Failed to fetch/i.test(error.message ?? '')) {
       detail = 'Could not reach the feed proxy — is the rss-proxy Edge Function deployed?';
     }
-    throw new Error(detail || error.message || 'Feed proxy request failed');
+    throw new ProxyError(detail || error.message || 'Feed proxy request failed', status);
   }
   const res = data as Partial<ProxyResult> & { error?: string };
   if (res?.error) throw new Error(res.error);
