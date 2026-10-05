@@ -56,39 +56,49 @@ export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
 
   const noteCardIds = useCallback((nid: number) => col.cardIdsOfNote(nid), []);
 
+  /** A failed card action or answer, shown over the card until dismissed. */
+  const [actionError, setActionError] = useState<string | null>(null);
+  const act = useCallback(
+    async (...args: Parameters<typeof study.perform>) => {
+      const err = await study.perform(...args);
+      setActionError(err ?? null);
+    },
+    [study],
+  );
+
   // Card actions go through study.perform, so each can be undone.
   const toggleFlag = useCallback(
     async (n: number) => {
       if (!card) return;
       const next = (card.flags & 7) === n ? 0 : n;
-      await study.perform(next ? `${FLAG_NAMES[n]} flag` : 'Remove flag', () => col.setFlag([card.id], next), { cids: [card.id] });
+      await act(next ? `${FLAG_NAMES[n]} flag` : 'Remove flag', () => col.setFlag([card.id], next), { cids: [card.id] });
     },
-    [card, study],
+    [card, act],
   );
 
   const bury = useCallback(
     async (wholeNote: boolean) => {
       if (!card) return;
       const ids = wholeNote ? await noteCardIds(card.nid) : [card.id];
-      await study.perform(wholeNote ? 'Bury note' : 'Bury card', () => col.buryOrSuspend(ids, 'buryUser'), { cids: ids, leave: ids });
+      await act(wholeNote ? 'Bury note' : 'Bury card', () => col.buryOrSuspend(ids, 'buryUser'), { cids: ids, leave: ids });
     },
-    [card, study, noteCardIds],
+    [card, act, noteCardIds],
   );
 
   const suspend = useCallback(
     async (wholeNote: boolean) => {
       if (!card) return;
       const ids = wholeNote ? await noteCardIds(card.nid) : [card.id];
-      await study.perform(wholeNote ? 'Suspend note' : 'Suspend card', () => col.buryOrSuspend(ids, 'suspend'), { cids: ids, leave: ids });
+      await act(wholeNote ? 'Suspend note' : 'Suspend card', () => col.buryOrSuspend(ids, 'suspend'), { cids: ids, leave: ids });
     },
-    [card, study, noteCardIds],
+    [card, act, noteCardIds],
   );
 
   const marked = !!state.card && /(^|\s)marked(\s|$)/i.test(state.card.note.tags);
   const mark = useCallback(async () => {
     if (!card) return;
-    await study.perform(marked ? 'Unmark note' : 'Mark note', () => col.toggleMark(card.nid), { cids: [card.id], nids: [card.nid] });
-  }, [card, study, marked]);
+    await act(marked ? 'Unmark note' : 'Mark note', () => col.toggleMark(card.nid), { cids: [card.id], nids: [card.nid] });
+  }, [card, act, marked]);
 
   /** A gesture's action (Settings › Review gestures). Answers show the answer first. */
   const runAction = useCallback(
@@ -334,7 +344,7 @@ export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
         <div className="rv-stage">
           <div className="rv-done">
             <div className="jpbig" lang="ja">{state.reviewedCount ? 'お疲れさま' : '空っぽ'}</div>
-            <div className="big">{waitSecs != null ? 'Done for now' : 'Congratulations!'}</div>
+            <div className="big">{state.error ? 'Something went wrong' : waitSecs != null ? 'Done for now' : 'Congratulations!'}</div>
             <p style={{ color: 'var(--ink-soft)', fontSize: 15, lineHeight: 1.6 }}>
               {state.error
                 ? state.error
@@ -359,6 +369,12 @@ export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
   return (
     <div className="review-wrap">
       {top}
+      {(actionError ?? state.error) && (
+        <div className="rv-error" role="alert">
+          <span>{actionError ?? state.error}</span>
+          <button className="icon-btn" aria-label="Dismiss" onClick={() => setActionError(null)}><Icon.close s={16} /></button>
+        </div>
+      )}
       <div className="rv-card">
         <CardView html={state.html} css={state.rendered?.css ?? ''} ord={card.ord} dark={dark} onEvent={onCardEvent} version={state.version} side={state.shown ? 'a' : 'q'} zoom={cardZoom} />
       </div>

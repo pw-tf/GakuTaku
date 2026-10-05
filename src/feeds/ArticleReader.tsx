@@ -4,6 +4,7 @@ import type { FuriToken } from '../jp-core/worker';
 import { Reader } from '../reader/Reader';
 import type { RestoreTarget } from '../reader/useBook';
 import type { MinedItem } from '../ui/LookupPopup';
+import { Btn } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { isNative } from '../app/platform';
 import { isNhkUrl, nhkRender } from '../native/nhk';
@@ -65,9 +66,14 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
             if (jpLength(extracted.paragraphs.join('')) < 30) throw new NhkUnreadable('NHK’s page didn’t include the article text.');
             paras = extracted.paragraphs;
           } else {
-            const res = await proxyFetch(article.link);
-            const extracted = extractArticle(res.body);
-            if (extracted.paragraphs.length) paras = extracted.paragraphs;
+            try {
+              const res = await proxyFetch(article.link);
+              const extracted = extractArticle(res.body);
+              if (extracted.paragraphs.length) paras = extracted.paragraphs;
+            } catch (e) {
+              // Offline or the site refused: the feed's own text (or summary) is better than nothing.
+              if (paras.length === 0 && !article.summary) throw e;
+            }
           }
         }
         if (paras.length === 0 && article.summary) paras = [htmlToText(article.summary)];
@@ -104,7 +110,10 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
           ) : state.needsNhkAgreement ? (
             <NhkAgreeNotice onAgreed={() => setAttempt((n) => n + 1)} />
           ) : (
-            <p style={{ color: 'var(--rate-again)' }}>Couldn't open this article: {state.error}</p>
+            <>
+              <p style={{ color: 'var(--rate-again)' }}>Couldn’t open this article: {state.error}</p>
+              <Btn size="sm" onClick={() => setAttempt((n) => n + 1)}>Try again</Btn>
+            </>
           )}
         </div></div></div>
       </div>

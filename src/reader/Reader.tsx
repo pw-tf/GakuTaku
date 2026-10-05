@@ -8,6 +8,7 @@ import { captureSentence } from '../books/sentence';
 import type { TocEntry } from './epub';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
+import { useBackHandler } from '../app/back';
 import type { ReadingPos, RestoreTarget } from './useBook';
 
 const NEXT_SCALE: Record<ReaderFontScale, ReaderFontScale> = { s: 'm', m: 'l', l: 's' };
@@ -38,6 +39,9 @@ interface Props {
   /** Pictures to show when the chapter has no text (a cover or an illustration page). */
   images?: string[];
   loadingChapter: boolean;
+  /** Set when the last chapter change failed; shown with a Retry button. */
+  chapterError?: string | null;
+  onRetryChapter?: () => void;
   restore: RestoreTarget;
   mined: MinedItem[];
   onMine: (item: MinedItem) => void;
@@ -90,6 +94,9 @@ export function Reader(props: Props) {
   const vertical = orientation === 'vertical';
 
   const [railOpen, setRailOpen] = useState(false);
+  useBackHandler(railOpen, () => setRailOpen(false));
+  /** Scroll flow: how far through the chapter (0–1), for the progress label and bar. */
+  const [scrollFrac, setScrollFrac] = useState(0);
   const [activeKey, setActiveKey] = useState<number | null>(null);
   const [mineContext, setMineContext] = useState<MineContext | undefined>(undefined);
   const [page, setPage] = useState(0);
@@ -329,20 +336,35 @@ export function Reader(props: Props) {
   // Persist only after a user-initiated move (page turn or chapter change) settles.
   useEffect(() => {
     if (props.loadingChapter || !pendingSave.current) return;
-    pendingSave.current = false;
-    const id = requestAnimationFrame(() => reportProgress(true));
+    // Cleared only once the save actually runs: a page reset during a chapter change re-runs this
+    // effect and cancels the frame, and the save must still happen on the settled page.
+    const id = requestAnimationFrame(() => {
+      pendingSave.current = false;
+      reportProgress(true);
+    });
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, props.chapterIndex, props.loadingChapter]);
 
-  // Re-measure on container resize.
+  // Re-measure on container resize (rotation, split screen), staying on the same text. The view is
+  // replaced while a chapter loads, so re-attach once it's back.
   useEffect(() => {
     const view = viewRef.current;
-    if (!paged || !view) return;
-    const ro = new ResizeObserver(() => measure());
+    if (!paged || !view || props.loadingChapter) return;
+    let first = true;
+    let lastW = view.clientWidth;
+    let lastH = view.clientHeight;
+    const ro = new ResizeObserver(() => {
+      if (first) { first = false; return; } // fires once on observe; nothing changed yet
+      if (view.clientWidth === lastW && view.clientHeight === lastH) return;
+      lastW = view.clientWidth;
+      lastH = view.clientHeight;
+      measure();
+      applyRestore({ kind: 'anchor', paragraphIndex: lastPos.current.pi, fraction: lastPos.current.frac });
+    });
     ro.observe(view);
     return () => ro.disconnect();
-  }, [paged, measure]);
+  }, [paged, measure, applyRestore, props.loadingChapter]);
 
   // ---- Navigation -----------------------------------------------------------
 
@@ -413,6 +435,17 @@ export function Reader(props: Props) {
     else prevPage();
   }
 
+  /** Paged views: a tap on the outer quarter of the page (not on a word) turns the page. */
+  function onPageTap(e: React.MouseEvent<HTMLDivElement>) {
+    const t = e.target as HTMLElement;
+    if (t.closest('.rd-word, button, a, .rd-images')) return;
+    if (window.getSelection()?.toString()) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    if (x < 0.25) (vertical ? nextPage : prevPage)();
+    else if (x > 0.75) (vertical ? prevPage : nextPage)();
+  }
+
   function handleTap(token: FuriToken, key: number, anchor: DOMRect) {
     setActiveKey(key);
     // The paragraph holding this token (keys are chapter-global), and the sentence around it.
@@ -433,6 +466,11 @@ export function Reader(props: Props) {
 
   function onScroll() {
     if (paged) return;
+    const el = scrollRef.current;
+    if (el) {
+      const max = el.scrollHeight - el.clientHeight;
+      setScrollFrac(max > 0 ? clamp01(el.scrollTop / max) : 0);
+    }
     if (ignoreScroll.current) return;
     reportProgress(false);
   }
@@ -445,7 +483,7 @@ export function Reader(props: Props) {
   })();
 
   const pct = props.chapterCount
-    ? Math.round(((props.chapterIndex + (paged ? (pageCount > 1 ? page / (pageCount - 1) : 0) : 0)) / props.chapterCount) * 100)
+    ? Math.round(((props.chapterIndex + (paged ? (pageCount > 1 ? page / (pageCount - 1) : 0) : scrollFrac)) / props.chapterCount) * 100)
     : 0;
 
   // A page with no text: its pictures (a cover, an illustration), else a short note.
@@ -477,13 +515,13 @@ export function Reader(props: Props) {
         <span className="back" onClick={props.onClose}>
           <Icon.chevL s={18} /> <span className="back-lbl" lang="ja">{props.backLabel ?? 'Library'}</span>
         </span>
-        <span style={{ width: 1, height: 22, background: 'var(--rule)' }} />
+        <span className="rd-sep" style={{ width: 1, height: 22, background: 'var(--rule)' }} />
         <span className="rtitle" lang="ja">{props.title}</span>
-        <button className="icon-btn" title="Previous chapter" onClick={goPrevChapter} disabled={props.chapterIndex <= 0}>
+        <button className="icon-btn rd-chap-btn" title="Previous chapter" onClick={goPrevChapter} disabled={props.chapterIndex <= 0}>
           <Icon.chevL s={16} />
         </button>
         <Chip>{props.chapterIndex + 1} / {props.chapterCount || '…'}</Chip>
-        <button className="icon-btn" title="Next chapter" onClick={goNextChapter} disabled={props.chapterIndex >= props.chapterCount - 1}>
+        <button className="icon-btn rd-chap-btn" title="Next chapter" onClick={goNextChapter} disabled={props.chapterIndex >= props.chapterCount - 1}>
           <Icon.chevR s={16} />
         </button>
         <span className="spacer" />
@@ -510,6 +548,7 @@ export function Reader(props: Props) {
             onTouchStart={(e) => (touchX.current = e.touches[0].clientX)}
             onTouchEnd={onTouchEnd}
             onWheel={onWheel}
+            onClick={onPageTap}
           >
             <div className={`rd-pages fs-${fontScale} w-${width}`} ref={pagesRef} lang="ja" style={{ transform: translate, transition: instant ? 'none' : 'transform .26s ease' }}>
               {props.paragraphs.length === 0 ? noText : paras()}
@@ -543,6 +582,12 @@ export function Reader(props: Props) {
               <div className={'rd-body fs-' + fontScale} lang="ja">
                 {props.paragraphs.length === 0 ? noText : paras()}
               </div>
+              {props.chapterCount > 1 && (
+                <div className="rd-chap-nav">
+                  <Btn size="sm" disabled={props.chapterIndex <= 0} onClick={goPrevChapter}><Icon.chevL s={15} /> Previous chapter</Btn>
+                  <Btn size="sm" variant="primary" disabled={props.chapterIndex >= props.chapterCount - 1} onClick={goNextChapter}>Next chapter <Icon.chevR s={15} /></Btn>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -636,6 +681,13 @@ export function Reader(props: Props) {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {props.chapterError && (
+          <div className="rd-error" role="alert">
+            <span>{props.chapterError}</span>
+            {props.onRetryChapter && <Btn size="sm" onClick={props.onRetryChapter}>Retry</Btn>}
           </div>
         )}
 

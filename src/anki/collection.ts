@@ -618,9 +618,23 @@ export class Collection {
         break;
       }
     }
-    const name = 'Custom Study Session';
+    return this.sessionDeck('Custom Study Session', cfg, nowMs);
+  }
+
+  /**
+   * A session deck holding exactly these cards, studied with normal scheduling (the reader's
+   * "Review mined" button). Remove it with {@link removeDeck} afterwards to send the cards home.
+   */
+  async cardSession(name: string, cids: number[], nowMs = Date.now()): Promise<{ id: number; count: number }> {
+    if (cids.length === 0) throw new Error('No cards to study.');
+    const cfg: FilteredDeckConfig = { ...defaultFilteredConfig(), reschedule: true, terms: [{ search: `cid:${cids.join(',')}`, limit: 99_999, order: 'added' }] };
+    return this.sessionDeck(name, cfg, nowMs);
+  }
+
+  /** Build (or rebuild) the filtered deck called `name`, refusing to touch a normal deck by that name. */
+  private async sessionDeck(name: string, cfg: FilteredDeckConfig, nowMs: number): Promise<{ id: number; count: number }> {
     const [existing] = await this.sql.all<{ id: number; filtered: string | null }>('SELECT id, filtered FROM decks WHERE name = ?', [name]);
-    if (existing && !existing.filtered) throw new Error('Rename the deck called “Custom Study Session” first: custom study uses that name.');
+    if (existing && !existing.filtered) throw new Error(`Rename the deck called “${name}” first: this uses that name.`);
     if (existing) return { id: existing.id, count: await this.updateFilteredDeck(existing.id, name, cfg, nowMs) };
     return this.addFilteredDeck(name, cfg, nowMs);
   }

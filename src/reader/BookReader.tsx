@@ -53,6 +53,8 @@ export function BookReader({ doc, mined, onMine, onReviewMined, onClose }: Props
       paragraphs={book.paragraphs}
       images={book.images}
       loadingChapter={book.loadingChapter}
+      chapterError={book.chapterError}
+      onRetryChapter={book.retryChapter}
       restore={book.restore}
       mined={mined}
       onMine={onMine}

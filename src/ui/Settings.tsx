@@ -6,7 +6,7 @@ import { remindersAvailable, requestReminderPermission } from '../native/reminde
 import { Btn } from './atoms';
 import { Modal } from './Modal';
 
-const THEMES: [ThemeMode, string][] = [['system', 'Match phone'], ['light', 'Light'], ['dark', 'Dark'], ['black', 'Black']];
+const THEMES: [ThemeMode, string][] = [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark'], ['black', 'Black']];
 const ACCENT_NAMES = ['Vermilion', 'Indigo', 'Pine', 'Plum', 'Teal', 'Rose'];
 
 /** The Settings screen: appearance, reading, review, mining, backup and about. */
@@ -23,7 +23,7 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
               <div key={v} className={'d' + (p.theme === v ? ' on' : '')} onClick={() => p.setTheme(v)}>{label}</div>
             ))}
           </div>
-          <span className="set-help">Black uses true black, which saves battery on OLED screens.</span>
+          <span className="set-help">Auto follows your phone’s dark mode. Black uses true black, which saves battery on OLED screens.</span>
         </div>
         <div className="set-row col">
           <span className="set-label">Accent colour</span>
@@ -42,10 +42,11 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
           <div className="density-seg">
             {(['all', 'n3', 'off'] as const).map((v) => (
               <div key={v} className={'d' + (p.furigana === v ? ' on' : '')} onClick={() => p.setFurigana(v)}>
-                {v === 'all' ? 'All' : v === 'n3' ? 'N3 and harder' : 'Off'}
+                {v === 'all' ? 'All' : v === 'n3' ? 'N3+' : 'Off'}
               </div>
             ))}
           </div>
+          <span className="set-help">N3+ shows readings only over harder kanji (JLPT N3 and above).</span>
         </div>
         <div className="set-row col">
           <span className="set-label">Text size</span>

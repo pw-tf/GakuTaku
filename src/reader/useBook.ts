@@ -37,6 +37,8 @@ interface BookState {
   /** A chapter's pictures when it has no text (object URLs). */
   images: string[];
   loadingChapter: boolean;
+  /** Why the last chapter change failed (the previous chapter stays on screen). */
+  chapterError: string | null;
   /** Target the Reader applies once the chapter's paragraphs are on screen. */
   restore: RestoreTarget;
 }
@@ -87,6 +89,7 @@ export function useBook(doc: DocumentRecord, userId: string) {
     paragraphs: [],
     images: [],
     loadingChapter: false,
+    chapterError: null,
     restore: { kind: 'top' },
   });
   const bookRef = useRef<BookSource | null>(null);
@@ -124,7 +127,7 @@ export function useBook(doc: DocumentRecord, userId: string) {
           toc: book.toc,
           chapterIndex: startChapter,
         }));
-        await loadChapter(startChapter, { kind: 'anchor', ...pos.anchor });
+        await loadChapter(startChapter, { kind: 'anchor', ...pos.anchor }, true);
       } catch (e) {
         if (!cancelled) setState((s) => ({ ...s, status: 'error', error: e instanceof Error ? e.message : String(e) }));
       }
@@ -142,27 +145,46 @@ export function useBook(doc: DocumentRecord, userId: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.id]);
 
-  async function loadChapter(index: number, restore: RestoreTarget) {
+  /** Bumped per chapter load, so a slow load that finishes after a newer one is dropped. */
+  const loadSeq = useRef(0);
+
+  /**
+   * Load a chapter and its furigana. On the first open a failure propagates (the book can't be
+   * shown); later, it's reported with the previous chapter left in place.
+   */
+  async function loadChapter(index: number, restore: RestoreTarget, initial = false): Promise<number | null> {
     const book = bookRef.current;
-    if (!book) return;
+    if (!book) return null;
+    const seq = ++loadSeq.current;
     // Changing chapters: drop any pending intra-chapter save — the new chapter's settle is authoritative.
     if (saveTimer.current) clearTimeout(saveTimer.current);
     pendingRef.current = null;
-    chapterRef.current = index;
-    setState((s) => ({ ...s, loadingChapter: true }));
-    const texts = await book.loadChapter(index);
-    const tokens = texts.length ? await jpCore.furiganaForMany(texts) : [];
-    const images = !texts.length && book.loadImages ? await book.loadImages(index).catch(() => []) : [];
-    setState((s) => ({
-      ...s,
-      status: 'ready',
-      chapterIndex: index,
-      texts,
-      paragraphs: tokens,
-      images,
-      loadingChapter: false,
-      restore,
-    }));
+    setState((s) => ({ ...s, loadingChapter: true, chapterError: null }));
+    try {
+      const texts = await book.loadChapter(index);
+      const tokens = texts.length ? await jpCore.furiganaForMany(texts) : [];
+      const images = !texts.length && book.loadImages ? await book.loadImages(index).catch(() => []) : [];
+      if (seq !== loadSeq.current) return null;
+      chapterRef.current = index;
+      setState((s) => ({
+        ...s,
+        status: 'ready',
+        chapterIndex: index,
+        texts,
+        paragraphs: tokens,
+        images,
+        loadingChapter: false,
+        restore,
+      }));
+      return texts.length;
+    } catch (e) {
+      if (initial) throw e;
+      if (seq === loadSeq.current) {
+        const message = e instanceof Error ? e.message : String(e);
+        setState((s) => ({ ...s, loadingChapter: false, chapterError: `Couldn’t open chapter ${index + 1}: ${message}` }));
+      }
+      return null;
+    }
   }
 
   function persistPosition(chapter: number, pos: ReadingPos) {
@@ -190,7 +212,16 @@ export function useBook(doc: DocumentRecord, userId: string) {
   function goChapter(index: number, edge: 'top' | 'end' = 'top') {
     const count = state.chapterCount || bookRef.current?.chapterCount || 0;
     if (index < 0 || index >= count) return;
-    loadChapter(index, { kind: edge });
+    void loadChapter(index, { kind: edge }).then((paragraphs) => {
+      // Save the new chapter right away; the reader's own report refines it once the page settles.
+      if (paragraphs == null) return;
+      const end = edge === 'end' && paragraphs > 0;
+      saveProgress({ paragraphIndex: end ? paragraphs - 1 : 0, fraction: end ? 1 : 0, chapterFraction: end ? 1 : 0 });
+    });
+  }
+
+  function retryChapter() {
+    void loadChapter(state.chapterIndex, { kind: 'anchor', paragraphIndex: 0, fraction: 0 });
   }
 
   /** Save a reported position. Debounced while reading; immediate on chapter settle. */
@@ -212,6 +243,7 @@ export function useBook(doc: DocumentRecord, userId: string) {
     nextChapter: () => goChapter(state.chapterIndex + 1, 'top'),
     prevChapter: () => goChapter(state.chapterIndex - 1, 'top'),
     prevChapterEnd: () => goChapter(state.chapterIndex - 1, 'end'),
+    retryChapter,
     saveProgress,
   };
 }

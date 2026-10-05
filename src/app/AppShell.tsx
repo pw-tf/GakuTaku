@@ -47,7 +47,10 @@ export function AppShell() {
   const [book, setBook] = useState<DocumentRecord | null>(null);
   const [articleView, setArticleView] = useState<{ article: FeedArticle; feed: FeedView } | null>(null);
   const [mined, setMined] = useState<MinedItem[]>([]);
-  const [reviewSource, setReviewSource] = useState<{ deckId: number; title: string }>({ deckId: WHOLE_COLLECTION, title: 'All decks' });
+  /** What the review overlay studies, where Back returns to, and whether its deck is a throwaway session. */
+  const [reviewSource, setReviewSource] = useState<{ deckId: number; title: string; returnTo: Overlay; tempDeck: boolean }>({
+    deckId: WHOLE_COLLECTION, title: 'All decks', returnTo: null, tempDeck: false,
+  });
   const [menuOpen, setMenuOpen] = useState(false);
 
   const { data: deckTree, loading: dueLoading } = useDeckTree();
@@ -81,7 +84,7 @@ export function AppShell() {
 
   // Android back: close the innermost open thing; on a tab other than Library, go to Library.
   useBackHandler(view !== 'library', () => setView('library'));
-  useBackHandler(overlay !== null, () => setOverlay(null));
+  useBackHandler(overlay !== null, () => (overlay === 'review' ? exitReview() : setOverlay(null)));
   useBackHandler(menuOpen, () => setMenuOpen(false));
 
   function openBook(b: DocumentRecord) {
@@ -95,13 +98,24 @@ export function AppShell() {
   function mine(item: MinedItem) {
     setMined((m) => (m.find((x) => x.term === item.term) ? m : [...m, item]));
   }
-  function startReview(deckId: number, title: string) {
-    setReviewSource({ deckId, title });
+  function startReview(deckId: number, title: string, opts: { returnTo?: Overlay; tempDeck?: boolean } = {}) {
+    setReviewSource({ deckId, title, returnTo: opts.returnTo ?? null, tempDeck: opts.tempDeck ?? false });
     setOverlay('review');
   }
-  function reviewMined() {
-    const last = mined[mined.length - 1];
-    if (last) startReview(last.deckId, 'Mined');
+  /** Study exactly the words mined this session, then go back to the book or article. */
+  async function reviewMined() {
+    if (mined.length === 0) return;
+    try {
+      const { id } = await col.cardSession('Mined Session', mined.map((m) => m.cardId));
+      startReview(id, 'Mined words', { returnTo: overlay, tempDeck: true });
+    } catch {
+      startReview(mined[mined.length - 1].deckId, 'Mined words', { returnTo: overlay });
+    }
+  }
+  function exitReview() {
+    // The mined-words deck is only for this session: remove it so its cards go home.
+    if (reviewSource.tempDeck) void col.removeDeck(reviewSource.deckId).catch(() => {});
+    setOverlay(reviewSource.returnTo ?? null);
   }
   function navTo(item: (typeof NAV)[number]) {
     if (item.id === 'review') {
@@ -180,7 +194,7 @@ export function AppShell() {
         </Suspense>
       )}
       {overlay === 'review' && (
-        <ReviewScreen deckId={reviewSource.deckId} title={reviewSource.title} onExit={() => setOverlay(null)} onStudy={(id, name) => startReview(id, name)} />
+        <ReviewScreen deckId={reviewSource.deckId} title={reviewSource.title} onExit={exitReview} onStudy={(id, name) => startReview(id, name)} />
       )}
 
       <BackgroundTasks />
