@@ -689,3 +689,7 @@ body { overflow: hidden; }
 .bg-track i { display: block; height: 100%; border-radius: 0 4px 4px 0; }
 .bg-v { text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); }
 .stats .mat-bar { gap: 2px; }
+.auto-backups { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.ab-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.ab-row > span:first-child { flex: 1; }
+.toggle-row input[type=time] { border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 3px 6px; font: inherit; font-size: 12.5px; background: var(--paper); color: var(--ink); }

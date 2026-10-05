@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ACCENTS, usePrefs } from '../app/prefs';
 import { BackupSection } from '../backup/BackupSection';
 import { ACTION_NAMES, GESTURE_NAMES, type Gesture, type ReviewAction } from '../study/gestures';
+import { remindersAvailable, requestReminderPermission } from '../native/reminders';
 import { Btn } from './atoms';
 import { Modal } from './Modal';
 
@@ -121,8 +122,9 @@ export function Settings({ onClose, onOpenCredits }: Props) {
 
 /** Reviewer preferences: timer, card text size and gestures. */
 function ReviewSettings() {
-  const { showTimer, cardZoom, setShowTimer, setCardZoom } = usePrefs();
+  const { showTimer, cardZoom, setShowTimer, setCardZoom, reminder, reminderTime, setReminder, setReminderTime } = usePrefs();
   const [gesturesOpen, setGesturesOpen] = useState(false);
+  const [reminderNote, setReminderNote] = useState<string | null>(null);
   return (
     <div className="set-sec">
       <div className="set-h">Review</div>
@@ -137,6 +139,34 @@ function ReviewSettings() {
           <span style={{ fontFamily: 'var(--mono)', fontSize: 12, width: 38, textAlign: 'right' }}>{Math.round(cardZoom * 100)}%</span>
         </span>
       </div>
+      {remindersAvailable && (
+        <>
+          <div className="toggle-row" style={{ marginTop: 8 }}>
+            <span>Daily reminder</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {reminder && <input type="time" value={reminderTime} aria-label="Reminder time" onChange={(e) => e.target.value && setReminderTime(e.target.value)} />}
+              <input
+                type="checkbox"
+                checked={reminder}
+                onChange={async (e) => {
+                  const on = e.target.checked;
+                  setReminderNote(null);
+                  if (on && !(await requestReminderPermission())) {
+                    setReminderNote('Notifications are off for GakuTaku. Allow them in Android settings to get reminders.');
+                    return;
+                  }
+                  setReminder(on);
+                }}
+              />
+            </span>
+          </div>
+          {(reminderNote || reminder) && (
+            <div style={{ fontSize: 11, color: reminderNote ? 'var(--rate-again)' : 'var(--ink-faint)', marginTop: 4, lineHeight: 1.5 }}>
+              {reminderNote ?? 'Only on days with cards due; shows how many.'}
+            </div>
+          )}
+        </>
+      )}
       <a style={{ display: 'inline-block', color: 'var(--accent)', fontSize: 13, cursor: 'pointer', fontWeight: 600, marginTop: 10 }} onClick={() => setGesturesOpen(true)}>
         Gestures and tap zones →
       </a>

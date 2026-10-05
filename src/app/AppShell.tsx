@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useBackHandler } from './back';
+import { usePrefs } from './prefs';
+import { refreshReminders } from '../native/reminders';
 import { col } from '../anki/appCollection';
 import { ensureStockNotetypes } from '../anki/stock';
 import { WHOLE_COLLECTION } from '../anki/queue';
@@ -51,6 +53,19 @@ export function AppShell() {
   const { data: deckTree, loading: dueLoading } = useDeckTree();
   const dueCount = (deckTree ?? []).reduce((n, d) => n + d.newCount + d.learnCount + d.reviewCount, 0);
   const streak = useStreak();
+
+  // Daily reminder counts and automatic backups follow the collection: refresh them on start, when
+  // the app comes back, and after each study session.
+  const reminder = usePrefs((p) => p.reminder);
+  const reminderTime = usePrefs((p) => p.reminderTime);
+  useEffect(() => {
+    if (overlay === 'review') return;
+    const id = setTimeout(() => {
+      void refreshReminders(reminder, reminderTime);
+      void import('../backup/auto').then((m) => m.maybeAutoBackup());
+    }, 4000);
+    return () => clearTimeout(id);
+  }, [overlay, reminder, reminderTime]);
 
   // Collection housekeeping: the stock note types exist, and cards buried on an earlier day come
   // back (Anki's rollover unbury) — on start and whenever the app returns to the foreground.
