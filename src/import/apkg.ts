@@ -1,6 +1,7 @@
 import { BlobReader, Uint8ArrayWriter, ZipReader, type Entry } from '@zip.js/zip.js';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { decompress } from 'fzstd';
+import { inflateSync } from 'fflate';
 import { decodeFields, pbFloat, pbFloats, pbHas, pbMessage, pbMessages, pbString, pbUint, type PbValue } from './proto';
 import { defaultDeckConfig, type DeckConfig, type NewGatherPriority, type NewSortOrder, type ReviewMix, type ReviewOrder } from '../anki/types';
 import type { Notetype } from '../anki/notetype';
@@ -450,6 +451,55 @@ async function entryBytes(e: Entry | undefined): Promise<Uint8Array | null> {
   return (e as Entry & { getData: (w: Uint8ArrayWriter) => Promise<Uint8Array> }).getData(new Uint8ArrayWriter());
 }
 
+/** Bytes read from the package per window: big sequential reads instead of one per media file. */
+const WINDOW = 8 * 1024 * 1024;
+
+/**
+ * Reads zip entries straight from the file. zip.js costs several milliseconds per entry (stream
+ * setup and checksumming), which for a deck's thousands of media files dominated the whole import.
+ * Media entries are laid out one after another, so they are read through a sliding window and
+ * sliced out (stored) or inflated synchronously with fflate (deflated). Anything
+ * unusual (encryption, another method, a bad header) goes back to zip.js.
+ */
+export class EntryReader {
+  private win = new Uint8Array(0);
+  private winStart = 0;
+  constructor(private readonly file: Blob) {}
+
+  private async bytes(start: number, length: number): Promise<Uint8Array> {
+    const end = start + length;
+    if (start < this.winStart || end > this.winStart + this.win.length) {
+      const size = Math.max(length, WINDOW);
+      this.win = new Uint8Array(await this.file.slice(start, Math.min(start + size, this.file.size)).arrayBuffer());
+      this.winStart = start;
+      if (this.win.length < length) throw new Error('Truncated zip entry');
+    }
+    return this.win.subarray(start - this.winStart, end - this.winStart);
+  }
+
+  async read(e: Entry | undefined): Promise<Uint8Array | null> {
+    if (!e || e.directory) return null;
+    if (!e.encrypted && e.offset >= 0) {
+      try {
+        const h = await this.bytes(e.offset, 30);
+        const sig = h[0] | (h[1] << 8) | (h[2] << 16) | (h[3] << 24);
+        if (sig === 0x04034b50) {
+          const method = h[8] | (h[9] << 8);
+          const dataStart = e.offset + 30 + (h[26] | (h[27] << 8)) + (h[28] | (h[29] << 8));
+          if (method === 0) return (await this.bytes(dataStart, e.compressedSize)).slice();
+          if (method === 8) {
+            const out = inflateSync(await this.bytes(dataStart, e.compressedSize), { out: new Uint8Array(e.uncompressedSize) });
+            if (out.length === e.uncompressedSize) return out;
+          }
+        }
+      } catch {
+        /* fall back to zip.js */
+      }
+    }
+    return entryBytes(e);
+  }
+}
+
 /** Parse an `.apkg` / `.colpkg` file. Call `close()` when done reading media. */
 export async function parseApkg(file: Blob): Promise<ParsedPackage> {
   const zip = new ZipReader(new BlobReader(file));
@@ -460,6 +510,7 @@ export async function parseApkg(file: Blob): Promise<ParsedPackage> {
     throw new UnsupportedApkgError('This doesn’t look like an Anki package (.apkg / .colpkg).');
   }
   const byName = new Map(entries.map((e) => [e.filename, e]));
+  const mediaReader = new EntryReader(file);
 
   let version = 0;
   const meta = await entryBytes(byName.get('meta'));
@@ -524,7 +575,7 @@ export async function parseApkg(file: Blob): Promise<ParsedPackage> {
     media,
     mediaCompressed: v3,
     async readMedia(entryName: string) {
-      const bytes = await entryBytes(byName.get(entryName));
+      const bytes = await mediaReader.read(byName.get(entryName));
       if (!bytes) return null;
       if (!v3) return bytes;
       try {

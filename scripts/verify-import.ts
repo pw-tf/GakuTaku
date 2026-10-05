@@ -9,7 +9,8 @@ import { Collection } from '../src/anki/collection';
 import { setFuzzEnabled } from '../src/anki/fuzz';
 import { renderCard } from '../src/anki/template';
 import { timingAt } from '../src/anki/timing';
-import { parseApkg } from '../src/import/apkg';
+import { EntryReader, parseApkg } from '../src/import/apkg';
+import { BlobReader, BlobWriter, Uint8ArrayReader, Uint8ArrayWriter, ZipReader, ZipWriter } from '@zip.js/zip.js';
 import { importPackage, type MediaSink } from '../src/import/importPackage';
 import { buildKaishiPackage, CONF_ID, FSRS_PARAMS, KAISHI_CSS, KAISHI_FIELDS } from './fixtures';
 import { openTestDb } from './sqliteNode';
@@ -114,9 +115,40 @@ async function run(format: 'legacy' | 'modern') {
   eq(`${tag} reimport card count`, raw.exec('SELECT COUNT(*) AS n FROM cards')[0].n, 20);
 }
 
+/** The fast media reader must return exactly what zip.js returns, for every entry. */
+async function readerMatchesZipJs() {
+  const rand = (n: number, seed: number) => {
+    const out = new Uint8Array(n);
+    let x = seed >>> 0;
+    for (let i = 0; i < n; i++) out[i] = (x = (Math.imul(x, 1664525) + 1013904223) >>> 0) >>> 24;
+    return out;
+  };
+  const files: [string, Uint8Array, number][] = [
+    ['0', rand(40_000, 1), 0], // stored
+    ['1', new TextEncoder().encode('compressible '.repeat(5000)), 6], // deflated
+    ['2', rand(9 * 1024 * 1024, 2), 0], // bigger than the read window
+    ['3', rand(7 * 1024 * 1024, 3), 0], // pushes the next ones across a window boundary
+    ['4', rand(3 * 1024 * 1024, 4), 6],
+    ['5', new Uint8Array(0), 0], // empty
+    ['日本語.mp3', rand(1000, 5), 6],
+  ];
+  const w = new ZipWriter(new BlobWriter('application/zip'));
+  for (const [name, data, level] of files) await w.add(name, new Uint8ArrayReader(data), { level });
+  const zipBlob = await w.close();
+  const entries = await new ZipReader(new BlobReader(zipBlob)).getEntries();
+  const reader = new EntryReader(zipBlob);
+  // Out of order too: the reader must reposition its window.
+  for (const e of [...entries.slice(3), ...entries.slice(0, 3)]) {
+    const fast = await reader.read(e);
+    const slow = await (e as unknown as { getData: (x: Uint8ArrayWriter) => Promise<Uint8Array> }).getData(new Uint8ArrayWriter());
+    eq(`fast reader: ${e.filename}`, fast != null && fast.length === slow.length && fast.every((b, i) => b === slow[i]), true);
+  }
+}
+
 async function main() {
   await run('legacy');
   await run('modern');
+  await readerMatchesZipJs();
   if (failures) {
     console.error(`\n${failures} check(s) failed, ${passes} passed.`);
     process.exit(1);
