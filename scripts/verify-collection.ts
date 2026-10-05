@@ -4,7 +4,8 @@
  *
  *   npm run verify:collection
  */
-import { Collection, DEFAULT_DECK_ID, type StudyCard } from '../src/anki/collection';
+import { Collection, DEFAULT_DECK_ID, renameFieldRefs, type StudyCard } from '../src/anki/collection';
+import { splitFields } from '../src/anki/notetype';
 import { setFuzzEnabled } from '../src/anki/fuzz';
 import type { CardQueues } from '../src/anki/queue';
 import { CardQueue, CardType, defaultDeckConfig, type Rating } from '../src/anki/types';
@@ -457,6 +458,83 @@ async function main() {
     eq('mark', await col.toggleMark(note.id), true);
     check('marked tag added', /\bmarked\b/.test((await col.note(note.id))!.tags));
     eq('unmark', await col.toggleMark(note.id), false);
+  }
+
+  // ---- Note type management ----------------------------------------------------------------
+  {
+    eq('rename refs', renameFieldRefs('{{Front}} {{#Front}}x{{/Front}} {{text:Front}} {{Fronts}} {{^Front}}', 'Front', 'Word'), '{{Word}} {{#Word}}x{{/Word}} {{text:Word}} {{Fronts}} {{^Word}}');
+    const { col, sql } = await emptyCol();
+    const mid = await col.addNotetype({
+      name: 'Three',
+      kind: 0,
+      fields: [{ name: 'A', ord: 0 }, { name: 'B', ord: 1 }, { name: 'C', ord: 2 }],
+      templates: [
+        { name: 'Fwd', ord: 0, qfmt: '{{A}}', afmt: '{{B}}' },
+        { name: 'Rev', ord: 1, qfmt: '{{B}}', afmt: '{{A}}' },
+      ],
+      css: '',
+      sortIdx: 0,
+    });
+    const n1 = await col.addNote(mid, ['a1', 'b1', 'c1'], [], DEFAULT_DECK_ID);
+    const n2 = await col.addNote(mid, ['a2', '', 'c2'], [], DEFAULT_DECK_ID);
+    eq('cards before', [n1.cardIds.length, n2.cardIds.length], [2, 1]);
+    const flds = async (nid: number) => splitFields((await col.note(nid))!.flds);
+
+    // Rename A → Word, swap B/C order, drop nothing, add D; sort by C.
+    await col.changeNotetypeFields(mid, [{ name: 'Word', from: 0 }, { name: 'C', from: 2 }, { name: 'B', from: 1 }, { name: 'D', from: null }], 1);
+    eq('fields rewritten', await flds(n1.noteId), ['a1', 'c1', 'b1', '']);
+    let nt = (await col.notetype(mid))!;
+    eq('field names', nt.fields.map((f) => f.name), ['Word', 'C', 'B', 'D']);
+    eq('templates follow the rename', nt.templates.map((t) => [t.qfmt, t.afmt]), [['{{Word}}', '{{B}}'], ['{{B}}', '{{Word}}']]);
+    eq('sort field updated', (await sql.all<{ sfld: string }>('SELECT sfld FROM notes WHERE id = ?', [n1.noteId]))[0].sfld, 'c1');
+    // Delete field C.
+    await col.changeNotetypeFields(mid, [{ name: 'Word', from: 0 }, { name: 'B', from: 2 }, { name: 'D', from: 3 }], 0);
+    eq('field deleted', await flds(n1.noteId), ['a1', 'b1', '']);
+    let failed = '';
+    try {
+      await col.changeNotetypeFields(mid, [{ name: 'X', from: 0 }, { name: 'x', from: 1 }], 0);
+    } catch (e) {
+      failed = (e as Error).message;
+    }
+    check('duplicate field names refused', /different/.test(failed), failed);
+
+    // Card types: swap order, add a third (front = D), then remove Rev.
+    nt = (await col.notetype(mid))!;
+    const [fwd, rev] = nt.templates;
+    await col.changeNotetypeTemplates(mid, [{ ...rev, from: 1 }, { ...fwd, from: 0 }, { name: 'Extra', qfmt: '{{D}}', afmt: 'x', from: null }], '.card{}');
+    const ords = async (nid: number) => (await sql.all<{ ord: number }>('SELECT ord FROM cards WHERE nid = ? ORDER BY ord', [nid])).map((r) => r.ord);
+    eq('cards follow reordered card types', await ords(n1.noteId), [0, 1]);
+    eq('the one-card note keeps its Fwd card (now ord 1)', await ords(n2.noteId), [1]);
+    eq('no Extra cards for empty D', (await col.cardIdsOfNote(n1.noteId)).length, 2);
+    await col.updateNote(n1.noteId, ['a1', 'b1', 'd1']);
+    eq('Extra card generated when D is filled', await ords(n1.noteId), [0, 1, 2]);
+    nt = (await col.notetype(mid))!;
+    await col.changeNotetypeTemplates(mid, [{ ...nt.templates[1], from: 1 }, { ...nt.templates[2], from: 2 }], nt.css);
+    eq('removing a card type deletes its cards', await ords(n1.noteId), [0, 1]);
+    eq('…other notes keep their cards, renumbered', await ords(n2.noteId), [0]);
+    nt = (await col.notetype(mid))!;
+    eq('card types now', nt.templates.map((t) => [t.name, t.ord]), [['Fwd', 0], ['Extra', 1]]);
+    eq('css saved', nt.css, '.card{}');
+    // A new card type gets cards for existing notes.
+    await col.changeNotetypeTemplates(mid, [{ ...nt.templates[0], from: 0 }, { ...nt.templates[1], from: 1 }, { name: 'Back', qfmt: '{{B}}', afmt: '{{Word}}', from: null }], nt.css);
+    eq('new card type generates cards', await ords(n1.noteId), [0, 1, 2]);
+    nt = (await col.notetype(mid))!;
+    await col.changeNotetypeTemplates(mid, [{ ...nt.templates[1], from: 1 }, { ...nt.templates[2], from: 2 }], nt.css);
+    eq('a note left without cards is removed', await col.note(n2.noteId), null);
+    eq('…and the others keep theirs', await ords(n1.noteId), [0, 1]);
+
+    // Duplicates.
+    const d1 = await col.addNote(mid, ['<b>ne</b>ko', 'x', ''], [], DEFAULT_DECK_ID);
+    eq('duplicate found ignoring HTML', await col.findDuplicates(mid, 'neko'), [d1.noteId]);
+    eq('…not itself', await col.findDuplicates(mid, 'neko', d1.noteId), []);
+    eq('…only its note type', await col.findDuplicates(mid + 999, 'neko'), []);
+
+    const counts = await col.notetypeUseCounts();
+    eq('use counts', counts.get(mid), 2);
+    await col.renameNotetype(mid, 'Renamed');
+    eq('renamed', (await col.notetype(mid))!.name, 'Renamed');
+    await col.removeNotetype(mid);
+    eq('removed with its notes', [await col.notetype(mid), await col.note(n1.noteId)], [null, null]);
   }
 
   if (failures) {

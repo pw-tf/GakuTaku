@@ -3,6 +3,7 @@
  *
  *   regexp(pattern, text)   also makes `text REGEXP pattern` work; a leading (?i) means ignore case
  *   field_at(flds, i)       the i-th field of a note's 0x1f-separated fields
+ *   strip_html(text)        text without tags, &nbsp; as a space, runs of spaces collapsed, trimmed
  */
 
 interface FunctionHost {
@@ -53,7 +54,13 @@ export function fieldAt(flds: unknown, index: unknown): string {
   return end < 0 ? flds.slice(start) : flds.slice(start, end);
 }
 
+export function stripHtmlText(text: unknown): string {
+  if (typeof text !== 'string') return '';
+  return text.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export function registerSqlFunctions(db: FunctionHost): void {
   db.createFunction('regexp', (_ctx, pattern, text) => regexpMatch(pattern, text), { deterministic: true, arity: 2 });
   db.createFunction('field_at', (_ctx, flds, index) => fieldAt(flds, index), { deterministic: true, arity: 2 });
+  db.createFunction('strip_html', (_ctx, text) => stripHtmlText(text), { deterministic: true, arity: 1 });
 }
