@@ -2,11 +2,33 @@ import { useEffect, useRef, useState } from 'react';
 import { subscribe } from './index';
 
 /**
+ * While a review session is open, loaders that opted in (the deck list and its counts) wait: each
+ * answer writes cards, the review log and decks, and recounting the whole deck tree after every
+ * card would compete with showing the next one. They catch up when the session ends.
+ */
+let studying = false;
+const deferred = new Set<() => void>();
+
+export function setStudying(on: boolean): void {
+  studying = on;
+  if (!on) {
+    const run = [...deferred];
+    deferred.clear();
+    run.forEach((f) => f());
+  }
+}
+
+/**
  * Run an async loader and re-run it whenever a write touches one of `tables` (or `deps` change).
  * Like {@link import('./useQuery').useQuery}, but for results built by code rather than one SQL query
  * — e.g. the deck tree with Anki's limit-adjusted counts.
  */
-export function useLive<T>(load: () => Promise<T>, deps: unknown[], tables: string[]): { data: T | undefined; loading: boolean; error: Error | null } {
+export function useLive<T>(
+  load: () => Promise<T>,
+  deps: unknown[],
+  tables: string[],
+  opts: { deferWhileStudying?: boolean } = {},
+): { data: T | undefined; loading: boolean; error: Error | null } {
   const [state, setState] = useState<{ data: T | undefined; loading: boolean; error: Error | null }>({ data: undefined, loading: true, error: null });
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -31,6 +53,10 @@ export function useLive<T>(load: () => Promise<T>, deps: unknown[], tables: stri
       for (const t of changed) {
         if (watched.has(t)) {
           // Coalesce bursts (an import writes thousands of rows in chunks).
+          if (opts.deferWhileStudying && studying) {
+            deferred.add(run);
+            return;
+          }
           if (timer) clearTimeout(timer);
           timer = setTimeout(run, 120);
           return;
@@ -40,6 +66,7 @@ export function useLive<T>(load: () => Promise<T>, deps: unknown[], tables: stri
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
+      deferred.delete(run);
       unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

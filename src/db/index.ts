@@ -17,6 +17,8 @@ type Params = unknown[];
 export interface Tx {
   execute(sql: string, params?: Params): Promise<{ rows: Record<string, unknown>[] }>;
   executeMany(sql: string, rows: Params[]): Promise<void>;
+  /** Run several statements in one round trip to the worker. */
+  executeBatch(statements: { sql: string; params: Params }[]): Promise<void>;
   getAll<T>(sql: string, params?: Params): Promise<T[]>;
   getOptional<T>(sql: string, params?: Params): Promise<T | null>;
 }
@@ -85,6 +87,11 @@ function makeTx(collect: Set<string>): Tx {
     async executeMany(sql, rows) {
       await openDb();
       const res = await remote.execMany(sql, rows);
+      for (const t of res.changed) collect.add(t);
+    },
+    async executeBatch(statements) {
+      await openDb();
+      const res = await remote.execBatch(statements);
       for (const t of res.changed) collect.add(t);
     },
     async getAll<T>(sql: string, params?: Params) {

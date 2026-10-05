@@ -303,7 +303,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
     <div className="review-wrap">
       {top}
       <div className="rv-card">
-        <CardView html={state.html} css={state.rendered?.css ?? ''} ord={card.ord} dark={dark} onEvent={onCardEvent} version={state.version} />
+        <CardView html={state.html} css={state.rendered?.css ?? ''} ord={card.ord} dark={dark} onEvent={onCardEvent} version={state.version} side={state.shown ? 'a' : 'q'} />
       </div>
       <div className="rv-foot">
         {!state.shown ? (

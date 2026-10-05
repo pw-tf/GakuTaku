@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Btn, Chip, Spinner } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { loadFeedArticles, markFeedSeen, relTimeJa } from './articles';
+import { NhkAgreeNotice } from './NhkAgree';
+import { ProxyError } from './proxy';
 import { htmlToText, type FeedArticle } from './parse';
 import type { FeedView } from './useFeeds';
 
@@ -14,7 +16,7 @@ interface Props {
 /** Article list for one feed (drill-down from the Library's Feeds section). */
 export function FeedArticles({ feed, onBack, onOpenArticle }: Props) {
   const [articles, setArticles] = useState<FeedArticle[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(
@@ -26,7 +28,7 @@ export function FeedArticles({ feed, onBack, onOpenArticle }: Props) {
         setArticles(arts);
         markFeedSeen(feed.key, arts);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(e);
       } finally {
         setRefreshing(false);
       }
@@ -53,9 +55,11 @@ export function FeedArticles({ feed, onBack, onOpenArticle }: Props) {
         </span>
       </div>
 
-      {error ? (
+      {error instanceof ProxyError && error.needsNhkAgreement ? (
+        <NhkAgreeNotice onAgreed={() => load(true)} />
+      ) : error ? (
         <p style={{ color: 'var(--ink-faint)' }}>
-          Couldn't load this feed: {error}{' '}
+          Couldn't load this feed: {error instanceof Error ? error.message : String(error)}{' '}
           <a style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={() => load(true)}>Retry</a>
         </p>
       ) : articles === null ? (

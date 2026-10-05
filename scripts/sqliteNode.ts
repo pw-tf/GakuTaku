@@ -43,6 +43,10 @@ export async function openTestDb(): Promise<{
         guard();
         for (const r of rows) exec(sql, r);
       },
+      async runBatch(statements: [string, unknown[]][]) {
+        guard();
+        for (const [q, p] of statements) exec(q, p);
+      },
       async transaction<T>(fn: (tx: Sql) => Promise<T>): Promise<T> {
         if (inner) return fn(self);
         guard();

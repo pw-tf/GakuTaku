@@ -23,7 +23,7 @@ export function useDeckTree() {
     const id = setInterval(() => setTick((t) => t + 1), 60_000);
     return () => clearInterval(id);
   }, []);
-  return useLive(() => col.deckTree(), [tick], DECK_TABLES);
+  return useLive(() => col.deckTree(), [tick], DECK_TABLES, { deferWhileStudying: true });
 }
 
 interface Props {

@@ -1,4 +1,4 @@
-import { proxyFetch } from './proxy';
+import { proxyFetch, ProxyError } from './proxy';
 import { parseFeedXml, parseNhkEasyList, type FeedArticle } from './parse';
 import type { FeedView } from './useFeeds';
 
@@ -33,6 +33,8 @@ export async function loadFeedArticles(feed: FeedView, force = false): Promise<F
       cache.set(feed.key, { at: Date.now(), url: feed.url, articles });
       return articles;
     } catch (e) {
+      // NHK asking for the reader's agreement outranks the rest: agreeing fixes the feed.
+      if (e instanceof ProxyError && e.needsNhkAgreement) throw e;
       firstError ??= e;
     }
   }
