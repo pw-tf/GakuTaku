@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { LookupState } from '../jp-core/lookupService';
 import { usePrefs } from '../app/prefs';
 import { col } from '../anki/appCollection';
@@ -6,6 +7,7 @@ import { useLive } from '../db/useLive';
 import { mineWord } from '../study/mining';
 import { speak } from '../native/tts';
 import { DeckPicker } from './DeckPicker';
+import { useBackHandler } from '../app/back';
 import { Btn, Chip } from './atoms';
 import { Icon } from './icons';
 
@@ -32,6 +34,28 @@ interface Props extends LookupState {
   context?: MineContext;
 }
 
+/**
+ * Cancel the click that follows a dismissing tap. The popup is usually gone by the time that click
+ * fires, so this lives outside the component.
+ */
+let swallowUntil = 0;
+function swallowNextClick() {
+  if (swallowUntil === 0) {
+    document.addEventListener(
+      'click',
+      (e) => {
+        if (performance.now() <= swallowUntil) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        swallowUntil = 0;
+      },
+      { capture: true, once: true },
+    );
+  }
+  swallowUntil = performance.now() + 700;
+}
+
 type AudioStatus = null | 'fetching' | 'done' | 'none';
 
 /** The single shared dictionary popup (build plan §3.5), populated from the real LookupResult. */
@@ -41,26 +65,46 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
   const [audio, setAudio] = useState<AudioStatus>(null);
   const ref = useRef<HTMLDivElement>(null);
   const [added, setAdded] = useState(false);
+  /** The word was already a card, so nothing new was added. */
+  const [already, setAlready] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // Reset "added" when the looked-up term changes.
   useEffect(() => {
     setAdded(false);
+    setAlready(false);
+    setAddError(null);
     setAudio(null);
   }, [result?.query]);
 
   // The remembered deck, if it still exists (one-tap add target).
   const targetDeck = useMemo(() => decks.find((d) => d.id === lastDeckId) ?? null, [decks, lastDeckId]);
 
-  // Dismiss on outside click (ignoring other tappable words).
+  // A tap anywhere outside the popup only dismisses it: the tap is swallowed so it can't also land
+  // on the word underneath and open a new lookup (tap again to look that word up). Back and Escape
+  // close it too.
   useEffect(() => {
-    function onDown(e: MouseEvent) {
-      const t = e.target as HTMLElement;
-      if (ref.current && !ref.current.contains(t) && !t.closest('.rd-word')) onClose();
+    function onDown(e: PointerEvent) {
+      const t = e.target as Element;
+      if (!ref.current || ref.current.contains(t)) return;
+      // The deck picker opens over everything (in a portal); taps there belong to it.
+      if (t.closest?.('.modal-backdrop')) return;
+      swallowNextClick();
+      onClose();
     }
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [onClose]);
+  useBackHandler(true, onClose);
 
   const reading = useMemo(
     () => result?.words[0]?.kana[0] ?? result?.names[0]?.kana[0] ?? '',
@@ -69,10 +113,28 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
 
   if (!anchor) return null;
 
-  const below = anchor.bottom < window.innerHeight - 280;
-  const left = Math.min(Math.max(anchor.left, 12), window.innerWidth - 360);
-  const top = below ? anchor.bottom + 10 : anchor.top - 12;
-  const style = below ? { left, top } : { left, top, transform: 'translateY(-100%)' };
+  // Keep the popup on screen: full width minus a margin on phones, under the word when there's
+  // room, else above it. A tall, narrow anchor is a word in vertical text — prefer beside it.
+  const W = Math.min(348, window.innerWidth - 24);
+  const vertical = anchor.height > anchor.width * 1.6 && anchor.height > 40;
+  let style: React.CSSProperties;
+  if (vertical && (anchor.left - W - 10 >= 12 || anchor.right + W + 10 <= window.innerWidth - 12)) {
+    const leftSide = anchor.left - W - 10 >= 12;
+    style = {
+      width: W,
+      left: leftSide ? anchor.left - W - 10 : anchor.right + 10,
+      top: Math.max(12, Math.min(anchor.top, window.innerHeight - 340)),
+      maxHeight: window.innerHeight - 24,
+    };
+  } else {
+    const spaceBelow = window.innerHeight - anchor.bottom - 22;
+    const spaceAbove = anchor.top - 22;
+    const below = spaceBelow >= 280 || spaceBelow >= spaceAbove;
+    const left = Math.min(Math.max(anchor.left, 12), window.innerWidth - W - 12);
+    style = below
+      ? { width: W, left, top: anchor.bottom + 10, maxHeight: spaceBelow }
+      : { width: W, left, bottom: window.innerHeight - anchor.top + 12, maxHeight: spaceAbove };
+  }
 
   const firstWord = result?.words[0];
   const senses = result ? result.words.flatMap((w) => w.senses).slice(0, 8) : [];
@@ -87,30 +149,38 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
   }
 
   async function addTo(deckId: number) {
-    if (!result) return;
-    const gloss = resolveGloss();
-    // Create a real note + card (deduped per term) and record the lookup in mined_words history.
-    const mined = await mineWord({
-      deckId,
-      term: result.query,
-      reading,
-      meaning: gloss,
-      sentence: context?.sentence,
-      sentencePlain: context?.sentencePlain,
-      source: context?.source,
-      documentId: context?.documentId,
-      wordAudio: mineWordAudio,
-      sentenceAudio: mineSentenceAudio,
-    });
-    const { cardId } = mined;
-    if (mined.created && (mineWordAudio || mineSentenceAudio)) {
-      setAudio('fetching');
-      void mined.audio.then((a) => setAudio(a.word || a.sentence ? 'done' : 'none'));
+    if (!result || adding) return;
+    setAdding(true);
+    setAddError(null);
+    try {
+      const gloss = resolveGloss();
+      // Create a real note + card (deduped per term) and record the lookup in mined_words history.
+      const mined = await mineWord({
+        deckId,
+        term: result.query,
+        reading,
+        meaning: gloss,
+        sentence: context?.sentence,
+        sentencePlain: context?.sentencePlain,
+        source: context?.source,
+        documentId: context?.documentId,
+        wordAudio: mineWordAudio,
+        sentenceAudio: mineSentenceAudio,
+      });
+      if (mined.created && (mineWordAudio || mineSentenceAudio)) {
+        setAudio('fetching');
+        void mined.audio.then((a) => setAudio(a.word || a.sentence ? 'done' : 'none'));
+      }
+      setLastDeckId(deckId);
+      setPickerOpen(false);
+      if (mined.created) onMine?.({ term: result.query, reading, gloss, cardId: mined.cardId, deckId });
+      setAlready(!mined.created);
+      setAdded(true);
+    } catch (e) {
+      setAddError(`Couldn’t add the card: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setAdding(false);
     }
-    setLastDeckId(deckId);
-    setPickerOpen(false);
-    onMine?.({ term: result.query, reading, gloss, cardId, deckId });
-    setAdded(true);
   }
 
   function onAddClick() {
@@ -190,6 +260,7 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
         )}
       </div>
 
+      {addError && <div className="lk-error">{addError}</div>}
       {context?.sentencePlain && hasEntry && !added && (
         <div className="lk-sentence" lang="ja" title="Saved on the card">{context.sentencePlain}</div>
       )}
@@ -197,7 +268,7 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
       <div className="lk-foot">
         {added ? (
           <span className="lk-added">
-            <Icon.check s={18} /> Added to {targetDeck?.name ?? 'deck'}
+            <Icon.check s={18} /> {already ? 'Already in your cards' : `Added to ${targetDeck?.name ?? 'deck'}`}
             {audio === 'fetching' && <span className="lk-audio"> · getting audio…</span>}
             {audio === 'done' && <span className="lk-audio"> · audio added</span>}
           </span>
@@ -207,10 +278,10 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
               variant="primary"
               size="sm"
               style={{ flex: 1, justifyContent: 'center' }}
-              disabled={!hasEntry}
+              disabled={!hasEntry || adding}
               onClick={onAddClick}
             >
-              ＋ Add{targetDeck ? ` to ${targetDeck.name}` : ' to deck'}
+              {adding ? 'Adding…' : `＋ Add${targetDeck ? ` to ${targetDeck.name}` : ' to deck'}`}
             </Btn>
             <Btn size="sm" aria-label="Choose deck" title="Choose deck" disabled={!hasEntry} onClick={() => setPickerOpen(true)}>
               <Icon.decks s={16} />
@@ -222,13 +293,11 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
         )}
       </div>
 
-      {pickerOpen && (
-        <DeckPicker
-          currentDeckId={targetDeck?.id ?? null}
-          onPick={(id) => void addTo(id)}
-          onClose={() => setPickerOpen(false)}
-        />
-      )}
+      {pickerOpen &&
+        createPortal(
+          <DeckPicker currentDeckId={targetDeck?.id ?? null} onPick={(id) => void addTo(id)} onClose={() => setPickerOpen(false)} />,
+          document.body,
+        )}
     </div>
   );
 }

@@ -72,7 +72,7 @@ function upstreamMessage(status: number): string {
   if (status === 401 || status === 403) {
     return `The site refused this request (${status}) — the feed may now require a login, or have moved.`;
   }
-  if (status === 404 || status === 410) return `This feed no longer exists at that address (${status}).`;
+  if (status === 404 || status === 410) return `Nothing is at that address any more (${status}).`;
   if (status === 429) return 'The site is rate-limiting requests (429). Try again in a few minutes.';
   if (status >= 500) return `The site is having trouble right now (${status}).`;
   return `The site responded ${status}.`;

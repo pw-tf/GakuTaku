@@ -58,7 +58,7 @@ code#typeans { white-space: pre-wrap; font-variant-ligatures: none; display: blo
 .typeBad { color: black; background: #faa; }
 .typeMissed { color: black; background: #ccc; }
 .replay-button { text-decoration: none; display: inline-flex; vertical-align: middle; margin: 3px; }
-.replay-button svg { width: 40px; height: 40px; }
+.replay-button svg { width: 34px; height: 34px; }
 .replay-button svg circle { fill: #fff; stroke: #414141; }
 .replay-button svg path { fill: #414141; }
 .nightMode .replay-button svg circle { fill: #3a3a3a; stroke: #aaa; }

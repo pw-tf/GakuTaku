@@ -689,6 +689,14 @@ async function main() {
     const again = (await col.customStudy(DEFAULT_DECK_ID, { kind: 'cram', cram: 'all', limit: 1, includeTags: [], excludeTags: [] }))!;
     eq('custom study session reused', [again.id, again.count], [sess.id, 1]);
     eq('…named as in Anki', (await col.deck(sess.id))!.name, 'Custom Study Session');
+    await col.removeDeck(sess.id);
+
+    // Reviewing mined words: a session deck with exactly those cards, removed afterwards.
+    const mined = await col.cardSession('Mined Session', [b]);
+    eq('mined session holds exactly the mined card', [mined.count, (await col.card(b))!.did, (await col.card(a))!.did], [1, mined.id, DEFAULT_DECK_ID]);
+    eq('…and reschedules (answers count)', (await col.deck(mined.id))!.filtered?.reschedule, true);
+    await col.removeDeck(mined.id);
+    eq('…removing it sends the card home', [(await col.card(b))!.did, (await col.card(b))!.odid, await col.deck(mined.id)], [DEFAULT_DECK_ID, 0, null]);
   }
 
   if (failures) {

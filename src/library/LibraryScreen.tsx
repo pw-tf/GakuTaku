@@ -10,6 +10,7 @@ import { FeedsSection } from '../feeds/FeedsSection';
 import { getCover } from '../reader/bookCache';
 import { docKind, removeBook } from '../reader/addBook';
 import { ConfirmModal } from '../ui/Modal';
+import { useBackHandler } from '../app/back';
 import { FeedArticles } from '../feeds/FeedArticles';
 import type { FeedArticle } from '../feeds/parse';
 import type { FeedView } from '../feeds/useFeeds';
@@ -90,6 +91,7 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
   const busy = useImporting();
   // Drill-down into one feed's article list (survives opening/closing the article overlay).
   const [openFeed, setOpenFeed] = useState<FeedView | null>(null);
+  useBackHandler(openFeed != null, () => setOpenFeed(null));
   // The shelf shows one row until expanded, so a big library doesn't bury the Feeds section.
   const [showAllBooks, setShowAllBooks] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -124,7 +126,11 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
 
       <div className="lib-hero">
         <div className="cont-card" onClick={() => cont && onOpenBook(cont)} style={{ cursor: cont ? 'pointer' : 'default' }}>
-          <div className="cc-cover"><div className="sp" /></div>
+          {cont && covers.get(cont.id) ? (
+            <img className="cc-cover cc-img" src={covers.get(cont.id)} alt="" />
+          ) : (
+            <div className="cc-cover"><div className="sp" /></div>
+          )}
           <div className="cc-meta">
             <div className="k">{cont ? 'Continue reading' : 'Your reader'}</div>
             <div className="t" lang="ja">{cont?.title ?? 'Add your first book'}</div>
@@ -146,7 +152,7 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
           </div>
           <div style={{ marginTop: 'auto', display: 'flex', gap: 18, alignItems: 'center' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--accent)', fontWeight: 600, fontSize: 13 }}>
-              <Icon.flame s={16} /> {streak}-day streak
+              <Icon.flame s={16} /> {streak > 0 ? `${streak}-day streak` : 'Start a streak today'}
             </span>
           </div>
         </div>
@@ -156,8 +162,8 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
         <h2>Your library</h2>
         <span className="count">{docs.length} {docs.length === 1 ? 'book' : 'books'}</span>
         <span className="more" style={{ display: 'flex', gap: 8 }}>
-          <Btn size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
-            <Icon.upload s={15} /> {busy ? 'Working…' : 'Add book / Anki deck'}
+          <Btn size="sm" disabled={busy} title="Add a book (ePUB, PDF, TXT) or an Anki deck (.apkg, .colpkg)" onClick={() => fileRef.current?.click()}>
+            <Icon.upload s={15} /> {busy ? 'Working…' : 'Add file'}
           </Btn>
         </span>
       </div>

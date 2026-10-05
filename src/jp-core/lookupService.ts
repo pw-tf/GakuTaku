@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { jpCore } from './client';
 import type { FuriToken } from './worker';
 import type { LookupResult } from '../dictionary/types';
@@ -23,12 +23,18 @@ export function useLookup() {
     error: null,
   });
 
+  // Each lookup gets a number; a result that arrives after a newer lookup (or after close) is dropped,
+  // so a slow first lookup can't reopen a dismissed popup or show the wrong word.
+  const req = useRef(0);
+
   const lookupTerm = useCallback(async (term: string, anchor: DOMRect, basicForm?: string) => {
+    const id = ++req.current;
     setState({ result: null, loading: true, anchor, error: null });
     try {
       const result = await jpCore.lookup(term, basicForm);
-      setState({ result, loading: false, anchor, error: null });
+      if (id === req.current) setState({ result, loading: false, anchor, error: null });
     } catch (e) {
+      if (id !== req.current) return;
       setState({
         result: null,
         loading: false,
@@ -44,6 +50,7 @@ export function useLookup() {
   );
 
   const close = useCallback(() => {
+    req.current++;
     setState({ result: null, loading: false, anchor: null, error: null });
   }, []);
 
