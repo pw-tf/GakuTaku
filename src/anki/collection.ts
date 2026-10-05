@@ -96,6 +96,15 @@ export interface NoteRow {
   flds: string;
 }
 
+/** Cards (and notes) as they were before a card action, for undo. */
+export interface CardsSnapshot {
+  cids: number[];
+  cards: Record<string, unknown>[];
+  notes: Record<string, unknown>[];
+  /** Review-log entries newer than this (for these cards) were written by the action. */
+  revlogAfter: number;
+}
+
 /** Everything Anki's Card Info screen shows. */
 export interface CardInfo {
   card: Card;
@@ -554,6 +563,43 @@ export class Collection {
     const seen = new Map<string, string>();
     for (const r of rows) for (const t of tagList(r.tags)) if (!seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t);
     return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }
+
+  // ---- undo for card actions -----------------------------------------------------------------
+
+  /** Remember some cards (and notes) so a following action on them can be undone. */
+  async snapshot(cids: number[], nids: number[] = []): Promise<CardsSnapshot> {
+    const inList = (n: number) => Array.from({ length: n }, () => '?').join(',');
+    const cards = cids.length ? await this.sql.all<Record<string, unknown>>(`SELECT * FROM cards WHERE id IN (${inList(cids.length)})`, cids) : [];
+    const notes = nids.length ? await this.sql.all<Record<string, unknown>>(`SELECT * FROM notes WHERE id IN (${inList(nids.length)})`, nids) : [];
+    const [{ m }] = await this.sql.all<{ m: number | null }>('SELECT MAX(id) AS m FROM revlog');
+    return { cids, cards, notes, revlogAfter: m ?? 0 };
+  }
+
+  /** Put cards and notes back as a snapshot had them (bringing back deleted ones too). */
+  async restoreSnapshot(snap: CardsSnapshot): Promise<void> {
+    const upsert = (table: string, row: Record<string, unknown>): [string, unknown[]] => {
+      const cols = Object.keys(row);
+      return [`INSERT OR REPLACE INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, cols.map((c) => row[c])];
+    };
+    await this.sql.transaction(async (tx) => {
+      const statements: [string, unknown[]][] = [...snap.notes.map((n) => upsert('notes', n)), ...snap.cards.map((c) => upsert('cards', c))];
+      for (let i = 0; i < snap.cids.length; i += 500) {
+        const chunk = snap.cids.slice(i, i + 500);
+        statements.push([`DELETE FROM revlog WHERE id > ? AND cid IN (${chunk.map(() => '?').join(',')})`, [snap.revlogAfter, ...chunk]]);
+      }
+      if (statements.length) await tx.runBatch(statements);
+    });
+  }
+
+  /** Toggle Anki's "marked" tag on a note. Returns whether it is now marked. */
+  async toggleMark(nid: number): Promise<boolean> {
+    const note = await this.note(nid);
+    if (!note) return false;
+    const tags = tagList(note.tags);
+    const marked = tags.some((t) => t.toLowerCase() === 'marked');
+    await this.setNoteTags(nid, marked ? tags.filter((t) => t.toLowerCase() !== 'marked') : [...tags, 'marked']);
+    return !marked;
   }
 
   // ---- search ------------------------------------------------------------------------------

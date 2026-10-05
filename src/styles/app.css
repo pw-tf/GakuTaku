@@ -594,3 +594,13 @@ body { overflow: hidden; }
 /* NHK terms notice (feeds) */
 .nhk-agree { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 14px 16px; margin: 4px 0 20px; background: var(--paper-raised); }
 .nhk-agree p { margin: 0 0 10px; font-size: 14px; line-height: 1.6; color: var(--ink-soft); }
+
+/* Reviewer: marked star, answer timer */
+.rv-marked { display: inline-flex; color: var(--amber); }
+.rv-timer { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.rv-timer.capped { color: var(--rate-again); }
+.rv-top .rv-deck { min-width: 0; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
+@media (max-width: 520px) {
+  .rv-top { padding: 0 12px; gap: 10px; }
+  .rv-top .rv-deck { display: none; }
+}

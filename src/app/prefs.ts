@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { DEFAULT_GESTURES, type Gesture, type ReviewAction } from '../study/gestures';
 
 export type FuriganaDensity = 'all' | 'n3' | 'off';
 
@@ -26,6 +27,16 @@ interface PrefsState {
   mineWordAudio: boolean;
   /** Mining: record the sentence with the device's Japanese voice (Android app only). */
   mineSentenceAudio: boolean;
+  /** Reviewer: what each tap zone / swipe does. */
+  gestures: Record<Gesture, ReviewAction>;
+  /** Reviewer: show how long the current card has been on screen. */
+  showTimer: boolean;
+  /** Reviewer: card text size, as a fraction (1 = 100%). */
+  cardZoom: number;
+  setGesture: (g: Gesture, a: ReviewAction) => void;
+  resetGestures: () => void;
+  setShowTimer: (on: boolean) => void;
+  setCardZoom: (z: number) => void;
   setAccent: (a: string) => void;
   setDark: (d: boolean) => void;
   setFurigana: (f: FuriganaDensity) => void;
@@ -56,6 +67,13 @@ export const usePrefs = create<PrefsState>()(
       readerWidth: 'normal',
       mineWordAudio: true,
       mineSentenceAudio: true,
+      gestures: { ...DEFAULT_GESTURES },
+      showTimer: false,
+      cardZoom: 1,
+      setGesture: (g, a) => set((s) => ({ gestures: { ...s.gestures, [g]: a } })),
+      resetGestures: () => set({ gestures: { ...DEFAULT_GESTURES } }),
+      setShowTimer: (showTimer) => set({ showTimer }),
+      setCardZoom: (cardZoom) => set({ cardZoom }),
       setAccent: (accent) => set({ accent }),
       setDark: (dark) => set({ dark }),
       setFurigana: (furigana) => set({ furigana }),
@@ -72,6 +90,11 @@ export const usePrefs = create<PrefsState>()(
       version: 1,
       // v0 stored deck ids as UUID strings (pre-Anki schema); they no longer exist.
       migrate: (persisted) => ({ ...(persisted as object), lastDeckId: null }) as PrefsState,
+      // Gestures added later keep their defaults.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<PrefsState>;
+        return { ...current, ...p, gestures: { ...DEFAULT_GESTURES, ...(p.gestures ?? {}) } };
+      },
     },
   ),
 );

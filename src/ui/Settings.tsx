@@ -1,6 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ACCENTS, usePrefs } from '../app/prefs';
 import { BackupSection } from '../backup/BackupSection';
+import { ACTION_NAMES, GESTURE_NAMES, type Gesture, type ReviewAction } from '../study/gestures';
+import { Btn } from './atoms';
+import { Modal } from './Modal';
 
 interface ContentProps {
   onOpenCredits: () => void;
@@ -45,6 +48,8 @@ export function SettingsContent({ onOpenCredits }: ContentProps) {
           ))}
         </div>
       </div>
+
+      <ReviewSettings />
 
       <div className="set-sec">
         <div className="set-h">Mining</div>
@@ -111,5 +116,58 @@ export function Settings({ onClose, onOpenCredits }: Props) {
         }}
       />
     </div>
+  );
+}
+
+/** Reviewer preferences: timer, card text size and gestures. */
+function ReviewSettings() {
+  const { showTimer, cardZoom, setShowTimer, setCardZoom } = usePrefs();
+  const [gesturesOpen, setGesturesOpen] = useState(false);
+  return (
+    <div className="set-sec">
+      <div className="set-h">Review</div>
+      <div className="toggle-row">
+        <span>Show answer timer</span>
+        <input type="checkbox" checked={showTimer} onChange={(e) => setShowTimer(e.target.checked)} />
+      </div>
+      <div className="toggle-row" style={{ marginTop: 8 }}>
+        <span>Card text size</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input type="range" min={0.6} max={2} step={0.1} value={cardZoom} onChange={(e) => setCardZoom(Number(e.target.value))} aria-label="Card text size" />
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, width: 38, textAlign: 'right' }}>{Math.round(cardZoom * 100)}%</span>
+        </span>
+      </div>
+      <a style={{ display: 'inline-block', color: 'var(--accent)', fontSize: 13, cursor: 'pointer', fontWeight: 600, marginTop: 10 }} onClick={() => setGesturesOpen(true)}>
+        Gestures and tap zones →
+      </a>
+      {gesturesOpen && <GesturesModal onClose={() => setGesturesOpen(false)} />}
+    </div>
+  );
+}
+
+const GESTURE_ORDER: Gesture[] = ['tap', 'tapTop', 'tapBottom', 'tapLeft', 'tapRight', 'swipeLeft', 'swipeRight', 'swipeUp', 'swipeDown'];
+
+function GesturesModal({ onClose }: { onClose: () => void }) {
+  const { gestures, setGesture, resetGestures } = usePrefs();
+  return (
+    <Modal title="Review gestures" onClose={onClose}>
+      <div className="modal-body">
+        <p className="muted" style={{ marginTop: 0, fontSize: 13, lineHeight: 1.5 }}>
+          What a tap or swipe on the card does. The tap zones are the card’s top and bottom quarters and its left and right edges. On the question side, an answer gesture shows the answer first.
+        </p>
+        {GESTURE_ORDER.map((g) => (
+          <label key={g} className="opt-field" style={{ padding: '5px 0' }}>
+            <span>{GESTURE_NAMES[g]}</span>
+            <select value={gestures[g]} onChange={(e) => setGesture(g, e.target.value as ReviewAction)}>
+              {(Object.keys(ACTION_NAMES) as ReviewAction[]).map((a) => <option key={a} value={a}>{ACTION_NAMES[a]}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+      <div className="modal-foot">
+        <Btn onClick={resetGestures}>Reset</Btn>
+        <Btn variant="primary" onClick={onClose}>Done</Btn>
+      </div>
+    </Modal>
   );
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { col } from '../anki/appCollection';
-import type { AnswerUndo, StudyCard } from '../anki/collection';
+import type { AnswerUndo, CardsSnapshot, StudyCard } from '../anki/collection';
 import type { CardQueues, Counts, EntryKind } from '../anki/queue';
 import { asSeconds, intervalKind, maybeAsDays } from '../anki/states';
 import { compareAnswer, renderCard, typeAnswerExpected, type RenderedCard } from '../anki/template';
@@ -37,13 +37,28 @@ export interface StudyState {
   nextLearningAt: number | null;
   reviewedCount: number;
   canUndo: boolean;
+  /** What Undo would undo ("Answer", "Bury", …). */
+  undoLabel: string | null;
+  /** When the current card was shown (epoch ms), for the answer timer. */
+  shownAt: number;
   /** Bumped when the current card's content changes (e.g. after an edit). */
   version: number;
 }
 
-interface UndoEntry {
-  undo: AnswerUndo;
-  snapshot: ReturnType<CardQueues['snapshot']>;
+type UndoEntry =
+  | { kind: 'answer'; label: string; undo: AnswerUndo; snapshot: ReturnType<CardQueues['snapshot']> }
+  | { kind: 'action'; label: string; cards: CardsSnapshot; snapshot: ReturnType<CardQueues['snapshot']> };
+
+const TYPE_MARKER = /\[\[type:[^\]]+\]\]/g;
+const TYPE_INPUT = '<input type="text" id="typeans" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+
+/** The question side, with Anki's type-in box. */
+const questionHtml = (r: RenderedCard) => r.question.replace(TYPE_MARKER, TYPE_INPUT);
+
+/** The answer side, with the typed answer compared against the expected one. */
+function answerHtml(r: RenderedCard, card: StudyCard, typed: string): string {
+  if (!/\[\[type:/.test(r.answer)) return r.answer;
+  return r.answer.replace(TYPE_MARKER, (marker) => compareAnswer(typeAnswerExpected(marker, card.notetype, card.note.flds, card.prepared.card.ord), typed.trim()));
 }
 
 const EMPTY_COUNTS: Counts = { new: 0, learning: 0, review: 0 };
@@ -51,7 +66,7 @@ const EMPTY_COUNTS: Counts = { new: 0, learning: 0, review: 0 };
 export function useStudy(deckId: number) {
   const [state, setState] = useState<StudyState>({
     loading: true, error: null, card: null, kind: null, rendered: null, html: '', shown: false, counts: EMPTY_COUNTS,
-    buttonLabels: [], nextLearningAt: null, reviewedCount: 0, canUndo: false, version: 0,
+    buttonLabels: [], nextLearningAt: null, reviewedCount: 0, canUndo: false, undoLabel: null, shownAt: Date.now(), version: 0,
   });
   const queues = useRef<CardQueues | null>(null);
   const undoStack = useRef<UndoEntry[]>([]);
@@ -62,12 +77,19 @@ export function useStudy(deckId: number) {
   const reviewed = useRef(0);
   const autoplay = useRef(true);
   const colConfig = useRef<CollectionConfig>(defaultCollectionConfig());
+  const stateRef = useRef(state);
+  stateRef.current = state;
   /** Answers being saved, in order. */
   const pendingWrites = useRef<Promise<unknown>>(Promise.resolve());
   /** The card expected after the current one, loaded in the background. */
   const prefetch = useRef<{ id: number; promise: Promise<StudyCard | null> } | null>(null);
   /** Queues of cards changed this session, newer than any prefetched copy of them. */
   const knownQueue = useRef(new Map<number, number>());
+
+  const undoInfo = () => {
+    const top = undoStack.current[undoStack.current.length - 1];
+    return { canUndo: !!top, undoLabel: top?.label ?? null };
+  };
 
   /** Load the next card from the queue (or the "done" state). `fresh` skips the prefetch for that card. */
   const showNext = useCallback(async (fresh?: number): Promise<void> => {
@@ -86,7 +108,7 @@ export function useStudy(deckId: number) {
     const entry = queues.current!.next(t.now);
     if (!entry) {
       stopAudio();
-      setState((s) => ({ ...s, loading: false, card: null, kind: null, rendered: null, html: '', shown: false, counts, nextLearningAt: queues.current!.nextLearningDue(), canUndo: undoStack.current.length > 0, reviewedCount: reviewed.current }));
+      setState((s) => ({ ...s, loading: false, card: null, kind: null, rendered: null, html: '', shown: false, counts, nextLearningAt: queues.current!.nextLearningDue(), ...undoInfo(), reviewedCount: reviewed.current }));
       return;
     }
     const pre = prefetch.current;
@@ -111,10 +133,10 @@ export function useStudy(deckId: number) {
     typed.current = '';
     shownAt.current = Date.now();
     autoplay.current = !study.config.disableAutoplay;
-    const html = rendered.question.replace(/\[\[type:[^\]]+\]\]/g, '<input type="text" id="typeans" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">');
+    const html = questionHtml(rendered);
     setState((s) => ({
       ...s, loading: false, error: null, card: study, kind: entry.kind, rendered, html, shown: false, counts, buttonLabels,
-      nextLearningAt: null, canUndo: undoStack.current.length > 0, reviewedCount: reviewed.current, version: s.version + 1,
+      nextLearningAt: null, ...undoInfo(), reviewedCount: reviewed.current, shownAt: shownAt.current, version: s.version + 1,
     }));
     if (autoplay.current) void playAudio(rendered.questionAv);
 
@@ -170,12 +192,7 @@ export function useStudy(deckId: number) {
   const reveal = useCallback(() => {
     setState((s) => {
       if (!s.card || !s.rendered || s.shown) return s;
-      let html = s.rendered.answer;
-      if (/\[\[type:/.test(html)) {
-        html = html.replace(/\[\[type:[^\]]+\]\]/g, (marker) =>
-          compareAnswer(typeAnswerExpected(marker, s.card!.notetype, s.card!.note.flds, s.card!.prepared.card.ord), typed.current.trim()),
-        );
-      }
+      const html = answerHtml(s.rendered, s.card, typed.current);
       if (autoplay.current) void playAudio(s.rendered.answerAv);
       return { ...s, shown: true, html, version: s.version + 1 };
     });
@@ -207,9 +224,7 @@ export function useStudy(deckId: number) {
           .then(() => col.commitAnswer(plan))
           .then(
             ({ undo }) => {
-              undoStack.current.push({ undo, snapshot });
-              if (undoStack.current.length > 30) undoStack.current.shift();
-              setState((st) => ({ ...st, canUndo: true }));
+              pushUndo({ kind: 'answer', label: 'Answer', undo, snapshot });
             },
             (e: unknown) => setState((st) => ({ ...st, error: `Couldn’t save that answer: ${e instanceof Error ? e.message : String(e)}` })),
           );
@@ -230,17 +245,62 @@ export function useStudy(deckId: number) {
       await pendingWrites.current;
       const entry = undoStack.current.pop();
       if (!entry) return;
-      await col.undoAnswer(entry.undo);
+      if (entry.kind === 'answer') {
+        await col.undoAnswer(entry.undo);
+        reviewed.current = Math.max(0, reviewed.current - 1);
+      } else {
+        await col.restoreSnapshot(entry.cards);
+      }
       // Anything loaded ahead may now be out of date.
       prefetch.current = null;
       knownQueue.current.clear();
       queues.current?.restore(entry.snapshot);
-      reviewed.current = Math.max(0, reviewed.current - 1);
       await showNext();
     } finally {
       busy.current = false;
     }
   }, [showNext]);
+
+  function pushUndo(entry: UndoEntry) {
+    undoStack.current.push(entry);
+    if (undoStack.current.length > 30) undoStack.current.shift();
+    setState((st) => ({ ...st, ...undoInfo() }));
+  }
+
+  /**
+   * A card action that can be undone (bury, suspend, flag, mark, forget, set due, delete): the
+   * affected cards (and notes) are remembered first. Cards in `leave` drop out of this session;
+   * otherwise the current card is reloaded to show the change. Resolves to an error message if the
+   * action failed (nothing is then recorded for undo).
+   */
+  const perform = useCallback(
+    async (label: string, action: () => Promise<unknown>, opts: { cids: number[]; nids?: number[]; leave?: number[] }): Promise<string | undefined> => {
+      if (busy.current || !queues.current) return undefined;
+      busy.current = true;
+      try {
+        await pendingWrites.current;
+        const cards = await col.snapshot(opts.cids, opts.nids);
+        const snapshot = queues.current.snapshot();
+        await action();
+        pushUndo({ kind: 'action', label, cards, snapshot });
+        prefetch.current = null;
+        knownQueue.current.clear();
+        if (opts.leave?.length) {
+          queues.current.remove(new Set(opts.leave));
+          await showNext();
+        } else {
+          await reloadCurrent();
+        }
+        return undefined;
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e);
+      } finally {
+        busy.current = false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showNext],
+  );
 
   /** After an action removed cards (bury/suspend/forget/delete/set due): drop them and continue. */
   const removeFromSession = useCallback(
@@ -252,18 +312,24 @@ export function useStudy(deckId: number) {
   );
 
   /** Re-render the current card (after editing its note or changing its flag). */
-  const refreshCurrent = useCallback(async () => {
-    const s = state;
-    if (!s.card) return;
-    const study = await col.studyCard(s.card.prepared.card.id);
-    if (!study) return removeFromSession([s.card.prepared.card.id]);
+  const refreshCurrent = useCallback(() => reloadCurrent(), []);
+
+  /** Reload the current card from the database, keeping the side shown and its timing. */
+  async function reloadCurrent(): Promise<void> {
+    const cur = stateRef.current.card;
+    if (!cur) return;
+    const study = await col.studyCard(cur.prepared.card.id);
+    if (!study) {
+      queues.current?.remove(new Set([cur.prepared.card.id]));
+      return showNext();
+    }
     const rendered = renderCard({ notetype: study.notetype, flds: study.note.flds, ord: study.prepared.card.ord, tags: study.note.tags, deckName: study.deck.name, flags: study.prepared.card.flags, cardId: study.prepared.card.id });
     setState((st) => ({
       ...st, card: study, rendered,
-      html: st.shown ? rendered.answer : rendered.question.replace(/\[\[type:[^\]]+\]\]/g, '<input type="text" id="typeans">'),
+      html: st.shown ? answerHtml(rendered, study, typed.current) : questionHtml(rendered),
       version: st.version + 1,
     }));
-  }, [state, removeFromSession]);
+  }
 
   const setTyped = useCallback((v: string) => {
     typed.current = v;
@@ -286,5 +352,5 @@ export function useStudy(deckId: number) {
     [state.rendered],
   );
 
-  return { state, reveal, answer, undo, removeFromSession, refreshCurrent, setTyped, replay, playRef };
+  return { state, reveal, answer, undo, perform, removeFromSession, refreshCurrent, setTyped, replay, playRef };
 }
