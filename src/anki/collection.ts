@@ -4,7 +4,7 @@ import { compareDeckNames, parentName } from './limits';
 import { buildQueues, WHOLE_COLLECTION, type CardQueues, type QueueCard } from './queue';
 import { timingAt, type Timing } from './timing';
 import { fsrsItemsForTraining, ignoreBeforeMs, memoryStateFromHistory, prepareParameters, retrievability, type FsrsItem } from './fsrs';
-import { compileSearch, sortSql, type SearchContext, type SortColumn } from './search';
+import { compileSearch, deckSearch, sortSql, type SearchContext, type SortColumn } from './search';
 import { stripHtmlText } from '../db/sqlFunctions';
 import { FIELD_SEP, joinFields, sortFieldValue, splitFields, type Notetype } from './notetype';
 import { generatedOrdinals } from './template';
@@ -12,6 +12,7 @@ import {
   CardQueue,
   CardType,
   defaultCollectionConfig,
+  defaultFilteredConfig,
   normalizeDeckConfig,
   RevlogKind,
   type Card,
@@ -19,6 +20,8 @@ import {
   type DayLimit,
   type Deck,
   type DeckConfig,
+  type FilteredDeckConfig,
+  type FilteredOrder,
   type Rating,
   type RevlogEntry,
 } from './types';
@@ -61,6 +64,18 @@ interface DeckRow {
   review_studied: number;
   learning_studied: number;
   ms_studied: number;
+  filtered?: string | null;
+}
+
+function parseFiltered(text: string | null | undefined): FilteredDeckConfig | null {
+  if (!text) return null;
+  try {
+    const v = JSON.parse(text) as Partial<FilteredDeckConfig>;
+    const d = defaultFilteredConfig();
+    return { ...d, ...v, terms: Array.isArray(v.terms) && v.terms.length ? v.terms.slice(0, 2) : d.terms };
+  } catch {
+    return null;
+  }
 }
 
 function parseDayLimit(text: string | null): DayLimit | null {
@@ -79,6 +94,7 @@ export function deckFromRow(r: DeckRow): Deck {
     collapsed: !!r.collapsed,
     review_limit_today: parseDayLimit(r.review_limit_today),
     new_limit_today: parseDayLimit(r.new_limit_today),
+    filtered: parseFiltered(r.filtered),
   };
 }
 
@@ -184,6 +200,40 @@ function randomGuid(): string {
   for (const b of bytes) out += chars[b % chars.length];
   return out;
 }
+
+/** Anki's Custom Study choices. */
+export type CustomStudyRequest =
+  | { kind: 'newLimit'; delta: number }
+  | { kind: 'reviewLimit'; delta: number }
+  | { kind: 'forgot'; days: number }
+  | { kind: 'ahead'; days: number }
+  | { kind: 'preview'; days: number }
+  | { kind: 'cram'; cram: 'new' | 'due' | 'review' | 'all'; limit: number; includeTags: string[]; excludeTags: string[] };
+
+/** ORDER BY for a filtered deck search (Anki `order_and_limit_for_search`). */
+function filteredOrderSql(order: FilteredOrder, t: Timing): string {
+  switch (order) {
+    case 'oldestSeen':
+      return '(SELECT MAX(id) FROM revlog WHERE cid = c.id)';
+    case 'random':
+      return 'random()';
+    case 'ivlAsc':
+      return 'c.ivl';
+    case 'ivlDesc':
+      return 'c.ivl DESC';
+    case 'lapses':
+      return 'c.lapses DESC';
+    case 'added':
+      return 'n.id, c.ord';
+    case 'reverseAdded':
+      return 'n.id DESC, c.ord ASC';
+    case 'due':
+      return `(CASE WHEN c.due > 1000000000 THEN c.due ELSE (c.due - ${t.today}) * 86400 + ${t.now} END), c.ord`;
+  }
+}
+
+/** A tag or name for a search term, quoted if it has spaces. */
+const quoteTerm = (s: string) => (/[\s()"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s);
 
 /** A field as Anki's duplicate check compares it (same as the strip_html SQL function). */
 const stripForDupe = stripHtmlText;
@@ -392,18 +442,204 @@ export class Collection {
     });
   }
 
-  /** Delete a deck, its subdecks, and their cards (notes left without cards go too). Review history is kept, as in Anki. */
+  /**
+   * Delete a deck, its subdecks, and their cards (notes left without cards go too). Review history is
+   * kept, as in Anki. A filtered deck's cards go back to their own decks instead.
+   */
   async removeDeck(id: number): Promise<void> {
     await this.sql.transaction(async (tx) => {
       const deck = await this.deck(id, tx);
       if (!deck) return;
       const ids = (await this.decks(tx)).filter((d) => d.id === id || d.name.toLowerCase().startsWith(deck.name.toLowerCase() + '::')).map((d) => d.id);
       const ph = ids.map(() => '?').join(',');
-      const nids = (await tx.all<{ nid: number }>(`SELECT DISTINCT nid FROM cards WHERE did IN (${ph})`, ids)).map((r) => r.nid);
-      await tx.run(`DELETE FROM cards WHERE did IN (${ph})`, ids);
+      // Cards borrowed by filtered decks being deleted go home first.
+      await this.returnCardsHome(tx, `did IN (${ph})`, ids);
+      const where = `did IN (${ph}) OR odid IN (${ph})`;
+      const nids = (await tx.all<{ nid: number }>(`SELECT DISTINCT nid FROM cards WHERE ${where}`, [...ids, ...ids])).map((r) => r.nid);
+      await tx.run(`DELETE FROM cards WHERE ${where}`, [...ids, ...ids]);
       await this.removeOrphanNotes(tx, nids);
       await tx.run(`DELETE FROM decks WHERE id IN (${ph})`, ids);
     });
+  }
+
+  // ---- filtered decks (rslib/src/scheduler/filtered) ------------------------------------------
+
+  /**
+   * Put cards in filtered decks back in their own decks with their old due dates (Anki
+   * `remove_from_filtered_deck_restoring_queue`). `where` selects among cards.
+   */
+  private async returnCardsHome(tx: Sql, where: string, params: unknown[]): Promise<void> {
+    // SET expressions all see the row as it was, so `due`/`odue` below are the pre-update values.
+    await tx.run(
+      `UPDATE cards SET
+         did = odid,
+         odid = 0,
+         due = CASE WHEN odue != 0 THEN odue ELSE due END,
+         queue = CASE
+           WHEN queue < 0 THEN queue
+           WHEN type IN (1, 3) THEN (CASE WHEN (CASE WHEN odue != 0 THEN odue ELSE due END) > 1000000000 THEN 1 ELSE 3 END)
+           WHEN type = 0 THEN 0
+           ELSE 2 END,
+         odue = 0,
+         mod = ?
+       WHERE odid != 0 AND (${where})`,
+      [nowSecs(), ...params],
+    );
+  }
+
+  /** Move a filtered deck's cards back to their own decks (Anki "Empty"). */
+  async emptyFilteredDeck(id: number): Promise<void> {
+    await this.sql.transaction((tx) => this.returnCardsHome(tx, 'did = ?', [id]));
+  }
+
+  /** Empty and refill a filtered deck from its searches (Anki "Rebuild"). Returns the card count. */
+  async rebuildFilteredDeck(id: number, nowMs = Date.now()): Promise<number> {
+    return this.sql.transaction(async (tx) => {
+      const deck = await this.deck(id, tx);
+      if (!deck?.filtered) throw new Error('Not a filtered deck.');
+      return this.fillFilteredDeck(tx, deck, nowMs);
+    });
+  }
+
+  private async fillFilteredDeck(tx: Sql, deck: Deck, nowMs: number): Promise<number> {
+    const cfg = deck.filtered!;
+    await this.returnCardsHome(tx, 'did = ?', [deck.id]);
+    const colCfg = await this.config(tx);
+    const t = timingAt(nowMs, colCfg.rollover);
+    const [decks, notetypes] = await Promise.all([this.decks(tx), this.notetypes(tx)]);
+    const ctx: SearchContext = { decks, notetypes, today: t.today, nextDayAt: t.nextDayAt, nowSecs: t.now, learnAheadSecs: colCfg.learnAheadSecs };
+    const start = -100_000;
+    let position = start;
+    for (const term of cfg.terms.slice(0, 2)) {
+      // Anki: suspended, buried and already-filtered cards are never pulled in.
+      const { where, params } = compileSearch(`${term.search.trim() ? `(${term.search}) ` : ''}-is:suspended -is:buried -deck:filtered`, ctx);
+      const rows = await tx.all<{ id: number }>(
+        `SELECT c.id FROM cards c JOIN notes n ON n.id = c.nid WHERE ${where} ORDER BY ${filteredOrderSql(term.order, t)}, c.id LIMIT ${Math.max(0, Math.floor(term.limit))}`,
+        params,
+      );
+      const mod = nowSecs();
+      const statements: [string, unknown[]][] = rows.map((r) => [
+        // Anki `move_into_filtered_deck`: remember the home deck and due; without rescheduling every
+        // card waits in the review queue; positive dues become the build order.
+        `UPDATE cards SET odid = did, did = ?, odue = due, queue = CASE WHEN ? THEN queue ELSE 2 END, due = CASE WHEN due > 0 THEN ? ELSE due END, mod = ? WHERE id = ? AND odid = 0`,
+        [deck.id, cfg.reschedule ? 1 : 0, position++, mod, r.id],
+      ]);
+      if (statements.length) await tx.runBatch(statements);
+    }
+    return position - start;
+  }
+
+  /**
+   * Create a filtered deck and fill it. Throws (creating nothing) when the searches are invalid or
+   * match no cards, as Anki does.
+   */
+  async addFilteredDeck(rawName: string, cfg: FilteredDeckConfig, nowMs = Date.now()): Promise<{ id: number; count: number }> {
+    const name = normalizeDeckName(rawName);
+    if (!name) throw new Error('Deck name can’t be empty.');
+    return this.sql.transaction(async (tx) => {
+      const [clash] = await tx.all<{ id: number }>('SELECT id FROM decks WHERE name = ?', [name]);
+      if (clash) throw new Error('A deck with that name already exists.');
+      const parent = parentName(name);
+      if (parent) {
+        const pid = await this.getOrCreateDeck(parent, tx);
+        if ((await this.deck(pid, tx))?.filtered) throw new Error('A filtered deck can’t contain other decks.');
+      }
+      const id = await freshId(tx, 'decks');
+      await tx.run('INSERT INTO decks (id, name, conf_id, collapsed, filtered, mtime) VALUES (?, ?, 0, 0, ?, ?)', [id, name, JSON.stringify(cfg), nowSecs()]);
+      const count = await this.fillFilteredDeck(tx, (await this.deck(id, tx))!, nowMs);
+      if (count === 0) throw new Error('No cards matched the search. Try a different search, or check that the cards aren’t suspended or buried.');
+      return { id, count };
+    });
+  }
+
+  /** Change a filtered deck's name and settings, and rebuild it (unchanged if nothing matches). */
+  async updateFilteredDeck(id: number, rawName: string, cfg: FilteredDeckConfig, nowMs = Date.now()): Promise<number> {
+    const name = normalizeDeckName(rawName);
+    if (!name) throw new Error('Deck name can’t be empty.');
+    return this.sql.transaction(async (tx) => {
+      const deck = await this.deck(id, tx);
+      if (!deck?.filtered) throw new Error('Not a filtered deck.');
+      const [clash] = await tx.all<{ id: number }>('SELECT id FROM decks WHERE name = ? AND id != ?', [name, id]);
+      if (clash) throw new Error('A deck with that name already exists.');
+      await tx.run('UPDATE decks SET name = ?, filtered = ?, mtime = ? WHERE id = ?', [name, JSON.stringify(cfg), nowSecs(), id]);
+      const count = await this.fillFilteredDeck(tx, { ...deck, name, filtered: cfg }, nowMs);
+      if (count === 0) throw new Error('No cards matched the search. Try a different search, or check that the cards aren’t suspended or buried.');
+      return count;
+    });
+  }
+
+  /**
+   * Anki's Custom Study: more new or review cards today for a deck, or a "Custom Study Session"
+   * filtered deck (reusing it if one exists).
+   */
+  async customStudy(deckId: number, req: CustomStudyRequest, nowMs = Date.now()): Promise<{ id: number; count: number } | null> {
+    const deck = await this.deck(deckId);
+    if (!deck || deck.filtered) throw new Error('Custom study works on normal decks.');
+    if (req.kind === 'newLimit' || req.kind === 'reviewLimit') {
+      const cfg = await this.config();
+      const t = timingAt(nowMs, cfg.rollover);
+      await this.sql.transaction(async (tx) => {
+        const targets = [deck, ...(cfg.applyAllParentLimits ? (await this.decks(tx)).filter((d) => deck.name.toLowerCase().startsWith(d.name.toLowerCase() + '::')) : [])];
+        for (const d of targets) {
+          // Anki `extend_limits`: today's studied counts go down, so more cards fit under the limit.
+          const fresh = d.last_day_studied === t.today;
+          const newStudied = (fresh ? d.new_studied : 0) - (req.kind === 'newLimit' ? req.delta : 0);
+          const reviewStudied = (fresh ? d.review_studied : 0) - (req.kind === 'reviewLimit' ? req.delta : 0);
+          await tx.run('UPDATE decks SET last_day_studied = ?, new_studied = ?, review_studied = ?, learning_studied = ?, ms_studied = ?, mtime = ? WHERE id = ?', [
+            t.today, newStudied, reviewStudied, fresh ? d.learning_studied : 0, fresh ? d.ms_studied : 0, nowSecs(), d.id,
+          ]);
+        }
+      });
+      return null;
+    }
+    const search = deckSearch(deck.name);
+    let cfg: FilteredDeckConfig;
+    const session = (reschedule: boolean, s: string, order: FilteredOrder, limit = 99_999): FilteredDeckConfig => ({
+      ...defaultFilteredConfig(),
+      reschedule,
+      terms: [{ search: s, limit, order }],
+    });
+    switch (req.kind) {
+      case 'forgot':
+        cfg = session(false, `rated:${req.days}:1 ${search}`, 'random');
+        break;
+      case 'ahead':
+        cfg = session(true, `prop:due<=${req.days} ${search}`, 'due');
+        break;
+      case 'preview':
+        cfg = session(false, `is:new added:${req.days} ${search}`, 'added');
+        break;
+      case 'cram': {
+        const kind = req.cram === 'new' ? 'is:new' : req.cram === 'due' ? 'is:due' : req.cram === 'review' ? '-is:new' : '';
+        const include = req.includeTags.length ? `(${req.includeTags.map((t) => `tag:${quoteTerm(t)}`).join(' or ')})` : '';
+        const exclude = req.excludeTags.map((t) => `-tag:${quoteTerm(t)}`).join(' ');
+        const order: FilteredOrder = req.cram === 'new' ? 'added' : req.cram === 'due' ? 'due' : 'random';
+        cfg = session(req.cram !== 'all', [kind, search, include, exclude].filter(Boolean).join(' '), order, req.limit);
+        break;
+      }
+    }
+    const name = 'Custom Study Session';
+    const [existing] = await this.sql.all<{ id: number; filtered: string | null }>('SELECT id, filtered FROM decks WHERE name = ?', [name]);
+    if (existing && !existing.filtered) throw new Error('Rename the deck called “Custom Study Session” first: custom study uses that name.');
+    if (existing) return { id: existing.id, count: await this.updateFilteredDeck(existing.id, name, cfg, nowMs) };
+    return this.addFilteredDeck(name, cfg, nowMs);
+  }
+
+  /** Counts for the Custom Study dialog (Anki `custom_study_defaults`): what's left beyond today's limits. */
+  async customStudyInfo(deckId: number, nowMs = Date.now()): Promise<{ newAvailable: number; reviewAvailable: number; tags: string[] }> {
+    const deck = await this.deck(deckId);
+    if (!deck) return { newAvailable: 0, reviewAvailable: 0, tags: [] };
+    const t = await this.timing(nowMs);
+    const ids = (await this.decks()).filter((d) => d.id === deckId || d.name.toLowerCase().startsWith(deck.name.toLowerCase() + '::')).map((d) => d.id);
+    const ph = ids.map(() => '?').join(',');
+    const [row] = await this.sql.all<{ n: number; r: number }>(
+      `SELECT SUM(queue = 0) AS n, SUM(queue IN (2, 3) AND due <= ?) AS r FROM cards WHERE did IN (${ph})`,
+      [t.today, ...ids],
+    );
+    const tagRows = await this.sql.all<{ tags: string }>(`SELECT DISTINCT n.tags FROM notes n JOIN cards c ON c.nid = n.id WHERE c.did IN (${ph}) AND trim(n.tags) != ''`, ids);
+    const tags = new Map<string, string>();
+    for (const r of tagRows) for (const tag of tagList(r.tags)) if (!tags.has(tag.toLowerCase())) tags.set(tag.toLowerCase(), tag);
+    return { newAvailable: row?.n ?? 0, reviewAvailable: row?.r ?? 0, tags: [...tags.values()].sort((a, b) => a.localeCompare(b)) };
   }
 
   async updateDeck(id: number, patch: Partial<Pick<Deck, 'conf_id' | 'description' | 'review_limit' | 'new_limit' | 'review_limit_today' | 'new_limit_today' | 'desired_retention' | 'collapsed'>>): Promise<void> {
@@ -873,9 +1109,18 @@ export class Collection {
     await this.sql.run(`UPDATE cards SET flags = (flags & ~7) | ?, mod = ? WHERE id IN (${ph})`, [flag & 7, nowSecs(), ...cids]);
   }
 
+  /** Move cards to a deck (Anki `set_deck`: cards in a filtered deck leave it first). */
   async moveCards(cids: number[], deckId: number): Promise<void> {
     if (!cids.length) return;
-    await this.sql.run(`UPDATE cards SET did = ?, mod = ? WHERE id IN (${cids.map(() => '?').join(',')})`, [deckId, nowSecs(), ...cids]);
+    if ((await this.deck(deckId))?.filtered) throw new Error('Cards can’t be moved into a filtered deck; it fills itself from its search.');
+    await this.sql.transaction(async (tx) => {
+      for (let i = 0; i < cids.length; i += 500) {
+        const chunk = cids.slice(i, i + 500);
+        const ph = chunk.map(() => '?').join(',');
+        await this.returnCardsHome(tx, `id IN (${ph})`, chunk);
+        await tx.run(`UPDATE cards SET did = ?, mod = ? WHERE id IN (${ph})`, [deckId, nowSecs(), ...chunk]);
+      }
+    });
   }
 
   /** Delete cards; notes left with none are deleted too. */
@@ -901,6 +1146,7 @@ export class Collection {
   /** Anki "Forget" (`reschedule_cards_as_new`): back to new at the end of the new queue. */
   async forget(cids: number[], opts: { resetCounts: boolean; restorePosition: boolean }): Promise<void> {
     await this.sql.transaction(async (tx) => {
+      if (cids.length) await this.returnCardsHome(tx, `id IN (${cids.map(() => '?').join(',')})`, cids);
       for (const id of cids) {
         const c = await this.card(id, tx);
         if (!c) continue;
@@ -940,6 +1186,8 @@ export class Collection {
     const configs = await this.deckConfigMap();
     const decks = new Map((await this.decks()).map((d) => [d.id, d]));
     await this.sql.transaction(async (tx) => {
+      // Rescheduled cards leave any filtered deck (Anki `remove_from_filtered_deck_before_reschedule`).
+      if (cids.length) await this.returnCardsHome(tx, `id IN (${cids.map(() => '?').join(',')})`, cids);
       for (const id of cids) {
         const c = await this.card(id, tx);
         if (!c) continue;
@@ -1030,15 +1278,17 @@ export class Collection {
     const cfg = await this.config();
     const deck = (await this.deck(card.did)) ?? null;
     if (!deck) return null;
+    // A card in a filtered deck is scheduled with its own deck's preset.
+    const home = card.odid ? ((await this.deck(card.odid)) ?? deck) : deck;
     const configs = await this.deckConfigMap();
-    const config = configs.get(deck.conf_id) ?? configs.get(DEFAULT_CONFIG_ID) ?? normalizeDeckConfig(null);
+    const config = configs.get(home.conf_id) ?? configs.get(DEFAULT_CONFIG_ID) ?? normalizeDeckConfig(null);
     const needsHistory = cfg.fsrs && card.type !== CardType.New && (card.stability == null || card.last_review == null);
     const revlog = needsHistory ? await this.sql.all<RevlogEntry>('SELECT * FROM revlog WHERE cid = ? ORDER BY id', [card.id]) : undefined;
     const note = await this.note(card.nid);
     const notetype = note ? await this.notetype(note.mid) : null;
     if (!note || !notetype) return null;
     const siblings = await this.sql.all<{ id: number; queue: number }>('SELECT id, queue FROM cards WHERE nid = ? AND id != ?', [card.nid, card.id]);
-    const desiredRetention = deck.desired_retention ?? config.desiredRetention;
+    const desiredRetention = home.desired_retention ?? config.desiredRetention;
     const base = { deck, config, desiredRetention, note, notetype, original: card, revlog, siblings, colConfig: cfg };
     return { ...base, prepared: this.prepare(base, nowMs) };
   }
@@ -1054,6 +1304,7 @@ export class Collection {
       fsrs: cfg.fsrs,
       fsrsShortTermWithSteps: cfg.fsrsShortTermWithSteps,
       revlog: s.revlog,
+      filtered: s.original.odid ? s.deck.filtered : null,
     });
   }
 

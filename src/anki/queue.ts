@@ -99,7 +99,7 @@ export interface QueueBuildInput {
 export const WHOLE_COLLECTION = 0;
 
 function syntheticRoot(): Deck {
-  return {
+  return { filtered: null,
     id: WHOLE_COLLECTION, name: '', conf_id: -1, description: '', review_limit: null, new_limit: null, review_limit_today: null,
     new_limit_today: null, desired_retention: null, collapsed: false, last_day_studied: 0, new_studied: 0, review_studied: 0,
     learning_studied: 0, ms_studied: 0,
@@ -207,7 +207,8 @@ export function buildQueues(input: QueueBuildInput): CardQueues {
   const rootCfg = configs.get(root.conf_id);
   const sort = {
     newGather: rootCfg?.newCardGatherPriority ?? 'deck',
-    newSort: rootCfg?.newCardSortOrder ?? 'template',
+    // Filtered decks keep the order they were built in (Anki: no sorting without a preset).
+    newSort: rootCfg?.newCardSortOrder ?? (root.filtered ? 'noSort' : 'template'),
     reviewOrder: rootCfg?.reviewOrder ?? 'day',
     dayLearnMix: rootCfg?.interdayLearningMix ?? 'mix',
     newMix: rootCfg?.newMix ?? 'mix',

@@ -127,9 +127,11 @@ export function useStudy(deckId: number) {
     const rendered = renderCard({ notetype: study.notetype, flds: study.note.flds, ord: study.prepared.card.ord, tags: study.note.tags, deckName, flags: study.prepared.card.flags, cardId: study.prepared.card.id });
     const rollover = t.nextDayAt - t.now;
     const states = study.prepared.states;
-    const buttonLabels = [states.again, states.hard, states.good, states.easy].map((s) =>
-      answerButtonTimeCollapsible(asSeconds(maybeAsDays(intervalKind(s), rollover)), learnAhead.current),
-    );
+    const buttonLabels = study.prepared.preview
+      ? study.prepared.preview.map((secs) => answerButtonTimeCollapsible(secs, learnAhead.current))
+      : [states.again, states.hard, states.good, states.easy].map((s) =>
+          answerButtonTimeCollapsible(asSeconds(maybeAsDays(intervalKind(s), rollover)), learnAhead.current),
+        );
     typed.current = '';
     shownAt.current = Date.now();
     autoplay.current = !study.config.disableAutoplay;

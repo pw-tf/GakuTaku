@@ -207,7 +207,38 @@ export interface DayLimit {
   today: number;
 }
 
-/** A row of the `decks` table (normal decks only; GakuTaku has no filtered decks yet). */
+/** Anki's filtered-deck search orders (`FilteredSearchOrder`). */
+export type FilteredOrder = 'oldestSeen' | 'random' | 'ivlAsc' | 'ivlDesc' | 'lapses' | 'added' | 'due' | 'reverseAdded';
+
+export interface FilteredTerm {
+  search: string;
+  limit: number;
+  order: FilteredOrder;
+}
+
+/** A filtered deck's settings (Anki `FilteredDeck`). */
+export interface FilteredDeckConfig {
+  /** One or two searches; cards matching the first are pulled in first. */
+  terms: FilteredTerm[];
+  /** Answers change the cards' schedules; off = "preview" (cards return unchanged). */
+  reschedule: boolean;
+  previewAgainSecs: number;
+  previewHardSecs: number;
+  /** 0 = Good returns the card to its deck. */
+  previewGoodSecs: number;
+}
+
+export function defaultFilteredConfig(): FilteredDeckConfig {
+  return {
+    terms: [{ search: '', limit: 100, order: 'random' }],
+    reschedule: true,
+    previewAgainSecs: 60,
+    previewHardSecs: 600,
+    previewGoodSecs: 0,
+  };
+}
+
+/** A row of the `decks` table: a normal deck, or a filtered deck when `filtered` is set. */
 export interface Deck {
   id: number;
   /** Full name with `::` separators. */
@@ -226,6 +257,8 @@ export interface Deck {
   review_studied: number;
   learning_studied: number;
   ms_studied: number;
+  /** Set for filtered decks (which have no preset: conf_id is 0). */
+  filtered: FilteredDeckConfig | null;
 }
 
 /** Collection-wide settings (Anki's Preferences → Scheduling, plus the FSRS toggle). */

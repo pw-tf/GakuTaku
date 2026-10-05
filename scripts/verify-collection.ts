@@ -8,7 +8,7 @@ import { Collection, DEFAULT_DECK_ID, renameFieldRefs, type StudyCard } from '..
 import { splitFields } from '../src/anki/notetype';
 import { setFuzzEnabled } from '../src/anki/fuzz';
 import type { CardQueues } from '../src/anki/queue';
-import { CardQueue, CardType, defaultDeckConfig, type Rating } from '../src/anki/types';
+import { CardQueue, CardType, defaultDeckConfig, defaultFilteredConfig, type FilteredDeckConfig, type Rating } from '../src/anki/types';
 import { asSeconds, intervalKind, maybeAsDays } from '../src/anki/states';
 import { openTestDb } from './sqliteNode';
 
@@ -64,6 +64,7 @@ class Sched {
     return e ? this.col.studyCard(e.id, this.now) : null;
   }
   async answer(s: StudyCard, rating: Rating) {
+    if (!this.q) await this.reset();
     const { card } = await this.col.answer(s, rating, 1000, this.now);
     this.q.pop(card.id);
     const t = await this.col.timing(this.now);
@@ -74,6 +75,7 @@ class Sched {
   /** Seconds until the button's outcome, as Anki's `nextIvl`. */
   async nextIvl(cardId: number, rating: Rating) {
     const s = (await this.col.studyCard(cardId, this.now))!;
+    if (s.prepared.preview) return s.prepared.preview[rating - 1];
     const t = await this.col.timing(this.now);
     const next = [s.prepared.states.again, s.prepared.states.hard, s.prepared.states.good, s.prepared.states.easy][rating - 1];
     return asSeconds(maybeAsDays(intervalKind(next), t.nextDayAt - t.now));
@@ -535,6 +537,158 @@ async function main() {
     eq('renamed', (await col.notetype(mid))!.name, 'Renamed');
     await col.removeNotetype(mid);
     eq('removed with its notes', [await col.notetype(mid), await col.note(n1.noteId)], [null, null]);
+  }
+
+  // ---- Filtered decks (test_schedv3.py: test_suspend, test_filt_*, test_preview, test_negativeDueFilter) ----
+  /** `col.decks.new_filtered()`: two empty searches (100 random, then 20 by due), rescheduling. */
+  const cram = (patch: Partial<FilteredDeckConfig> = {}): FilteredDeckConfig => ({
+    ...defaultFilteredConfig(),
+    terms: [{ search: '', limit: 100, order: 'random' }, { search: '', limit: 20, order: 'due' }],
+    ...patch,
+  });
+  {
+    // test_suspend (cram part): suspending a card in a filtered deck keeps it there.
+    const { col, mid, raw } = await emptyCol();
+    const cid = await addBasic(col, mid, 'one');
+    raw.exec(`UPDATE cards SET due = 1, ivl = 100, type = 2, queue = 2 WHERE id = ${cid}`);
+    const { id: did } = await col.addFilteredDeck('tmp', cram());
+    let c = (await col.card(cid))!;
+    eq('cram: moved in', [c.due !== 1, c.did === did, c.odid, c.odue], [true, true, DEFAULT_DECK_ID, 1]);
+    await col.buryOrSuspend([cid], 'suspend');
+    c = (await col.card(cid))!;
+    eq('cram: suspended card stays in the filtered deck', [c.due !== 1, c.did === did, c.odue], [true, true, 1]);
+  }
+  {
+    // test_filt_reviewing_early_normal
+    const { col, mid, raw } = await emptyCol();
+    const cid = await addBasic(col, mid, 'one');
+    const today = (await col.timing()).today;
+    raw.exec(`UPDATE cards SET ivl = 100, queue = 2, type = 2, due = ${today + 25}, factor = 2500 WHERE id = ${cid}`);
+    const home = new Sched(col);
+    eq('early: nothing due at home', await home.counts(), [0, 0, 0]);
+    const { id: did } = await col.addFilteredDeck('Cram', cram());
+    const tree = await col.deckTree();
+    eq('early: filtered deck shows the review in the deck list', tree.find((n) => n.deckId === did)?.reviewCount, 1);
+    const s = new Sched(col, did);
+    eq('early: counts', await s.counts(), [0, 0, 1]);
+    let c = (await s.getCard())!;
+    eq('early: next intervals', [await s.nextIvl(cid, 1), await s.nextIvl(cid, 2), await s.nextIvl(cid, 3), await s.nextIvl(cid, 4)],
+      [600, Math.round(75 * 1.2) * 86400, Math.round(75 * 2.5) * 86400, Math.round(75 * 2.5 * 1.15) * 86400]);
+    const after = await s.answer(c, 3);
+    eq('early: due = today + ivl, back in review, back home', [after.due === today + after.ivl, after.queue, after.did, after.odid, after.odue], [true, CardQueue.Review, DEFAULT_DECK_ID, 0, 0]);
+    eq('early: logged as a filtered (cram) review', raw.exec('SELECT type FROM revlog ORDER BY id DESC LIMIT 1')[0].type, 3);
+    raw.exec(`UPDATE cards SET ivl = 100, due = ${today + 75} WHERE id = ${cid}`);
+    await col.rebuildFilteredDeck(did);
+    const s2 = new Sched(col, did);
+    c = (await s2.getCard())!;
+    eq('early (25 days waited): intervals', [await s2.nextIvl(cid, 2), await s2.nextIvl(cid, 3), await s2.nextIvl(cid, 4)],
+      [(100 * 1.2) / 2 * 86400, 100 * 86400, Math.round(100 * (1.3 - (1.3 - 1) / 2)) * 86400]);
+  }
+  {
+    // test_filt_keep_lrn_state
+    const { col, mid } = await emptyCol();
+    await setConf(col, 1, { learnSteps: [1, 10, 61] });
+    const cid = await addBasic(col, mid, 'one');
+    const home = new Sched(col);
+    let c = await home.answer((await home.getCard())!, 1);
+    eq('keep lrn: learning after Again', [c.type, c.queue, c.left % 1000], [CardType.Learn, CardQueue.Learn, 3]);
+    c = await home.answer((await col.studyCard(cid))!, 3);
+    eq('keep lrn: still learning', [c.type, c.queue], [CardType.Learn, CardQueue.Learn]);
+    const { id: did } = await col.addFilteredDeck('Cram', cram());
+    c = (await col.card(cid))!;
+    eq('keep lrn: learning state kept in the filtered deck', [c.type, c.queue, c.left % 1000], [CardType.Learn, CardQueue.Learn, 2]);
+    const s = new Sched(col, did);
+    c = await s.answer((await col.studyCard(cid))!, 3);
+    check('keep lrn: next step due over an hour away', c.due - Math.floor(Date.now() / 1000) > 3600, c.due);
+    eq('keep lrn: still in the filtered deck', c.did, did);
+    await col.emptyFilteredDeck(did);
+    c = (await col.card(cid))!;
+    eq('keep lrn: emptying keeps the learning state', [c.type, c.queue, c.left % 1000, c.did], [CardType.Learn, CardQueue.Learn, 1, DEFAULT_DECK_ID]);
+    check('keep lrn: …and the due time', c.due - Math.floor(Date.now() / 1000) > 3600, c.due);
+  }
+  {
+    // test_preview
+    const { col, mid } = await emptyCol();
+    const c1 = await addBasic(col, mid, 'one');
+    const c2id = await addBasic(col, mid, 'two');
+    const { id: did } = await col.addFilteredDeck('Cram', cram({ reschedule: false }));
+    const s = new Sched(col, did);
+    const c = (await s.getCard())!;
+    eq('preview: Again = 60s, Easy = return', [await s.nextIvl(c.prepared.card.id, 1), await s.nextIvl(c.prepared.card.id, 4)], [60, 0]);
+    const due = c.prepared.card.due;
+    const failed = await s.answer(c, 1);
+    check('preview: failing pushes its due time back', failed.due !== due, failed.due);
+    eq('preview: failed card waits in the preview queue', failed.queue, CardQueue.PreviewRepeat);
+    const next = (await s.getCard())!;
+    check('preview: the other card comes next', next.prepared.card.id !== failed.id);
+    const passed = await s.answer(next, 4);
+    eq('preview: passing returns it unchanged', [passed.queue, passed.reps, passed.type, passed.did], [CardQueue.New, 0, CardType.New, DEFAULT_DECK_ID]);
+    await col.emptyFilteredDeck(did);
+    const back = (await col.card(failed.id))!;
+    eq('preview: emptying restores the card', [back.queue, back.reps, back.type, back.did], [CardQueue.New, 0, CardType.New, DEFAULT_DECK_ID]);
+    void c1;
+    void c2id;
+  }
+  {
+    // test_negativeDueFilter
+    const { col, mid, raw } = await emptyCol();
+    const cid = await addBasic(col, mid, 'one');
+    raw.exec(`UPDATE cards SET due = -5, queue = 2, ivl = 5 WHERE id = ${cid}`);
+    const { id: did } = await col.addFilteredDeck('Cram', cram());
+    await col.emptyFilteredDeck(did);
+    eq('negative due survives a filtered deck', (await col.card(cid))!.due, -5);
+  }
+  {
+    // Building, ordering, rebuilding, moving out, deleting; and Custom Study.
+    const { col, mid, raw } = await emptyCol();
+    const a = await addBasic(col, mid, 'a');
+    const b = await addBasic(col, mid, 'b');
+    const sus = await addBasic(col, mid, 'suspended');
+    await col.buryOrSuspend([sus], 'suspend');
+    const positions = [(await col.card(a))!.due, (await col.card(b))!.due];
+    let failed = '';
+    try {
+      await col.addFilteredDeck('Nothing', cram({ terms: [{ search: 'nomatch', limit: 10, order: 'random' }] }));
+    } catch (e) {
+      failed = (e as Error).message;
+    }
+    check('no matches: refused', /No cards matched/.test(failed), failed);
+    eq('…and no deck left behind', (await col.decks()).some((d) => d.name === 'Nothing'), false);
+    const { id: did, count } = await col.addFilteredDeck('Filt', cram({ terms: [{ search: 'deck:Default', limit: 10, order: 'added' }] }));
+    eq('built: suspended cards stay out', count, 2);
+    eq('built in order', [(await col.card(a))!.due, (await col.card(b))!.due], [-100000, -99999]);
+    raw.exec(`UPDATE cards SET queue = -3 WHERE id = ${b}`);
+    eq('rebuild returns cards first, skips buried ones', await col.rebuildFilteredDeck(did), 1);
+    eq('…buried card went home with its position', [(await col.card(b))!.did, (await col.card(b))!.due], [DEFAULT_DECK_ID, positions[1]]);
+    await col.moveCards([a], DEFAULT_DECK_ID);
+    eq('moving a card takes it out of the filtered deck', [(await col.card(a))!.odid, (await col.card(a))!.due], [0, positions[0]]);
+    failed = '';
+    try {
+      await col.moveCards([a], did);
+    } catch (e) {
+      failed = (e as Error).message;
+    }
+    check('can’t move cards into a filtered deck', /filtered deck/.test(failed), failed);
+    await col.rebuildFilteredDeck(did);
+    await col.removeDeck(did);
+    eq('deleting a filtered deck returns its cards', [(await col.card(a))!.did, (await col.card(a))!.odid], [DEFAULT_DECK_ID, 0]);
+
+    // Custom study: extra new cards today.
+    raw.exec(`UPDATE cards SET queue = 0 WHERE id = ${b}`);
+    await setConf(col, 1, { newPerDay: 1 });
+    const s = new Sched(col);
+    eq('limit 1 new', (await s.counts())[0], 1);
+    await col.customStudy(DEFAULT_DECK_ID, { kind: 'newLimit', delta: 1 });
+    const s2 = new Sched(col);
+    eq('custom study: one more new card today', (await s2.counts())[0], 2);
+    const info = await col.customStudyInfo(DEFAULT_DECK_ID);
+    eq('custom study info', info.newAvailable, 2);
+    // Custom study session: preview new cards added today.
+    const sess = (await col.customStudy(DEFAULT_DECK_ID, { kind: 'preview', days: 1 }))!;
+    eq('custom study session built', sess.count, 2);
+    const again = (await col.customStudy(DEFAULT_DECK_ID, { kind: 'cram', cram: 'all', limit: 1, includeTags: [], excludeTags: [] }))!;
+    eq('custom study session reused', [again.id, again.count], [sess.id, 1]);
+    eq('…named as in Anki', (await col.deck(sess.id))!.name, 'Custom Study Session');
   }
 
   if (failures) {

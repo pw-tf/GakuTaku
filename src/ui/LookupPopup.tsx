@@ -36,7 +36,7 @@ type AudioStatus = null | 'fetching' | 'done' | 'none';
 
 /** The single shared dictionary popup (build plan §3.5), populated from the real LookupResult. */
 export function LookupPopup({ result, loading, anchor, error, onClose, onMine, context }: Props) {
-  const { data: decks = [] } = useLive(() => col.decks(), [], ['decks']);
+  const { data: decks = [] } = useLive(async () => (await col.decks()).filter((d) => !d.filtered), [], ['decks']);
   const { lastDeckId, setLastDeckId, mineWordAudio, mineSentenceAudio } = usePrefs();
   const [audio, setAudio] = useState<AudioStatus>(null);
   const ref = useRef<HTMLDivElement>(null);
