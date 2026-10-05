@@ -28,5 +28,6 @@ declare module '@sglkc/kuromoji/src/loader/BrowserDictionaryLoader' {
   export default class BrowserDictionaryLoader {
     constructor(dicPath: string);
     load(callback: (err: unknown, dic: unknown) => void): void;
+    loadArrayBuffer(url: string, callback: (err: unknown, buffer: ArrayBuffer | null) => void): void;
   }
 }
