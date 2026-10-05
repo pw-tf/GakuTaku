@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { col } from '../anki/appCollection';
 import { DEFAULT_CONFIG_ID, type DeckConfigRow } from '../anki/collection';
 import { DEFAULT_PARAMETERS } from '../anki/fsrs';
+import { FsrsOptimizer } from './FsrsOptimizer';
 import { defaultDeckConfig, type CollectionConfig, type Deck, type DeckConfig, type NewGatherPriority, type NewSortOrder, type ReviewMix, type ReviewOrder } from '../anki/types';
 import { Btn } from '../ui/atoms';
 import { Modal, PromptModal, ConfirmModal } from '../ui/Modal';
@@ -50,6 +51,16 @@ export function parseSteps(text: string): number[] | null {
     out.push(unit === 's' ? v / 60 : unit === 'h' ? v * 60 : unit === 'd' ? v * 1440 : v);
   }
   return out;
+}
+
+/** Up to 4 decimals, as Anki displays them. */
+const formatParams = (p: readonly number[]) => p.map((x) => +x.toFixed(4)).join(', ');
+
+/** The parameter box's numbers; [] when empty (defaults), null when invalid. */
+function parseParams(text: string): number[] | null {
+  if (!text.trim()) return [];
+  const p = text.split(/[\s,]+/).filter(Boolean).map(Number);
+  return p.every(Number.isFinite) && [17, 19, 21].includes(p.length) ? p : null;
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -131,6 +142,8 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
   const [reviewLimit, setReviewLimit] = useState<string>('');
   const [dr, setDr] = useState<string>('');
   const [paramsText, setParamsText] = useState('');
+  /** The preset and FSRS switch as loaded, to tell whether cards' memory states need recomputing. */
+  const [orig, setOrig] = useState<{ presetId: number; config: DeckConfig; fsrs: boolean } | null>(null);
   const [dialog, setDialog] = useState<null | 'add' | 'rename' | 'delete'>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -148,7 +161,8 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
     const p = ps.find((x) => x.id === pid) ?? ps.find((x) => x.id === DEFAULT_CONFIG_ID)!;
     setPresetId(p.id);
     setCfg(p.config);
-    setParamsText(p.config.fsrsParams.map((x) => +x.toFixed(4)).join(', '));
+    setParamsText(formatParams(p.config.fsrsParams));
+    setOrig({ presetId: p.id, config: p.config, fsrs: c.fsrs });
     setNewLimit(d.new_limit == null ? '' : String(d.new_limit));
     setReviewLimit(d.review_limit == null ? '' : String(d.review_limit));
     setDr(d.desired_retention == null ? '' : String(d.desired_retention));
@@ -161,16 +175,17 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
   const set = <K extends keyof DeckConfig>(k: K, v: DeckConfig[K]) => setCfg((c) => ({ ...c, [k]: v }));
   const preset = presets.find((p) => p.id === presetId);
 
+  const parsedParams = parseParams(paramsText);
+
   async function save() {
     setSaving(true);
     setErr(null);
     try {
-      let params: number[] = [];
-      if (paramsText.trim()) {
-        params = paramsText.split(/[\s,]+/).filter(Boolean).map(Number);
-        if (params.some((x) => !Number.isFinite(x)) || ![17, 19, 21].includes(params.length)) throw new Error('FSRS parameters must be 17, 19 or 21 numbers (or empty for the defaults).');
-      }
-      await col.updateDeckConfig(presetId, preset?.name ?? 'Default', { ...cfg, fsrsParams: params });
+      const params = parsedParams;
+      if (!params) throw new Error('FSRS parameters must be 17, 19 or 21 numbers (or empty for the defaults).');
+      if (cfg.ignoreRevlogsBeforeDate && !/^\d{4}-\d{2}-\d{2}$/.test(cfg.ignoreRevlogsBeforeDate)) throw new Error('“Ignore cards reviewed before” must be a date (YYYY-MM-DD) or empty.');
+      const next = { ...cfg, fsrsParams: params };
+      await col.updateDeckConfig(presetId, preset?.name ?? 'Default', next);
       const num = (s: string) => (s.trim() === '' ? null : Math.max(0, Math.round(Number(s))));
       await col.updateDeck(deckId, {
         conf_id: presetId,
@@ -179,6 +194,23 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
         desired_retention: dr.trim() === '' ? null : Number(dr),
       });
       if (colCfg) await col.setConfig({ fsrs: colCfg.fsrs, rollover: colCfg.rollover, learnAheadSecs: colCfg.learnAheadSecs, newCardsIgnoreReviewLimit: colCfg.newCardsIgnoreReviewLimit, applyAllParentLimits: colCfg.applyAllParentLimits });
+      // Like Anki: memory states follow the parameters. Switching FSRS on computes them for every
+      // preset, switching it off clears them, and changing what they're computed from recomputes
+      // this preset's cards.
+      if (colCfg && orig) {
+        if (colCfg.fsrs && !orig.fsrs) for (const p of await col.deckConfigs()) await col.updateMemoryStates(p.id);
+        else if (!colCfg.fsrs && orig.fsrs) await col.clearMemoryStates();
+        else if (colCfg.fsrs) {
+          const before = orig.presetId === presetId ? orig.config : presets.find((p) => p.id === presetId)?.config;
+          const changed =
+            !before ||
+            orig.presetId !== presetId ||
+            JSON.stringify(before.fsrsParams) !== JSON.stringify(next.fsrsParams) ||
+            before.historicalRetention !== next.historicalRetention ||
+            before.ignoreRevlogsBeforeDate !== next.ignoreRevlogsBeforeDate;
+          if (changed) await col.updateMemoryStates(presetId);
+        }
+      }
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -190,7 +222,7 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
     <Modal title={`Options · ${deck?.name ?? ''}`} onClose={onClose} wide>
       <div className="modal-body opt-body">
         <div className="preset-bar">
-          <select value={presetId} onChange={(e) => { const p = presets.find((x) => x.id === Number(e.target.value)); if (p) { setPresetId(p.id); setCfg(p.config); setParamsText(p.config.fsrsParams.join(', ')); } }}>
+          <select value={presetId} onChange={(e) => { const p = presets.find((x) => x.id === Number(e.target.value)); if (p) { setPresetId(p.id); setCfg(p.config); setParamsText(formatParams(p.config.fsrsParams)); } }}>
             {presets.map((p) => (
               <option key={p.id} value={p.id}>{p.name} ({usage.get(p.id) ?? 0} {usage.get(p.id) === 1 ? 'deck' : 'decks'})</option>
             ))}
@@ -259,7 +291,11 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
             <input inputMode="decimal" value={dr} onChange={(e) => setDr(e.target.value)} placeholder="—" />
           </Row>
           <Row label="FSRS parameters" help={`Empty = defaults. Paste the parameters from Anki’s deck options to keep your optimised values.`}>
-            <textarea rows={3} value={paramsText} placeholder={DEFAULT_PARAMETERS.slice(0, 4).join(', ') + ', …'} onChange={(e) => setParamsText(e.target.value)} />
+            <textarea rows={3} value={paramsText} placeholder={DEFAULT_PARAMETERS.slice(0, 4).join(', ') + ', …'} onChange={(e) => setParamsText(e.target.value)} className={parsedParams ? '' : 'invalid'} />
+          </Row>
+          <FsrsOptimizer presetId={presetId} config={cfg} params={parsedParams} onParams={(p) => setParamsText(formatParams(p))} />
+          <Row label="Ignore cards reviewed before" help="YYYY-MM-DD. Older history is left out when optimizing.">
+            <input type="date" value={cfg.ignoreRevlogsBeforeDate} onChange={(e) => set('ignoreRevlogsBeforeDate', e.target.value)} />
           </Row>
           <Row label="Historical retention" help="Used for cards whose review history is incomplete."><NumberInput value={cfg.historicalRetention} step={0.01} onChange={(v) => set('historicalRetention', v)} /></Row>
         </Section>

@@ -5,7 +5,7 @@
  *
  *   npm run verify:backup
  */
-import { BlobWriter, TextReader, ZipWriter } from '@zip.js/zip.js';
+import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 import { backupFileName, createBackup, readBackup, restoreBackup, type BackupBook, type RestoreTarget } from '../src/backup/format';
 import type { TextBookData } from '../src/books/textBook';
 
@@ -27,8 +27,13 @@ async function rejects(label: string, p: Promise<unknown>, match: RegExp) {
   }
 }
 
-/** A stand-in database file: SQLite's header plus some bytes. */
-const fakeDb = (tag: string) => new Uint8Array([...new TextEncoder().encode('SQLite format 3\0'), ...new TextEncoder().encode(tag)]);
+/** A stand-in database file: SQLite's 100-byte header (schema version at byte 60) plus a tag. */
+function fakeDb(tag: string, schema = 2): Uint8Array {
+  const header = new Uint8Array(100);
+  header.set(new TextEncoder().encode('SQLite format 3\0'));
+  new DataView(header.buffer).setUint32(60, schema);
+  return new Uint8Array([...header, ...new TextEncoder().encode(tag)]);
+}
 const textOf = async (b?: Blob) => (b ? new TextDecoder().decode(new Uint8Array(await b.arrayBuffer())) : undefined);
 
 // ---- A device with data ---------------------------------------------------------------------
@@ -77,6 +82,7 @@ function memoryDevice(init: { db: Uint8Array; media: Record<string, string>; boo
     failOnBook: false,
   };
   const target: RestoreTarget = {
+    schemaVersion: 2,
     database: async (bytes) => {
       state.db = bytes;
     },
@@ -137,6 +143,21 @@ await corrupt.add('manifest.json', new TextReader(JSON.stringify({ format: 'gaku
 const D = memoryDevice({ db: fakeDb('D'), media: { 'a.mp3': 'a' }, books: [] });
 await rejects('a damaged database is refused', restoreBackup(await corrupt.close(), D.target), /damaged/);
 eq('…before anything changed', [D.state.media.size, [...D.state.db]], [1, [...fakeDb('D')]]);
+
+// Databases this app can't open are refused before anything changes.
+async function backupWith(db: Uint8Array) {
+  const z = new ZipWriter(new BlobWriter());
+  await z.add('collection.sqlite3', new Uint8ArrayReader(db));
+  await z.add('media/x.mp3', new TextReader('x'));
+  await z.add('manifest.json', new TextReader(JSON.stringify({ format: 'gakutaku-backup', version: 1, createdAt: '', counts: {} })));
+  return z.close();
+}
+const E = memoryDevice({ db: fakeDb('E'), media: { 'a.mp3': 'a' }, books: [] });
+await rejects('a database without a GakuTaku schema version is refused', restoreBackup(await backupWith(fakeDb('x', 0)), E.target), /isn’t a GakuTaku database/);
+await rejects('a database from a newer app version is refused', restoreBackup(await backupWith(fakeDb('x', 3)), E.target), /newer version/);
+eq('…before anything changed', [E.state.media.size, [...E.state.db]], [1, [...fakeDb('E')]]);
+await restoreBackup(await backupWith(fakeDb('older', 1)), E.target);
+eq('an older schema version restores (the app migrates it on open)', [...E.state.db], [...fakeDb('older', 1)]);
 
 eq('file name', backupFileName(new Date(2026, 9, 5)), 'GakuTaku-backup-2026-10-05.zip');
 

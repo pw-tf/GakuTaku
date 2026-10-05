@@ -7,11 +7,15 @@ import sqlite3InitModule, { type SqlValue } from '@sqlite.org/sqlite-wasm';
 import { MIGRATIONS } from '../src/db/schema';
 import type { Sql } from '../src/anki/collection';
 
-export async function openTestDb(): Promise<{ sql: Sql; raw: { exec(sql: string, params?: unknown[]): Record<string, unknown>[] } }> {
+export async function openTestDb(): Promise<{
+  sql: Sql;
+  raw: { exec(sql: string, params?: unknown[]): Record<string, unknown>[]; bytes(): Uint8Array };
+}> {
   const sqlite3 = await sqlite3InitModule();
   const db = new sqlite3.oo1.DB(':memory:', 'c');
   db.createFunction('uuid', () => crypto.randomUUID(), { deterministic: false });
   for (const m of MIGRATIONS) db.exec(m);
+  db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
 
   const exec = (sql: string, params: unknown[] = []) =>
     (db.exec({
@@ -58,5 +62,5 @@ export async function openTestDb(): Promise<{ sql: Sql; raw: { exec(sql: string,
     };
     return self;
   };
-  return { sql: make(false), raw: { exec } };
+  return { sql: make(false), raw: { exec, bytes: () => sqlite3.capi.sqlite3_js_db_export(db.pointer!) } };
 }

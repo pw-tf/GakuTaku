@@ -170,22 +170,37 @@ const isReset = (e: RevlogEntry) => e.type === RevlogKind.Manual && e.factor ===
 const hasRating = (e: RevlogEntry) => e.ease > 0;
 export const affectsScheduling = (e: RevlogEntry) => hasRating(e) && !isCramming(e);
 
-interface FsrsReview {
+export interface FsrsReview {
   rating: number;
   deltaT: number;
 }
 
-/** Anki `reviews_for_fsrs` (non-training mode, no ignore-before cutoff). Entries must be ascending by id. */
-function reviewsForFsrs(entries: RevlogEntry[], nextDayAt: number): { reviews: FsrsReview[]; complete: boolean; filtered: RevlogEntry[] } | null {
+/** One training example: a card's reviews up to and including the one being predicted. */
+export interface FsrsItem {
+  reviews: FsrsReview[];
+}
+
+/**
+ * Anki `reviews_for_fsrs`. Entries must be one card's revlog, ascending by id. In training mode the
+ * card is skipped unless its history starts with learning steps after `ignoreBeforeMs`, and every
+ * interday review becomes an item; otherwise only the whole history is returned.
+ */
+function reviewsForFsrs(
+  entries: RevlogEntry[],
+  nextDayAt: number,
+  training = false,
+  ignoreBeforeMs = 0,
+): { reviews: FsrsReview[]; complete: boolean; filtered: RevlogEntry[]; items: { revlogId: number; item: FsrsItem }[] } | null {
   let firstOfLastLearn: number | null = null;
   let firstUserGrade: number | null = null;
   let complete = false;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     if (isCramming(e)) continue;
+    const withinCutoff = e.id > ignoreBeforeMs;
     const userGraded = hasRating(e);
     const interday = e.ivl >= 1 || e.ivl <= -86_400;
-    if (userGraded && interday) firstUserGrade = i;
+    if (userGraded && withinCutoff && interday) firstUserGrade = i;
     if (userGraded && e.type === RevlogKind.Learning) {
       firstOfLastLearn = i;
       complete = true;
@@ -199,8 +214,15 @@ function reviewsForFsrs(entries: RevlogEntry[], nextDayAt: number): { reviews: F
       } else return null;
     } else if (firstOfLastLearn != null) break;
   }
+  if (training) {
+    if (firstOfLastLearn != null && entries[firstOfLastLearn].id < ignoreBeforeMs) return null;
+  } else if (firstOfLastLearn != null && entries[firstOfLastLearn].id < ignoreBeforeMs && firstOfLastLearn < entries.length - 1) {
+    complete = false;
+    firstOfLastLearn = null;
+  }
   let start: number;
   if (firstOfLastLearn != null) start = firstOfLastLearn;
+  else if (training) return null;
   else if (firstUserGrade != null) start = firstUserGrade;
   else return null;
   const filtered = entries.slice(start).filter(affectsScheduling);
@@ -209,7 +231,40 @@ function reviewsForFsrs(entries: RevlogEntry[], nextDayAt: number): { reviews: F
     rating: e.ease,
     deltaT: i === 0 ? 0 : revlogDaysElapsed(filtered[i - 1], nextDayAt) - revlogDaysElapsed(e, nextDayAt),
   }));
-  return { reviews, complete, filtered };
+  const items: { revlogId: number; item: FsrsItem }[] = [];
+  if (training) {
+    for (let i = 1; i < reviews.length; i++) if (reviews[i].deltaT > 0) items.push({ revlogId: filtered[i].id, item: { reviews: reviews.slice(0, i + 1) } });
+    if (items.length === 0) return null;
+  }
+  return { reviews, complete, filtered, items };
+}
+
+/**
+ * Anki `fsrs_items_for_training`: every card's training items, ordered by the time of the review
+ * each one predicts, with the card id of each.
+ */
+export function fsrsItemsForTraining(
+  revlogByCard: Map<number, RevlogEntry[]>,
+  nextDayAt: number,
+  ignoreBeforeMs: number,
+): { items: FsrsItem[]; cardIds: number[]; reviewCount: number } {
+  const rows: { revlogId: number; cid: number; item: FsrsItem }[] = [];
+  let reviewCount = 0;
+  for (const [cid, entries] of revlogByCard) {
+    const out = reviewsForFsrs([...entries].sort((a, b) => a.id - b.id), nextDayAt, true, ignoreBeforeMs);
+    if (!out) continue;
+    reviewCount += out.filtered.length;
+    for (const { revlogId, item } of out.items) rows.push({ revlogId, cid, item });
+  }
+  rows.sort((a, b) => a.revlogId - b.revlogId);
+  return { items: rows.map((r) => r.item), cardIds: rows.map((r) => r.cid), reviewCount };
+}
+
+/** Anki `ignore_revlogs_before_date_to_ms`: a YYYY-MM-DD date at UTC midnight, or 0. */
+export function ignoreBeforeMs(date: string): number {
+  if (!date.trim()) return 0;
+  const ms = Date.parse(`${date.trim()}T00:00:00Z`);
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 /**
@@ -222,9 +277,10 @@ export function memoryStateFromHistory(
   nextDayAt: number,
   historicalRetention: number,
   card: { type: number; ivl: number; factor: number },
+  ignoreBeforeMs = 0,
 ): MemoryState | null {
   const sorted = [...revlog].sort((a, b) => a.id - b.id);
-  const out = reviewsForFsrs(sorted, nextDayAt);
+  const out = reviewsForFsrs(sorted, nextDayAt, false, ignoreBeforeMs);
   if (out) {
     let reviews = out.reviews;
     let state: MemoryState | null = null;
