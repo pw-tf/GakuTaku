@@ -113,24 +113,31 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
 
   if (!anchor) return null;
 
-  // Keep the popup on screen: full width minus a margin on phones, under the word when there's
-  // room, else above it. A tall, narrow anchor is a word in vertical text — prefer beside it.
-  const W = Math.min(348, window.innerWidth - 24);
+  // Keep the popup on screen and clear of the system bars: full width minus a margin on phones,
+  // under the word when there's room, else above it. A tall, narrow anchor is a word in vertical
+  // text — prefer beside it.
+  const css = getComputedStyle(document.documentElement);
+  const inset = (v: string) => parseFloat(css.getPropertyValue(v)) || 0;
+  const minTop = inset('--sat') + 12;
+  const maxBottom = window.innerHeight - inset('--sab') - 12;
+  const minLeft = inset('--sal') + 12;
+  const maxRight = window.innerWidth - inset('--sar') - 12;
+  const W = Math.min(348, maxRight - minLeft);
   const vertical = anchor.height > anchor.width * 1.6 && anchor.height > 40;
   let style: React.CSSProperties;
-  if (vertical && (anchor.left - W - 10 >= 12 || anchor.right + W + 10 <= window.innerWidth - 12)) {
-    const leftSide = anchor.left - W - 10 >= 12;
+  if (vertical && (anchor.left - W - 10 >= minLeft || anchor.right + W + 10 <= maxRight)) {
+    const leftSide = anchor.left - W - 10 >= minLeft;
     style = {
       width: W,
       left: leftSide ? anchor.left - W - 10 : anchor.right + 10,
-      top: Math.max(12, Math.min(anchor.top, window.innerHeight - 340)),
-      maxHeight: window.innerHeight - 24,
+      top: Math.max(minTop, Math.min(anchor.top, maxBottom - 328)),
+      maxHeight: maxBottom - minTop,
     };
   } else {
-    const spaceBelow = window.innerHeight - anchor.bottom - 22;
-    const spaceAbove = anchor.top - 22;
+    const spaceBelow = maxBottom - anchor.bottom - 10;
+    const spaceAbove = anchor.top - 12 - minTop;
     const below = spaceBelow >= 280 || spaceBelow >= spaceAbove;
-    const left = Math.min(Math.max(anchor.left, 12), window.innerWidth - W - 12);
+    const left = Math.min(Math.max(anchor.left, minLeft), maxRight - W);
     style = below
       ? { width: W, left, top: anchor.bottom + 10, maxHeight: spaceBelow }
       : { width: W, left, bottom: window.innerHeight - anchor.top + 12, maxHeight: spaceAbove };

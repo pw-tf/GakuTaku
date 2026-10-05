@@ -5,15 +5,23 @@
 
 #root, .app { height: 100%; }
 html, body, #root { height: 100%; }
+/* System bar sizes (status bar, navigation bar, notch). The Android app sets these from the native
+   side (it draws edge to edge); browsers fall back to their own safe-area insets. */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
 body { overflow: hidden; }
 
 /* accent override hook (set by prefs) + dark-mode color guard on app root */
 .app { --accent: var(--rust); color: var(--ink); background: var(--paper); }
 .app-msg { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 24px; text-align: center; color: var(--ink-faint); }
-.storage-warning { position: fixed; top: 0; left: 0; right: 0; z-index: 200; padding: 6px 16px; font-size: 12px; text-align: center; background: var(--rate-again, #b8492f); color: #fff; }
+.storage-warning { position: fixed; top: 0; left: 0; right: 0; z-index: 200; padding: calc(6px + var(--sat)) 16px 6px; font-size: 12px; text-align: center; background: var(--rate-again, #b8492f); color: #fff; }
 
 /* ---------- App shell ---------- */
-.shell { display: grid; grid-template-columns: 232px 1fr; height: 100vh; height: 100dvh; background: var(--paper); }
+.shell { display: grid; grid-template-columns: 232px 1fr; height: 100vh; height: 100dvh; box-sizing: border-box; padding: var(--sat) var(--sar) var(--sab) var(--sal); background: var(--paper); }
 .shell.reading { grid-template-columns: 64px 1fr; }
 
 /* Sidebar */
@@ -123,7 +131,7 @@ body { overflow: hidden; }
 .switch.on::after { left: 18px; }
 
 /* ---------- Reader ---------- */
-.reader { position: fixed; inset: 0; z-index: 50; display:flex; flex-direction: column; background: var(--paper); }
+.reader { position: fixed; inset: 0; z-index: 50; display:flex; flex-direction: column; padding: var(--sat) var(--sar) var(--sab) var(--sal); background: var(--paper); }
 .rd-top { display:flex; align-items:center; gap: 14px; padding: 0 22px; height: 58px; border-bottom: 1px solid var(--rule); flex:none; z-index: 5; }
 .rd-top .back { color: var(--ink-soft); cursor:pointer; display:flex; align-items:center; gap:7px; font-weight:500; font-size:14px; flex:none; white-space:nowrap; }
 .rd-top .rtitle { font-family: var(--jp-mincho); font-weight: 600; font-size: 15px; flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -227,7 +235,7 @@ body { overflow: hidden; }
 .lk-added { display:flex; align-items:center; gap:8px; color: var(--sage); font-weight:600; font-size:14px; justify-content:center; flex:1; }
 
 /* ---------- Deck picker modal ---------- */
-.modal-backdrop { position: fixed; inset: 0; z-index: 70; background: oklch(0.2 0.02 60 / 0.42); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 70; background: oklch(0.2 0.02 60 / 0.42); display: flex; align-items: center; justify-content: center; padding: calc(24px + var(--sat)) calc(24px + var(--sar)) calc(24px + var(--sab)) calc(24px + var(--sal)); }
 .deck-picker { width: 100%; max-width: 360px; background: var(--paper-raised); border: 1px solid var(--rule-strong); border-radius: var(--radius-lg); box-shadow: 0 26px 60px -24px oklch(0.2 0.02 60/.55); overflow: hidden; animation: pop .14s ease; }
 .deck-picker .dp-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--rule); }
 .deck-picker .dp-head .dp-t { font-family: var(--serif); font-size: 17px; font-weight: 500; }
@@ -241,7 +249,7 @@ body { overflow: hidden; }
 .deck-picker .dp-new input:focus { border-color: var(--accent); }
 
 /* ---------- Review ---------- */
-.review-wrap { position:fixed; inset:0; z-index: 50; display:flex; flex-direction:column; background: var(--paper); }
+.review-wrap { position:fixed; inset:0; z-index: 50; display:flex; flex-direction:column; padding: var(--sat) var(--sar) var(--sab) var(--sal); background: var(--paper); }
 .rv-top { height: 58px; border-bottom:1px solid var(--rule); display:flex; align-items:center; padding: 0 22px; gap: 16px; flex:none; }
 .rv-top .back { color: var(--ink-soft); cursor:pointer; display:flex; align-items:center; gap:7px; font-weight:500; font-size:14px; }
 .rv-top .prog-track { flex:1; height: 4px; background: var(--rule); border-radius: 3px; max-width: 460px; overflow:hidden; }
@@ -321,8 +329,8 @@ body { overflow: hidden; }
 .dd-actions { display:flex; flex-wrap:wrap; gap: 10px; }
 
 /* Modal dialog (deck options, description, add card). */
-.modal-backdrop { position: fixed; inset: 0; z-index: 70; display:flex; align-items:center; justify-content:center; padding: 24px; background: oklch(0.2 0.02 60/.45); animation: bgtask-in .15s ease; }
-.modal-card { width: min(440px, 100%); max-height: calc(100vh - 48px); overflow:auto; background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 16px; box-shadow: 0 24px 60px -24px oklch(0.2 0.02 60/.6); }
+.modal-backdrop { position: fixed; inset: 0; z-index: 70; display:flex; align-items:center; justify-content:center; padding: calc(24px + var(--sat)) calc(24px + var(--sar)) calc(24px + var(--sab)) calc(24px + var(--sal)); background: oklch(0.2 0.02 60/.45); animation: bgtask-in .15s ease; }
+.modal-card { width: min(440px, 100%); max-height: calc(100dvh - 48px - var(--sat) - var(--sab)); overflow:auto; background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 16px; box-shadow: 0 24px 60px -24px oklch(0.2 0.02 60/.6); }
 .modal-head { display:flex; align-items:center; justify-content:space-between; padding: 18px 20px; border-bottom: 1px solid var(--rule); }
 .modal-head h3 { font-family: var(--serif); font-size: 19px; font-weight: 500; }
 .modal-body { padding: 20px; display:flex; flex-direction:column; gap: 16px; }
@@ -419,7 +427,7 @@ body { overflow: hidden; }
 
 /* ---------- Mobile menu drawer ---------- */
 .mobile-menu-backdrop { position: fixed; inset: 0; z-index: 45; background: oklch(0.2 0.02 60 / 0.4); display: none; }
-.mobile-menu { position: absolute; top: 0; left: 0; bottom: 0; width: 280px; max-width: 84vw; background: var(--paper); border-right: 1px solid var(--rule); box-shadow: 12px 0 30px -16px oklch(0.2 0.02 60/.4); padding: 18px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.mobile-menu { position: absolute; top: 0; left: 0; bottom: 0; width: 280px; max-width: 84vw; background: var(--paper); border-right: 1px solid var(--rule); box-shadow: 12px 0 30px -16px oklch(0.2 0.02 60/.4); padding: calc(18px + var(--sat)) 18px calc(18px + var(--sab)) calc(18px + var(--sal)); display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
 .mobile-menu .mm-head { display: flex; align-items: center; justify-content: space-between; }
 .mobile-menu .brand { display: flex; align-items: center; gap: 10px; }
 .mobile-menu .brand .mk { font-family: var(--jp-mincho); font-weight: 700; font-size: 22px; color: var(--accent); }
@@ -466,7 +474,7 @@ body { overflow: hidden; }
 }
 
 /* Background-task banner (upload / import / dictionary download) — pinned, survives navigation. */
-.bgtasks { position: fixed; right: 20px; bottom: 20px; z-index: 60; display:flex; flex-direction:column; gap:10px; width: min(340px, calc(100vw - 40px)); }
+.bgtasks { position: fixed; right: calc(20px + var(--sar)); bottom: calc(20px + var(--sab)); z-index: 60; display:flex; flex-direction:column; gap:10px; width: min(340px, calc(100vw - 40px)); }
 .bgtask { background: var(--paper-raised); border:1px solid var(--rule); border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 30px -14px oklch(0.2 0.02 60/.45); animation: bgtask-in .2s ease; }
 .bgtask.error { border-color: color-mix(in oklch, var(--rate-again) 45%, var(--rule)); }
 .bgtask .bt-row { display:flex; align-items:center; gap:8px; }
