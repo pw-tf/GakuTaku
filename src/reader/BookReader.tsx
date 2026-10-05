@@ -46,6 +46,10 @@ export function BookReader({ doc, mined, onMine, onReviewMined, onClose }: Props
       direction={book.direction}
       chapterIndex={book.chapterIndex}
       chapterCount={book.chapterCount}
+      toc={book.toc}
+      sourceLabel={book.title}
+      documentId={doc.id}
+      onGoChapter={(i) => book.goChapter(i, 'top')}
       paragraphs={book.paragraphs}
       loadingChapter={book.loadingChapter}
       restore={book.restore}

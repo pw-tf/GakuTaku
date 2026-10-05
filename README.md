@@ -79,6 +79,18 @@ release.
 - **Cards render in a sandboxed iframe** (`src/study/CardView.tsx`). It uses Anki's reviewer
   document structure (`<body class="card cardN">`, `nightMode`), so a note type's CSS behaves as it
   does in Anki and AnkiDroid. Media is inlined from the local store.
+- **Books** (`src/books/`, `src/reader/`): ePUBs are read chapter by chapter with epub.js. TXT and
+  PDF files are converted to chapters once, when added, and the result is stored next to the
+  original file.
+  - TXT: UTF-8/16, Shift_JIS or EUC-JP, with Aozora Bunko markup removed.
+  - PDF: pdf.js extracts the text, using the bundled CMaps that Japanese CID fonts need.
+    Vertical punctuation forms are normalised, and paragraph indents are recovered from the layout.
+- **Mining** (`src/study/mining.ts`) saves the tapped word with the sentence around it (in Anki
+  furigana syntax, word in bold) and the book or article it came from. In the Android app it then
+  attaches two recordings: a native-speaker clip of the word from JapanesePod101, fetched over
+  native HTTP, and the sentence recorded with the device's Japanese voice. The recording uses the
+  `JapaneseTts` plugin in `android/app/src/main/java/app/gakutaku/`. Without recordings, cards speak
+  the word and sentence at review time.
 - **Feeds** are fetched with Capacitor's native HTTP on Android, which isn't subject to CORS and
   decodes Shift_JIS / EUC-JP feeds (`src/feeds/proxy.ts`). In a desktop browser only sites that allow
   cross-origin reads work.

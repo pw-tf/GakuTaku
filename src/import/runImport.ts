@@ -2,7 +2,7 @@ import { useTasks } from '../app/tasks';
 
 /**
  * Shared file-import driver used by both the Library and Decks screens. Branches on file type
- * (.apkg/.colpkg → Anki import, .epub → library), reports progress through the global task store so
+ * (.apkg/.colpkg → Anki import, .epub/.pdf/.txt → library), reports progress through the global task store so
  * the `<BackgroundTasks/>` banner shows it regardless of which screen kicked it off, and dynamically
  * imports the heavy stacks so they stay out of the initial bundle.
  */
@@ -12,9 +12,9 @@ export const IMPORT_TASK_ID = 'library-import';
 export async function importFile(file: File, userId: string): Promise<void> {
   const isAnki = /\.(apkg|colpkg)$/i.test(file.name);
   const tasks = useTasks.getState();
-  if (!isAnki && !/\.epub$/i.test(file.name)) {
+  if (!isAnki && !/\.(epub|pdf|txt)$/i.test(file.name)) {
     tasks.start(IMPORT_TASK_ID, `Can’t open ${file.name}`);
-    tasks.finish(IMPORT_TASK_ID, 'error', 'Pick an ePUB book (.epub), an Anki deck (.apkg) or an Anki collection backup (.colpkg).');
+    tasks.finish(IMPORT_TASK_ID, 'error', 'Pick a book (.epub, .pdf or .txt), an Anki deck (.apkg) or an Anki collection backup (.colpkg).');
     return;
   }
   tasks.start(IMPORT_TASK_ID, isAnki ? `Importing ${file.name}` : `Adding ${file.name}`);
@@ -35,8 +35,8 @@ export async function importFile(file: File, userId: string): Promise<void> {
       if (s.skippedNotes) msg += ` ${s.skippedNotes.toLocaleString()} notes were already here and were skipped.`;
       tasks.finish(IMPORT_TASK_ID, 'success', msg);
     } else {
-      const { uploadEpub } = await import('../reader/uploadEpub');
-      await uploadEpub(file, userId);
+      const { addBook } = await import('../reader/addBook');
+      await addBook(file, userId, (message, done, total) => tasks.update(IMPORT_TASK_ID, { message, done: done ?? 0, total: total ?? 0 }));
       tasks.finish(IMPORT_TASK_ID, 'success', `“${file.name}” added to your library.`);
     }
   } catch (err) {

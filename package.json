@@ -12,10 +12,11 @@
     "verify:anki": "tsx scripts/verify-anki.ts",
     "verify:collection": "tsx scripts/verify-collection.ts",
     "verify:import": "tsx scripts/verify-import.ts",
+    "verify:books": "tsx scripts/verify-books.ts",
     "verify:analytics": "tsx scripts/verify-analytics.ts",
     "verify:dict": "tsx scripts/verify-dict.ts",
     "build:android": "GAKUTAKU_TARGET=android vite build && cap sync android",
-    "verify": "npm run verify:anki && npm run verify:collection && npm run verify:import && npm run verify:analytics && npm run verify:dict"
+    "verify": "npm run verify:anki && npm run verify:collection && npm run verify:import && npm run verify:books && npm run verify:analytics && npm run verify:dict"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",
@@ -32,9 +33,9 @@
     "comlink": "^4.4.2",
     "dexie": "^4.4.3",
     "epubjs": "^0.3.93",
-    "fsrs-browser": "^5.2.0",
     "fzstd": "^0.1.1",
     "jszip": "^3.10.1",
+    "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.14"

@@ -1,5 +1,6 @@
 import { mediaUrl } from '../media/store';
 import type { AvTag } from '../anki/template';
+import { speak, stopSpeaking } from '../native/tts';
 
 /**
  * Plays a card's audio tags one after another (Anki's `av_player`): `[sound:…]` files from the media
@@ -16,19 +17,14 @@ export function stopAudio(): void {
     current.pause();
     current = null;
   }
-  if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+  stopSpeaking();
 }
 
 function playOne(tag: AvTag, gen: number): Promise<void> {
   return new Promise((resolve) => {
     if (gen !== generation) return resolve();
     if (tag.kind === 'tts') {
-      if (typeof speechSynthesis === 'undefined') return resolve();
-      const u = new SpeechSynthesisUtterance(tag.value);
-      if (tag.lang) u.lang = tag.lang.replace('_', '-');
-      u.onend = () => resolve();
-      u.onerror = () => resolve();
-      speechSynthesis.speak(u);
+      void speak(tag.value, tag.lang?.replace('_', '-')).then(resolve);
       return;
     }
     void mediaUrl(tag.value).then((url) => {

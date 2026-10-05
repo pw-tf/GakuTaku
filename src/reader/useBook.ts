@@ -3,8 +3,10 @@ import { db } from '../db';
 import { jpCore } from '../jp-core/client';
 import type { FuriToken } from '../jp-core/worker';
 import type { DocumentRecord } from '../db/schema';
-import { openEpub, type EpubBook } from './epub';
-import { getBlob } from './bookCache';
+import { openEpub, type BookSource, type TocEntry } from './epub';
+import { getBlob, getText } from './bookCache';
+import { docKind } from './addBook';
+import { textBookSource } from './textSource';
 
 /** Where to land when a chapter's paragraphs render. */
 export type RestoreTarget =
@@ -28,16 +30,26 @@ interface BookState {
   direction: 'ltr' | 'rtl';
   chapterIndex: number;
   chapterCount: number;
+  toc: TocEntry[];
+  /** The raw paragraph strings of the current chapter (sentence capture for mining). */
+  texts: string[];
   paragraphs: FuriToken[][];
   loadingChapter: boolean;
   /** Target the Reader applies once the chapter's paragraphs are on screen. */
   restore: RestoreTarget;
 }
 
-async function resolveBlob(doc: DocumentRecord): Promise<ArrayBuffer> {
-  const blob = await getBlob(doc.id);
-  if (!blob) throw new Error('The book file is missing from this device. Remove it and add it again.');
-  return blob.arrayBuffer();
+const MISSING = 'The book file is missing from this device. Remove it and add it again.';
+
+async function openSource(doc: DocumentRecord): Promise<BookSource> {
+  if (docKind(doc.type) === 'epub') {
+    const blob = await getBlob(doc.id);
+    if (!blob) throw new Error(MISSING);
+    return openEpub(await blob.arrayBuffer());
+  }
+  const text = await getText(doc.id);
+  if (!text) throw new Error(MISSING);
+  return textBookSource(text);
 }
 
 /**
@@ -68,11 +80,13 @@ export function useBook(doc: DocumentRecord, userId: string) {
     direction: 'ltr',
     chapterIndex: 0,
     chapterCount: 0,
+    toc: [],
+    texts: [],
     paragraphs: [],
     loadingChapter: false,
     restore: { kind: 'top' },
   });
-  const bookRef = useRef<EpubBook | null>(null);
+  const bookRef = useRef<BookSource | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<{ chapter: number; pos: ReadingPos } | null>(null);
   const chapterRef = useRef(0);
@@ -82,8 +96,7 @@ export function useBook(doc: DocumentRecord, userId: string) {
     let cancelled = false;
     (async () => {
       try {
-        const buffer = await resolveBlob(doc);
-        const book = await openEpub(buffer);
+        const book = await openSource(doc);
         if (cancelled) {
           book.destroy();
           return;
@@ -96,6 +109,7 @@ export function useBook(doc: DocumentRecord, userId: string) {
           title: book.title || s.title,
           direction: book.direction,
           chapterCount: book.chapterCount,
+          toc: book.toc,
           chapterIndex: startChapter,
         }));
         await loadChapter(startChapter, { kind: 'anchor', ...pos.anchor });
@@ -130,6 +144,7 @@ export function useBook(doc: DocumentRecord, userId: string) {
       ...s,
       status: 'ready',
       chapterIndex: index,
+      texts,
       paragraphs: tokens,
       loadingChapter: false,
       restore,

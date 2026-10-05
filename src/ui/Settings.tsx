@@ -8,8 +8,8 @@ interface ContentProps {
 /** The settings controls (accent / dark / furigana / credits), reused by the desktop popover and the mobile menu. */
 export function SettingsContent({ onOpenCredits }: ContentProps) {
   const {
-    accent, dark, furigana,
-    setAccent, setDark, setFurigana,
+    accent, dark, furigana, mineWordAudio, mineSentenceAudio,
+    setAccent, setDark, setFurigana, setMineWordAudio, setMineSentenceAudio,
   } = usePrefs();
   return (
     <>
@@ -42,6 +42,21 @@ export function SettingsContent({ onOpenCredits }: ContentProps) {
               {v === 'all' ? 'All' : v === 'n3' ? 'N3+' : 'Off'}
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="set-sec">
+        <div className="set-h">Mining</div>
+        <div className="toggle-row">
+          <span>Word audio (native speaker)</span>
+          <input type="checkbox" checked={mineWordAudio} onChange={(e) => setMineWordAudio(e.target.checked)} />
+        </div>
+        <div className="toggle-row" style={{ marginTop: 8 }}>
+          <span>Sentence audio (device voice)</span>
+          <input type="checkbox" checked={mineSentenceAudio} onChange={(e) => setMineSentenceAudio(e.target.checked)} />
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6, lineHeight: 1.5 }}>
+          Added to mined cards in the Android app. Elsewhere, cards read the word and sentence aloud at review time.
         </div>
       </div>
 

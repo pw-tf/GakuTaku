@@ -7,6 +7,9 @@ import { importFile, useImporting } from '../import/runImport';
 import { useDocuments, useReadingPositions } from '../db/hooks';
 import type { DocumentRecord } from '../db/schema';
 import { FeedsSection } from '../feeds/FeedsSection';
+import { getCover } from '../reader/bookCache';
+import { docKind, removeBook } from '../reader/addBook';
+import { ConfirmModal } from '../ui/Modal';
 import { FeedArticles } from '../feeds/FeedArticles';
 import type { FeedArticle } from '../feeds/parse';
 import type { FeedView } from '../feeds/useFeeds';
@@ -41,6 +44,36 @@ function useGridColumns(ref: React.RefObject<HTMLElement>, enabled: boolean): nu
   return cols;
 }
 
+const BOOK_ACCEPT = '.epub,application/epub+zip,.pdf,application/pdf,.txt,text/plain,.apkg,.colpkg';
+
+/** Object URLs for stored cover images, by document id (revoked on unmount). */
+function useCovers(ids: string[]): Map<string, string> {
+  const [covers, setCovers] = useState<Map<string, string>>(new Map());
+  const key = ids.join(',');
+  useEffect(() => {
+    let cancelled = false;
+    const urls: string[] = [];
+    void (async () => {
+      const m = new Map<string, string>();
+      for (const id of ids) {
+        const blob = await getCover(id).catch(() => undefined);
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          urls.push(url);
+          m.set(id, url);
+        }
+      }
+      if (!cancelled) setCovers(m);
+    })();
+    return () => {
+      cancelled = true;
+      urls.forEach((u) => URL.revokeObjectURL(u));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return covers;
+}
+
 interface Props {
   onOpenBook: (doc: DocumentRecord) => void;
   onOpenArticle: (article: FeedArticle, feed: FeedView) => void;
@@ -63,6 +96,8 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
   const cols = useGridColumns(gridRef, docs.length > 0);
   const visibleDocs = showAllBooks ? docs : docs.slice(0, cols);
   const hiddenCount = docs.length - visibleDocs.length;
+  const covers = useCovers(docs.map((d) => d.id));
+  const [removing, setRemoving] = useState<DocumentRecord | null>(null);
 
   const pctById = useMemo(() => {
     const m = new Map<string, number>();
@@ -85,21 +120,21 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
 
   return (
     <div className="page">
-      <input ref={fileRef} type="file" accept={fileAccept('.epub,application/epub+zip,.apkg,.colpkg')} hidden onChange={onFile} />
+      <input ref={fileRef} type="file" accept={fileAccept(BOOK_ACCEPT)} hidden onChange={onFile} />
 
       <div className="lib-hero">
         <div className="cont-card" onClick={() => cont && onOpenBook(cont)} style={{ cursor: cont ? 'pointer' : 'default' }}>
           <div className="cc-cover"><div className="sp" /></div>
           <div className="cc-meta">
             <div className="k">{cont ? 'Continue reading' : 'Your reader'}</div>
-            <div className="t" lang="ja">{cont?.title ?? 'Upload your first ePUB'}</div>
-            <div className="a">{cont ? `${pctById.get(cont.id) ?? 0}% read` : 'Tap “Upload ePUB” to get started.'}</div>
+            <div className="t" lang="ja">{cont?.title ?? 'Add your first book'}</div>
+            <div className="a">{cont ? `${pctById.get(cont.id) ?? 0}% read` : 'ePUB, PDF or TXT, from your Downloads or anywhere else.'}</div>
             {cont && <div className="pr"><i style={{ width: (pctById.get(cont.id) ?? 0) + '%' }} /></div>}
             {cont ? (
               <Btn variant="primary" size="sm">Resume <Icon.chevR s={15} /></Btn>
             ) : (
               <Btn variant="primary" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
-                <Icon.upload s={15} /> Upload ePUB
+                <Icon.upload s={15} /> Add a book
               </Btn>
             )}
           </div>
@@ -122,23 +157,29 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
         <span className="count">{docs.length} {docs.length === 1 ? 'book' : 'books'}</span>
         <span className="more" style={{ display: 'flex', gap: 8 }}>
           <Btn size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
-            <Icon.upload s={15} /> {busy ? 'Working…' : 'Upload ePUB / Anki deck'}
+            <Icon.upload s={15} /> {busy ? 'Working…' : 'Add book / Anki deck'}
           </Btn>
         </span>
       </div>
 
       {docs.length === 0 ? (
-        <p style={{ color: 'var(--ink-faint)' }}>No books yet. Upload a Japanese ePUB to start reading.</p>
+        <p style={{ color: 'var(--ink-faint)' }}>No books yet. Add a Japanese ePUB, PDF or TXT file to start reading.</p>
       ) : (
         <div className="book-grid" ref={gridRef}>
           {visibleDocs.map((b) => {
             const pct = pctById.get(b.id) ?? 0;
             const tone = toneFor(b.id);
+            const cover = covers.get(b.id);
+            const kind = docKind(b.type);
             return (
               <div className="bcard" key={b.id} onClick={() => onOpenBook(b)}>
                 <div className="cv" style={{ background: `linear-gradient(160deg, ${tone}, color-mix(in oklch, ${tone} 70%, black))` }}>
+                  {cover ? <img className="cover" src={cover} alt="" /> : <div className="ph"><div className="jt" lang="ja">{b.title}</div></div>}
                   <div className="spine" />
-                  <div className="ph"><div className="jt" lang="ja">{b.title}</div></div>
+                  {kind !== 'epub' && <span className="kind">{kind.toUpperCase()}</span>}
+                  <button className="bc-more" aria-label="Remove book" title="Remove book" onClick={(e) => { e.stopPropagation(); setRemoving(b); }}>
+                    <Icon.trash s={14} />
+                  </button>
                   {pct > 0 && <div className="pct"><i style={{ width: pct + '%' }} /></div>}
                 </div>
                 <div className="bt" lang="ja">{b.title}</div>
@@ -154,6 +195,17 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
           {showAllBooks ? 'Show less' : `Show all ${docs.length} books`}
           <Icon.chevR s={14} />
         </button>
+      )}
+
+      {removing && (
+        <ConfirmModal
+          title="Remove book?"
+          message={`“${removing.title}” and your place in it will be removed from this device. Cards you mined from it stay.`}
+          confirmLabel="Remove"
+          danger
+          onClose={() => setRemoving(null)}
+          onConfirm={() => removeBook(removing.id)}
+        />
       )}
 
       {openFeed ? (

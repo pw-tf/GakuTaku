@@ -88,6 +88,7 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
       direction="ltr"
       chapterIndex={0}
       chapterCount={1}
+      sourceLabel={`${article.title} (${feed.title})`}
       paragraphs={state.paragraphs}
       loadingChapter={false}
       restore={RESTORE_TOP}

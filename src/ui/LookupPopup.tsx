@@ -4,6 +4,7 @@ import { usePrefs } from '../app/prefs';
 import { col } from '../anki/appCollection';
 import { useLive } from '../db/useLive';
 import { mineWord } from '../study/mining';
+import { speak } from '../native/tts';
 import { DeckPicker } from './DeckPicker';
 import { Btn, Chip } from './atoms';
 import { Icon } from './icons';
@@ -16,21 +17,37 @@ export interface MinedItem {
   deckId: number;
 }
 
+/** Where the looked-up word was found, captured onto the mined card. */
+export interface MineContext {
+  /** The sentence in Anki furigana syntax, word in <b>. */
+  sentence: string;
+  sentencePlain: string;
+  source: string;
+  documentId?: string | null;
+}
+
 interface Props extends LookupState {
   onClose: () => void;
   onMine?: (item: MinedItem) => void;
+  context?: MineContext;
 }
 
+type AudioStatus = null | 'fetching' | 'done' | 'none';
+
 /** The single shared dictionary popup (build plan §3.5), populated from the real LookupResult. */
-export function LookupPopup({ result, loading, anchor, error, onClose, onMine }: Props) {
+export function LookupPopup({ result, loading, anchor, error, onClose, onMine, context }: Props) {
   const { data: decks = [] } = useLive(() => col.decks(), [], ['decks']);
-  const { lastDeckId, setLastDeckId } = usePrefs();
+  const { lastDeckId, setLastDeckId, mineWordAudio, mineSentenceAudio } = usePrefs();
+  const [audio, setAudio] = useState<AudioStatus>(null);
   const ref = useRef<HTMLDivElement>(null);
   const [added, setAdded] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // Reset "added" when the looked-up term changes.
-  useEffect(() => setAdded(false), [result?.query]);
+  useEffect(() => {
+    setAdded(false);
+    setAudio(null);
+  }, [result?.query]);
 
   // The remembered deck, if it still exists (one-tap add target).
   const targetDeck = useMemo(() => decks.find((d) => d.id === lastDeckId) ?? null, [decks, lastDeckId]);
@@ -73,7 +90,23 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine }:
     if (!result) return;
     const gloss = resolveGloss();
     // Create a real note + card (deduped per term) and record the lookup in mined_words history.
-    const { cardId } = await mineWord({ deckId, term: result.query, reading, meaning: gloss });
+    const mined = await mineWord({
+      deckId,
+      term: result.query,
+      reading,
+      meaning: gloss,
+      sentence: context?.sentence,
+      sentencePlain: context?.sentencePlain,
+      source: context?.source,
+      documentId: context?.documentId,
+      wordAudio: mineWordAudio,
+      sentenceAudio: mineSentenceAudio,
+    });
+    const { cardId } = mined;
+    if (mined.created && (mineWordAudio || mineSentenceAudio)) {
+      setAudio('fetching');
+      void mined.audio.then((a) => setAudio(a.word || a.sentence ? 'done' : 'none'));
+    }
     setLastDeckId(deckId);
     setPickerOpen(false);
     onMine?.({ term: result.query, reading, gloss, cardId, deckId });
@@ -86,11 +119,7 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine }:
   }
 
   function listen() {
-    if (!result || typeof speechSynthesis === 'undefined') return;
-    const u = new SpeechSynthesisUtterance(result.query);
-    u.lang = 'ja-JP';
-    speechSynthesis.cancel();
-    speechSynthesis.speak(u);
+    if (result) void speak(result.query);
   }
 
   const hasEntry = !!result && (result.words.length > 0 || result.names.length > 0);
@@ -161,10 +190,16 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine }:
         )}
       </div>
 
+      {context?.sentencePlain && hasEntry && !added && (
+        <div className="lk-sentence" lang="ja" title="Saved on the card">{context.sentencePlain}</div>
+      )}
+
       <div className="lk-foot">
         {added ? (
           <span className="lk-added">
             <Icon.check s={18} /> Added to {targetDeck?.name ?? 'deck'}
+            {audio === 'fetching' && <span className="lk-audio"> · getting audio…</span>}
+            {audio === 'done' && <span className="lk-audio"> · audio added</span>}
           </span>
         ) : (
           <>
