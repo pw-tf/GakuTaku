@@ -1,6 +1,7 @@
 import * as Comlink from 'comlink';
 import Tokenizer, { type IpadicToken } from '@sglkc/kuromoji/src/Tokenizer';
 import BrowserDictionaryLoader from '@sglkc/kuromoji/src/loader/BrowserDictionaryLoader';
+import { fetchBundledGzip } from '../dictionary/bundledAsset';
 import { alignFurigana, type FuriSegment } from './furigana';
 import { lookup as dictLookup, advancedKanji } from '../dictionary/lookup';
 import type { LookupResult } from '../dictionary/types';
@@ -9,13 +10,30 @@ const DIC_PATH = '/dict/kuromoji';
 
 let tokenizerPromise: Promise<Tokenizer> | null = null;
 
+/**
+ * kuromoji's own browser loader only knows `x.dat.gz` and reports a failed read by its statusText
+ * (always "OK" from Capacitor's local server). Read the files through {@link fetchBundledGzip}
+ * instead, which also finds the inflated copies the Android build ships.
+ */
+class AppDictionaryLoader extends BrowserDictionaryLoader {
+  loadArrayBuffer(url: string, callback: (err: unknown, buffer: ArrayBuffer | null) => void): void {
+    fetchBundledGzip(url).then(
+      (bytes) => callback(null, bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? (bytes.buffer as ArrayBuffer) : (bytes.slice().buffer as ArrayBuffer)),
+      (err: unknown) => callback(err, null),
+    );
+  }
+}
+
 function getTokenizer(): Promise<Tokenizer> {
   if (!tokenizerPromise) {
     tokenizerPromise = new Promise<Tokenizer>((resolve, reject) => {
-      new BrowserDictionaryLoader(DIC_PATH).load((err: unknown, dic: unknown) => {
-        if (err) reject(err);
+      new AppDictionaryLoader(DIC_PATH).load((err: unknown, dic: unknown) => {
+        if (err) reject(new Error(`Couldn’t load the Japanese tokenizer. ${err instanceof Error ? err.message : String(err)}`));
         else resolve(new Tokenizer(dic));
       });
+    });
+    tokenizerPromise.catch(() => {
+      tokenizerPromise = null;
     });
   }
   return tokenizerPromise;
