@@ -3,7 +3,8 @@ import { deckTreeWithCounts, dueCountsSql, type DeckTreeNode, type RawDueCounts 
 import { compareDeckNames, parentName } from './limits';
 import { buildQueues, WHOLE_COLLECTION, type CardQueues, type QueueCard } from './queue';
 import { timingAt, type Timing } from './timing';
-import { fsrsItemsForTraining, ignoreBeforeMs, memoryStateFromHistory, prepareParameters, type FsrsItem } from './fsrs';
+import { fsrsItemsForTraining, ignoreBeforeMs, memoryStateFromHistory, prepareParameters, retrievability, type FsrsItem } from './fsrs';
+import { compileSearch, sortSql, type SearchContext, type SortColumn } from './search';
 import { FIELD_SEP, joinFields, sortFieldValue, splitFields, type Notetype } from './notetype';
 import { generatedOrdinals } from './template';
 import {
@@ -93,6 +94,22 @@ export interface NoteRow {
   mod: number;
   tags: string;
   flds: string;
+}
+
+/** Everything Anki's Card Info screen shows. */
+export interface CardInfo {
+  card: Card;
+  note: NoteRow;
+  notetype: Notetype;
+  deckName: string;
+  /** The home deck of a card in a filtered deck. */
+  originalDeckName: string | null;
+  templateName: string;
+  presetName: string;
+  revlog: RevlogEntry[];
+  /** FSRS: the chance of recalling it now (0–1); null without a memory state. */
+  retrievability: number | null;
+  timing: Timing;
 }
 
 /** Everything needed to show and answer one card. */
@@ -495,6 +512,112 @@ export class Collection {
 
   async setNoteTags(noteId: number, tags: string[], sql: Sql = this.sql): Promise<void> {
     await sql.run('UPDATE notes SET tags = ?, mod = ? WHERE id = ?', [tagString(tags), nowSecs(), noteId]);
+  }
+
+  /** Add tags to notes (existing tags are kept; matching ignores case). */
+  async addTags(nids: number[], tags: string[]): Promise<void> {
+    const add = tags.map((t) => t.trim()).filter(Boolean);
+    if (!add.length || !nids.length) return;
+    await this.editTags(nids, (cur) => {
+      const have = new Set(cur.map((t) => t.toLowerCase()));
+      return [...cur, ...add.filter((t) => !have.has(t.toLowerCase()) && (have.add(t.toLowerCase()), true))];
+    });
+  }
+
+  /** Remove tags from notes (ignoring case; removing `a` also removes its child tags `a::b`). */
+  async removeTags(nids: number[], tags: string[]): Promise<void> {
+    const drop = tags.map((t) => t.trim().toLowerCase()).filter(Boolean);
+    if (!drop.length || !nids.length) return;
+    await this.editTags(nids, (cur) => cur.filter((t) => !drop.some((d) => t.toLowerCase() === d || t.toLowerCase().startsWith(d + '::'))));
+  }
+
+  private async editTags(nids: number[], edit: (tags: string[]) => string[]): Promise<void> {
+    await this.sql.transaction(async (tx) => {
+      const mod = nowSecs();
+      for (let i = 0; i < nids.length; i += 500) {
+        const chunk = nids.slice(i, i + 500);
+        const rows = await tx.all<{ id: number; tags: string }>(`SELECT id, tags FROM notes WHERE id IN (${chunk.map(() => '?').join(',')})`, chunk);
+        const statements: [string, unknown[]][] = [];
+        for (const r of rows) {
+          const before = tagList(r.tags);
+          const after = edit(before);
+          if (after.join(' ') !== before.join(' ')) statements.push(['UPDATE notes SET tags = ?, mod = ? WHERE id = ?', [tagString(after), mod, r.id]]);
+        }
+        if (statements.length) await tx.runBatch(statements);
+      }
+    });
+  }
+
+  /** Every tag in the collection, sorted. */
+  async allTags(): Promise<string[]> {
+    const rows = await this.sql.all<{ tags: string }>(`SELECT DISTINCT tags FROM notes WHERE trim(tags) != ''`);
+    const seen = new Map<string, string>();
+    for (const r of rows) for (const t of tagList(r.tags)) if (!seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t);
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }
+
+  // ---- search ------------------------------------------------------------------------------
+
+  async searchContext(nowMs = Date.now(), currentDeckId?: number): Promise<SearchContext> {
+    const cfg = await this.config();
+    const t = timingAt(nowMs, cfg.rollover);
+    const [decks, notetypes] = await Promise.all([this.decks(), this.notetypes()]);
+    return { decks, notetypes, today: t.today, nextDayAt: t.nextDayAt, nowSecs: t.now, learnAheadSecs: cfg.learnAheadSecs, currentDeckId };
+  }
+
+  /** Card ids matching an Anki search, in browser order. Throws SearchError for a bad search. */
+  async searchCards(query: string, opts: { sort?: SortColumn; desc?: boolean; limit?: number; currentDeckId?: number } = {}, nowMs = Date.now()): Promise<number[]> {
+    const ctx = await this.searchContext(nowMs, opts.currentDeckId);
+    const { where, params } = compileSearch(query, ctx);
+    const order = sortSql(opts.sort ?? 'sortField', opts.desc ?? false, ctx);
+    const rows = await this.sql.all<{ id: number }>(
+      `SELECT c.id FROM cards c JOIN notes n ON n.id = c.nid LEFT JOIN decks d ON d.id = c.did WHERE ${where} ORDER BY ${order}${opts.limit ? ` LIMIT ${Math.floor(opts.limit)}` : ''}`,
+      params,
+    );
+    return rows.map((r) => r.id);
+  }
+
+  /** Note ids of some cards. */
+  async noteIdsOfCards(cids: number[]): Promise<number[]> {
+    const out = new Set<number>();
+    for (let i = 0; i < cids.length; i += 500) {
+      const chunk = cids.slice(i, i + 500);
+      const rows = await this.sql.all<{ nid: number }>(`SELECT DISTINCT nid FROM cards WHERE id IN (${chunk.map(() => '?').join(',')})`, chunk);
+      for (const r of rows) out.add(r.nid);
+    }
+    return [...out];
+  }
+
+  /** Anki's Card Info. */
+  async cardInfo(cid: number, nowMs = Date.now()): Promise<CardInfo | null> {
+    const card = await this.card(cid);
+    if (!card) return null;
+    const [note, deck, cfg] = await Promise.all([this.note(card.nid), this.deck(card.did), this.config()]);
+    const notetype = note ? await this.notetype(note.mid) : null;
+    if (!note || !notetype) return null;
+    const original = card.odid ? await this.deck(card.odid) : null;
+    const configs = await this.deckConfigs();
+    const home = original ?? deck;
+    const preset = configs.find((c) => c.id === home?.conf_id) ?? configs.find((c) => c.id === DEFAULT_CONFIG_ID);
+    const revlog = await this.sql.all<RevlogEntry>('SELECT * FROM revlog WHERE cid = ? ORDER BY id DESC', [cid]);
+    const t = timingAt(nowMs, cfg.rollover);
+    let r: number | null = null;
+    if (card.stability != null && card.difficulty != null && card.last_review != null && card.type !== CardType.New) {
+      const w = prepareParameters(preset?.config.fsrsParams ?? []);
+      r = retrievability(w, { stability: card.stability, difficulty: card.difficulty }, Math.max(0, (t.now - card.last_review) / 86_400));
+    }
+    return {
+      card,
+      note,
+      notetype,
+      deckName: deck?.name ?? '(deleted deck)',
+      originalDeckName: original?.name ?? null,
+      templateName: notetype.kind === 1 ? `Cloze ${card.ord + 1}` : notetype.templates.find((x) => x.ord === card.ord)?.name ?? `Card ${card.ord + 1}`,
+      presetName: preset?.name ?? 'Default',
+      revlog,
+      retrievability: r,
+      timing: t,
+    };
   }
 
   private async removeOrphanNotes(tx: Sql, nids: number[]): Promise<void> {

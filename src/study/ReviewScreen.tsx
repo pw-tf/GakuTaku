@@ -7,6 +7,7 @@ import { Btn, Chip } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { ConfirmModal, PromptModal } from '../ui/Modal';
 import { CardView, type CardEvent } from './CardView';
+import { CardInfoModal } from '../decks/CardInfo';
 import { EditNoteModal } from './EditNoteModal';
 import { useStudy } from './useStudy';
 
@@ -28,7 +29,7 @@ interface Props {
   onExit: () => void;
 }
 
-type Dialog = null | 'edit' | 'due' | 'forget' | 'deleteNote';
+type Dialog = null | 'edit' | 'due' | 'forget' | 'deleteNote' | 'info';
 
 /** The reviewer: Anki's study flow with AnkiDroid-style controls. */
 export function ReviewScreen({ deckId, title, onExit }: Props) {
@@ -106,6 +107,9 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
       } else if (e.key === 'e' || e.key === 'E') {
         pd();
         setDialog('edit');
+      } else if (e.key === 'i' || e.key === 'I') {
+        pd();
+        setDialog('info');
       } else if (e.key === ' ' || e.key === 'Enter') {
         pd();
         if (!state.shown) study.reveal();
@@ -196,6 +200,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
                   <button onClick={() => { setMenuOpen(false); void bury(true); }}><Icon.moon s={15} /> Bury note <span className="rate-key">=</span></button>
                   <button onClick={() => { setMenuOpen(false); void suspend(false); }}><Icon.pause s={15} /> Suspend card <span className="rate-key">@</span></button>
                   <button onClick={() => { setMenuOpen(false); void suspend(true); }}><Icon.pause s={15} /> Suspend note <span className="rate-key">!</span></button>
+                  <button onClick={() => { setMenuOpen(false); setDialog('info'); }}><Icon.chart s={15} /> Card info <span className="rate-key">I</span></button>
                   <button onClick={() => { setMenuOpen(false); setDialog('due'); }}><Icon.clock s={15} /> Set due date…</button>
                   <button onClick={() => { setMenuOpen(false); setDialog('forget'); }}><Icon.undo s={15} /> Reset card (Forget)…</button>
                   <button className="danger" onClick={() => { setMenuOpen(false); setDialog('deleteNote'); }}><Icon.trash s={15} /> Delete note…</button>
@@ -211,6 +216,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
 
   const dialogs = card && (
     <>
+      {dialog === 'info' && <CardInfoModal cardId={card.id} onClose={() => setDialog(null)} />}
       {dialog === 'edit' && (
         <EditNoteModal
           noteId={card.nid}

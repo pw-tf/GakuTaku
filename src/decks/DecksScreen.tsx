@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { appSql, col } from '../anki/appCollection';
 import { stripHtml } from '../anki/template';
 import { findDeckNode, type DeckTreeNode } from '../anki/deckTree';
+import { deckSearch } from '../anki/search';
 import { fileAccept } from '../app/platform';
 import { LOCAL_USER_ID } from '../app/localUser';
 import { useBackHandler } from '../app/back';
@@ -63,6 +64,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
   const fileRef = useRef<HTMLInputElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const rows = useMemo(() => flatten(roots), [roots]);
   useBackHandler(menuOpen, () => setMenuOpen(false));
 
@@ -73,11 +75,16 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
     await importFile(file, LOCAL_USER_ID);
   }
 
+  if (browsing) return <BrowseCards onBack={() => setBrowsing(false)} />;
+
   return (
     <div className="page">
       <input ref={fileRef} type="file" accept={fileAccept('.apkg,.colpkg')} hidden onChange={onFile} />
       <div className="sec-bar">
         <h2>Decks</h2>
+        <Btn size="sm" onClick={() => setBrowsing(true)} title="Browse all cards" style={{ marginLeft: 'auto' }}>
+          <Icon.search s={15} /> Browse
+        </Btn>
         <span className="more deck-add">
           <Btn size="sm" disabled={importing} onClick={() => setMenuOpen((o) => !o)}>
             <Icon.plus s={15} /> Add
@@ -169,7 +176,7 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
   );
   const due = node.newCount + node.learnCount + node.reviewCount;
 
-  if (browsing) return <BrowseCards deckId={node.deckId} deckName={node.fullName} onBack={() => setBrowsing(false)} />;
+  if (browsing) return <BrowseCards initialQuery={deckSearch(node.fullName)} title={node.fullName.split('::').pop()} currentDeckId={node.deckId} onBack={() => setBrowsing(false)} />;
 
   return (
     <div className="page">
