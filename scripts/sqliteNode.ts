@@ -6,6 +6,7 @@
 import sqlite3InitModule, { type SqlValue } from '@sqlite.org/sqlite-wasm';
 import { MIGRATIONS } from '../src/db/schema';
 import type { Sql } from '../src/anki/collection';
+import { registerSqlFunctions } from '../src/db/sqlFunctions';
 
 export async function openTestDb(): Promise<{
   sql: Sql;
@@ -14,6 +15,7 @@ export async function openTestDb(): Promise<{
   const sqlite3 = await sqlite3InitModule();
   const db = new sqlite3.oo1.DB(':memory:', 'c');
   db.createFunction('uuid', () => crypto.randomUUID(), { deterministic: false });
+  registerSqlFunctions(db);
   for (const m of MIGRATIONS) db.exec(m);
   db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
 

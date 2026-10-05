@@ -2,6 +2,7 @@
 import * as Comlink from 'comlink';
 import sqlite3InitModule, { type Database, type SAHPoolUtil, type SqlValue } from '@sqlite.org/sqlite-wasm';
 import { MIGRATIONS } from './schema';
+import { registerSqlFunctions } from './sqlFunctions';
 
 /**
  * The SQLite engine, running off the UI thread. The database file lives in the Origin Private File
@@ -55,6 +56,7 @@ async function open(): Promise<OpenResult> {
     0,
   );
   db.createFunction('uuid', () => crypto.randomUUID(), { deterministic: false });
+  registerSqlFunctions(db);
   db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = TRUNCATE; PRAGMA synchronous = NORMAL;');
   migrate(db);
   changed.clear();
