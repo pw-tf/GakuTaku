@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import { db } from '../sync/system';
+import { db } from '../db';
 import { deckConfig, serializeDeckConfig } from '../srs/fsrs';
 import { parsePresetConfig, serializePresetConfig } from '../srs/presets';
 import type { OptimizerApi, TrainingSet } from './optimizer.worker';

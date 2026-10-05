@@ -1,12 +1,10 @@
 /**
  * MIME types for Anki media filenames.
  *
- * This matters more than it looks: `@supabase/storage-js` ignores its `contentType` option for
- * `Blob` bodies (it switches to `FormData`, and the part's type comes from `blob.type`), so a
- * type-less Blob is stored — and downloaded back — as `application/octet-stream`. `<img>` sniffs
- * content and survives that, but `HTMLMediaElement` trusts the type of a `blob:` URL and refuses to
- * decode, which silently breaks every `[sound:…]` on a card. So the type has to be set on the Blob
- * itself, both when uploading and when re-wrapping anything cached without one.
+ * This matters more than it looks: `HTMLMediaElement` trusts the type of a `blob:` URL and refuses
+ * to decode a type-less (`application/octet-stream`) one, which silently breaks every `[sound:…]` on
+ * a card (`<img>` sniffs content and survives). So the type is set on the Blob itself when storing,
+ * and re-applied to anything stored without one.
  *
  * Kept dependency-free so scripts/verify-dict.ts can import it outside a browser.
  */

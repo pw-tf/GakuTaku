@@ -1,5 +1,8 @@
 # Japanese Reading & SRS App — Build Plan & Technical Spec
 
+> **Historical.** This was the original multi-user plan (Supabase + PowerSync). The app is now a
+> single-person, on-device Android app — see the README for the current architecture.
+
 > Handoff document for Claude Code. Each milestone is independently shippable and testable. Build in order; M2 (the Japanese core) is the keystone everything else consumes.
 
 ---

@@ -12,7 +12,7 @@ import {
   type Grade,
   type Steps,
 } from 'ts-fsrs';
-import type { CardRecord, DeckRecord, ReviewLogRecord } from '../sync/AppSchema';
+import type { CardRecord, DeckRecord, ReviewLogRecord } from '../db/schema';
 
 export { Rating, State };
 export type { Card, Grade };

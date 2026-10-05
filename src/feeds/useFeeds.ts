@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
-import { useQuery } from '@powersync/react';
-import { db } from '../sync/system';
-import type { FeedRecord } from '../sync/AppSchema';
+import { useQuery } from '../db/useQuery';
+import { db } from '../db';
+import type { FeedRecord } from '../db/schema';
 import { DEFAULT_FEEDS, type FeedKind } from './defaults';
 
 /**

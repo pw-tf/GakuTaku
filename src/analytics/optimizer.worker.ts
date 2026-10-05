@@ -22,7 +22,7 @@ function boot(): Promise<void> {
     booted = (async () => {
       await init();
       // Rayon thread pool — relies on SharedArrayBuffer, hence the cross-origin isolation headers
-      // configured in vite.config.ts / public/_headers. Cap threads to keep memory reasonable.
+      // configured in vite.config.ts. Cap threads to keep memory reasonable.
       await initThreadPool(Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 8)));
     })();
   }

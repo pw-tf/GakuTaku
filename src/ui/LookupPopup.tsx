@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LookupState } from '../jp-core/lookupService';
-import { useAuth } from '../auth/AuthProvider';
+import { LOCAL_USER_ID } from '../app/localUser';
 import { usePrefs } from '../app/prefs';
-import { useDecks } from '../sync/hooks';
+import { useDecks } from '../db/hooks';
 import { addCardForWord } from '../srs/mining';
 import { DeckPicker } from './DeckPicker';
 import { Btn, Chip } from './atoms';
@@ -22,7 +22,6 @@ interface Props extends LookupState {
 
 /** The single shared dictionary popup (build plan §3.5), populated from the real LookupResult. */
 export function LookupPopup({ result, loading, anchor, error, onClose, onMine }: Props) {
-  const { session } = useAuth();
   const { data: decks } = useDecks();
   const { lastDeckId, setLastDeckId } = usePrefs();
   const ref = useRef<HTMLDivElement>(null);
@@ -70,11 +69,11 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine }:
   }
 
   async function addTo(deckId: string) {
-    if (!result || !session) return;
+    if (!result) return;
     const gloss = resolveGloss();
     const pos = firstWord?.senses[0]?.pos[0] ?? '';
     // Create a real note + card (deduped per term) and record the lookup in mined_words history.
-    const { cardId } = await addCardForWord(session.user.id, { deckId, term: result.query, reading, gloss, pos });
+    const { cardId } = await addCardForWord(LOCAL_USER_ID, { deckId, term: result.query, reading, gloss, pos });
     setLastDeckId(deckId);
     setPickerOpen(false);
     onMine?.({ term: result.query, reading, gloss, cardId });

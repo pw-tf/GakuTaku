@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAuth } from '../auth/AuthProvider';
+import { LOCAL_USER_ID } from '../app/localUser';
 import { Btn, Chip } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { loadFeedArticles, relTimeJa, unreadCount } from './articles';
@@ -63,7 +63,6 @@ interface Props {
 
 /** Library "Feeds" section: enabled feeds with latest-article previews, plus manage/add. */
 export function FeedsSection({ onOpenFeed }: Props) {
-  const { session } = useAuth();
   const { feeds } = useFeeds();
   const [manage, setManage] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -102,7 +101,7 @@ export function FeedsSection({ onOpenFeed }: Props) {
                 role="switch"
                 aria-checked={f.enabled}
                 title={f.enabled ? 'Turn off' : 'Turn on'}
-                onClick={() => session && setFeedEnabled(f, session.user.id, !f.enabled)}
+                onClick={() => setFeedEnabled(f, LOCAL_USER_ID, !f.enabled)}
               />
             </div>
           ))}
@@ -140,7 +139,7 @@ export function FeedsSection({ onOpenFeed }: Props) {
         </div>
       )}
 
-      {adding && session && <AddFeedModal userId={session.user.id} onClose={() => setAdding(false)} />}
+      {adding && <AddFeedModal userId={LOCAL_USER_ID} onClose={() => setAdding(false)} />}
     </>
   );
 }

@@ -1,9 +1,0 @@
-# Cloudflare Workers Static Assets config (used by `wrangler deploy`).
-# This is an assets-only Worker — no server script, just the built SPA in ./dist.
-name = "gakutaku"
-compatibility_date = "2025-06-01"
-
-[assets]
-directory = "./dist"
-# Serve index.html for unknown client-side routes (SPA fallback).
-not_found_handling = "single-page-application"

@@ -3,13 +3,13 @@
  *
  * Usage:
  *   1. Download these from https://github.com/scriptin/jmdict-simplified/releases/latest
- *      into ./dict-src/ :
+ *      into ./dict-src/ (CI does this automatically — see .github/workflows/android.yml):
  *        - jmdict-eng-<ver>.json        (full English JMdict)
  *        - jmnedict-all-<ver>.json      (names)
  *        - kanjidic2-en-<ver>.json      (kanji)
  *   2. npm run build:dict
- *      → writes ./dict-build/{manifest.json, kanji-jlpt.json.gz, b/0000.json.gz …}
- *   3. npm run upload:dict   (uploads ./dict-build to Supabase Storage)
+ *      → writes ./public/dict/jmdict/{manifest.json, kanji-jlpt.json.gz, b/0000.json.gz …},
+ *        which the next app build bundles (gitignored — it is regenerated, not committed).
  *
  * Each entry is filed under every headword it can be found by, and each headword lives in the
  * bucket its hash picks (src/dictionary/types.ts `bucketOf` — the runtime uses the same function).
@@ -42,7 +42,7 @@ import {
 } from '../src/dictionary/types';
 
 const SRC_DIR = 'dict-src';
-const OUT_DIR = 'dict-build';
+const OUT_DIR = 'public/dict/jmdict';
 const TMP_DIR = join(OUT_DIR, '.tmp');
 /** ~4k buckets keeps a single bucket around 20 KB gzipped — one lookup, one small request. */
 const BUCKET_COUNT = 4096;

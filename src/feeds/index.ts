@@ -1,4 +1,4 @@
-// M7 — RSS feeds. The CORS/charset proxy lives in supabase/functions/rss-proxy;
+// RSS feeds. Fetching (native HTTP on Android, charset decoding) lives in ./proxy.ts;
 // everything else (parsing, extraction, UI) is client-side in this folder.
 export { FeedsSection } from './FeedsSection';
 export { FeedArticles } from './FeedArticles';

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { useAuth } from '../auth/AuthProvider';
+import { useBackHandler } from './back';
 import { ensurePresetsMigrated } from '../srs/presetOps';
 import { sweepExpiredBuried } from '../srs/cardOps';
 import { Icon, type IconName } from '../ui/icons';
@@ -14,7 +14,8 @@ import type { ReviewSource } from '../srs/useReview';
 import { useStudyCount, type DeckStat } from '../srs/srsHooks';
 import { useStreak } from '../analytics/analyticsHooks';
 import type { MinedItem } from '../ui/LookupPopup';
-import type { DocumentRecord } from '../sync/AppSchema';
+import type { DocumentRecord } from '../db/schema';
+import { LOCAL_USER_ID } from './localUser';
 import type { FeedArticle } from '../feeds/parse';
 import type { FeedView } from '../feeds/useFeeds';
 
@@ -40,7 +41,6 @@ const BookReader = lazy(() => import('../reader/BookReader').then((m) => ({ defa
 const ArticleReader = lazy(() => import('../feeds/ArticleReader').then((m) => ({ default: m.ArticleReader })));
 
 export function AppShell() {
-  const { session, signOut } = useAuth();
   const [view, setView] = useState<View>('library');
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [book, setBook] = useState<DocumentRecord | null>(null);
@@ -57,17 +57,21 @@ export function AppShell() {
   // SRS housekeeping: migrate legacy per-deck config into presets (one-shot, idempotent) and
   // converge expired burials back to active — Anki's day-rollover unbury — on load and whenever
   // the tab comes back into view (it may have been open across a rollover).
-  const userId = session?.user.id;
   useEffect(() => {
-    if (!userId) return;
-    void ensurePresetsMigrated(userId).catch(() => undefined);
+    void ensurePresetsMigrated(LOCAL_USER_ID).catch(() => undefined);
     void sweepExpiredBuried().catch(() => undefined);
     const onVisible = () => {
       if (document.visibilityState === 'visible') void sweepExpiredBuried().catch(() => undefined);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [userId]);
+  }, []);
+
+  // Android back: close the innermost open thing; on a tab other than Library, go to Library.
+  useBackHandler(view !== 'library', () => setView('library'));
+  useBackHandler(overlay !== null, () => setOverlay(null));
+  useBackHandler(settingsOpen, () => setSettingsOpen(false));
+  useBackHandler(menuOpen, () => setMenuOpen(false));
 
   function openBook(b: DocumentRecord) {
     setBook(b);
@@ -93,8 +97,6 @@ export function AppShell() {
     setView(item.id);
   }
 
-  const email = session?.user.email ?? '';
-  const initial = (email[0] ?? 'A').toUpperCase();
   const [title, subtitle] = TITLES[view];
 
   return (
@@ -126,19 +128,11 @@ export function AppShell() {
             />
           )}
           <div className="user-row" style={{ cursor: 'pointer' }} onClick={() => setSettingsOpen((o) => !o)}>
-            <div className="avatar">{initial}</div>
+            <span className="nav-ic"><Icon.gear s={20} /></span>
             <div className="sf-text">
-              <div className="nm">{email.split('@')[0] || 'Reader'}</div>
-              <div className="em">{email}</div>
+              <div className="nm">Settings</div>
             </div>
-            <span style={{ marginLeft: 'auto', color: 'var(--ink-faint)' }}><Icon.gear s={18} /></span>
           </div>
-          <a
-            style={{ fontSize: 12, color: 'var(--ink-faint)', cursor: 'pointer', padding: '0 6px' }}
-            onClick={() => signOut()}
-          >
-            Sign out
-          </a>
         </div>
       </aside>
 
@@ -148,7 +142,6 @@ export function AppShell() {
           <h1>{title}</h1>
           <span className="sub" lang="ja">{subtitle}</span>
           <span className="spacer" />
-          <div className="searchbox"><Icon.search s={16} /><input placeholder="Search words, books…" /></div>
         </div>
         <div className="scroll">
           {view === 'library' && <LibraryScreen onOpenBook={openBook} onOpenArticle={openArticle} due={dueCount} dueLoading={due.loading} streak={streak} />}
@@ -209,10 +202,6 @@ export function AppShell() {
               <span className="brand"><span className="mk" lang="ja">学</span><span className="wd">GakuTaku</span></span>
               <button className="icon-btn" onClick={() => setMenuOpen(false)}><Icon.close s={18} /></button>
             </div>
-            <div className="user-row" style={{ padding: '4px 0 12px' }}>
-              <div className="avatar">{initial}</div>
-              <div className="sf-text"><div className="nm">{email.split('@')[0] || 'Reader'}</div><div className="em">{email}</div></div>
-            </div>
             <SettingsContent
               onOpenCredits={() => {
                 setOverlay(null);
@@ -220,15 +209,6 @@ export function AppShell() {
                 setMenuOpen(false);
               }}
             />
-            <a
-              style={{ fontSize: 13, color: 'var(--ink-faint)', cursor: 'pointer', marginTop: 6 }}
-              onClick={() => {
-                setMenuOpen(false);
-                signOut();
-              }}
-            >
-              Sign out
-            </a>
           </div>
         </div>
       )}

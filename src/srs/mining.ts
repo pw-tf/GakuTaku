@@ -1,4 +1,4 @@
-import { db } from '../sync/system';
+import { db } from '../db';
 import { parseJsonObject } from './fsrs';
 import { ensureDefaultPreset, resolveDeckConfigById } from './presetOps';
 import { nextNewPosition } from './cardOps';

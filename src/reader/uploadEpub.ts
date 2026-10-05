@@ -1,14 +1,10 @@
-import { supabase } from '../sync/supabase';
-import { db } from '../sync/system';
+import { db } from '../db';
 import { openEpub } from './epub';
 import { putBlob } from './bookCache';
 
-const BUCKET = 'documents';
-
 /**
- * Upload an ePUB: store the binary in Supabase Storage (private, per-user path), record metadata in
- * the synced `documents` table, and cache the blob locally for immediate offline reading.
- * Returns the new document id.
+ * Add an ePUB to the library: record its metadata in `documents` and keep the file itself in the
+ * on-device book store. Returns the new document id.
  */
 export async function uploadEpub(file: File, userId: string): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -26,19 +22,12 @@ export async function uploadEpub(file: File, userId: string): Promise<string> {
   }
 
   const docId = crypto.randomUUID();
-  const path = `${userId}/${docId}.epub`;
-
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, file, { contentType: 'application/epub+zip', upsert: false });
-  if (error) throw new Error(`Upload failed: ${error.message}`);
-
+  // Store the file first: a library row without its file can't be opened.
+  await putBlob(docId, file);
   await db.execute(
     `INSERT INTO documents (id, user_id, title, type, source, storage_path, language, added_at)
-     VALUES (?, ?, ?, 'application/epub+zip', 'upload', ?, 'ja', ?)`,
-    [docId, userId, creator ? `${title} — ${creator}` : title, path, new Date().toISOString()],
+     VALUES (?, ?, ?, 'application/epub+zip', 'upload', NULL, 'ja', ?)`,
+    [docId, userId, creator ? `${title} — ${creator}` : title, new Date().toISOString()],
   );
-
-  await putBlob(docId, file);
   return docId;
 }

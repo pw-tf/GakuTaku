@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '../sync/hooks';
+import { useQuery } from '../db/hooks';
 import { computeAnalytics, computeStreak, type AnalyticsCard, type AnalyticsData, type AnalyticsLog } from './analytics';
 
 /**
  * Reactive analytics over the synced `review_logs` + `cards` caches (build plan M5). Thin wrapper
- * around PowerSync's `useQuery`, like `src/srs/srsHooks.ts`: the queries re-run when the underlying
+ * around the live `useQuery` hook, like `src/srs/srsHooks.ts`: the queries re-run when the underlying
  * tables change, and the pure {@link computeAnalytics} fold runs in a `useMemo`.
  */
 

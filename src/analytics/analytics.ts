@@ -1,4 +1,4 @@
-import type { ReviewLogRecord } from '../sync/AppSchema';
+import type { ReviewLogRecord } from '../db/schema';
 import { Rating, State, cardStateLabel, replaySteps } from '../srs/fsrs';
 import { parsePresetConfig, resolveDeckConfig } from '../srs/presets';
 

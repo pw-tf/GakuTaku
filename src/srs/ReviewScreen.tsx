@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
-import { useAuth } from '../auth/AuthProvider';
-import { db } from '../sync/system';
+import { LOCAL_USER_ID } from '../app/localUser';
+import { db } from '../db';
 import { CardTemplate, replayCardAudio } from './CardTemplate';
 import { EditCardModal } from './EditCardModal';
 import { useReview, type ReviewSource } from './useReview';
@@ -31,12 +31,11 @@ function sourceLabel(source: ReviewSource): string {
  *  appends a review_log; the card's state is derived from its logs (§3.3). Cards in a (re)learning
  *  step reappear within the session until they graduate. Interval previews come straight from ts-fsrs. */
 export function ReviewScreen({ source, onExit }: Props) {
-  const { session } = useAuth();
   const review = useReview(source);
   const { current, shown, gradePreviews, counts } = review;
   const [editing, setEditing] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const userId = session?.user.id ?? '';
+  const userId = LOCAL_USER_ID;
 
   // --- Card actions (Anki parity). Bury/suspend/forget/set-due remove the card from the session;
   // they are deliberately not Z-undoable — only answers are, matching this session model.
@@ -295,7 +294,6 @@ export function ReviewScreen({ source, onExit }: Props) {
               css={current.generic.css}
               ord={current.generic.ord}
               shown={shown}
-              userId={userId}
               meta={{
                 tags: current.generic.tags,
                 deckName: current.generic.deckName,

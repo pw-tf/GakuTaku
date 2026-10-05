@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { jpCore, proxy } from '../jp-core/client';
-import type { LoadProgress } from '../dictionary/loader';
 import type { FuriToken } from '../jp-core/worker';
 import { usePrefs, type ReaderFontScale, type ReaderOrientation, type ReaderWidth } from '../app/prefs';
-import { useTasks, isTaskRunning } from '../app/tasks';
 import { useLookup } from '../jp-core/lookupService';
 import { TokenizedText } from '../ui/FuriganaText';
 import { LookupPopup, type MinedItem } from '../ui/LookupPopup';
@@ -21,8 +18,6 @@ const WHEEL_MIN = 60;
 const WHEEL_COOLDOWN_MS = 350;
 /** A quiet gap this long starts a fresh gesture (drops a stale part-accumulated delta). */
 const WHEEL_GESTURE_GAP_MS = 300;
-/** Background-task id for the one-time offline dictionary download (shared with the shell banner). */
-const DICT_TASK = 'dict-download';
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 interface Props {
@@ -102,53 +97,6 @@ export function Reader(props: Props) {
   const pendingSave = useRef(false);
   /** Swallow the scroll event caused by a programmatic restore (so it can't clobber the saved spot). */
   const ignoreScroll = useRef(false);
-
-  // Lookup works straight away — the dictionary is fetched a bucket at a time as words are tapped
-  // (src/dictionary/store.ts). This tracks only the *optional* whole-dictionary download, for
-  // readers who want every word available offline rather than just the ones they've looked up.
-  const [dictStatus, setDictStatus] = useState<'checking' | 'need' | 'loading' | 'ready'>('checking');
-  const [dictPct, setDictPct] = useState(0);
-  const [dictMb, setDictMb] = useState<number | null>(null);
-  useEffect(() => {
-    // If a download is already running (e.g. started, then the reader was reopened), reflect that.
-    if (isTaskRunning(DICT_TASK)) {
-      setDictStatus('loading');
-      return;
-    }
-    jpCore
-      .offlineStatus()
-      .then((s) => {
-        setDictMb(Math.round(s.totalBytes / (1024 * 1024)));
-        setDictStatus(s.complete ? 'ready' : 'need');
-      })
-      .catch(() => setDictStatus('need'));
-  }, []);
-  // The download may have been started by an earlier Reader mount; the shared task is the source of
-  // truth, so mirror its progress and completion here rather than only tracking our own call.
-  const dictTask = useTasks((s) => s.tasks.find((t) => t.id === DICT_TASK));
-  useEffect(() => {
-    if (!dictTask) return;
-    if (dictTask.status === 'running') {
-      setDictStatus('loading');
-      if (dictTask.total > 0) setDictPct(Math.round((dictTask.done / dictTask.total) * 100));
-    } else if (dictTask.status === 'success') setDictStatus('ready');
-    else setDictStatus('need');
-  }, [dictTask]);
-  async function downloadDict() {
-    if (isTaskRunning(DICT_TASK)) return;
-    setDictStatus('loading');
-    const tasks = useTasks.getState();
-    tasks.start(DICT_TASK, 'Saving dictionary for offline');
-    tasks.update(DICT_TASK, { message: 'Lookup already works — this makes every word available offline.' });
-    try {
-      await jpCore.ensureDictionary(proxy((p: LoadProgress) => {
-        tasks.update(DICT_TASK, { done: p.loaded, total: p.total });
-      }));
-      tasks.finish(DICT_TASK, 'success', 'Whole dictionary saved — lookup works offline.');
-    } catch (err) {
-      tasks.finish(DICT_TASK, 'error', err instanceof Error ? err.message : 'Dictionary download failed.');
-    }
-  }
 
   // Global token-key offset per paragraph (active-word highlight maps across the whole chapter).
   const offsets = useMemo(() => {
@@ -584,24 +532,6 @@ export function Reader(props: Props) {
                   ))}
                 </div>
               </div>
-
-              {dictStatus !== 'ready' && (
-                <div className="rail-sec">
-                  <div className="rs-h"><Kicker>Offline dictionary</Kicker></div>
-                  {dictStatus === 'loading' ? (
-                    <div style={{ height: 8, width: '100%', overflow: 'hidden', borderRadius: 99, background: 'var(--rule)' }}>
-                      <div style={{ height: '100%', width: `${dictPct}%`, background: 'var(--accent)', transition: 'width .3s' }} />
-                    </div>
-                  ) : (
-                    <Btn size="sm" onClick={downloadDict} disabled={dictStatus === 'checking'} style={{ justifyContent: 'center' }}>
-                      Save for offline{dictMb ? ` (${dictMb} MB)` : ''}
-                    </Btn>
-                  )}
-                  <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6 }}>
-                    Word lookup already works — words you tap are kept for offline use. This saves the rest too.
-                  </div>
-                </div>
-              )}
 
               <hr className="hr" />
               <div className="rail-sec">

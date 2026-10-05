@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '../sync/supabase';
-import { db } from '../sync/system';
+import { db } from '../db';
 import { jpCore } from '../jp-core/client';
 import type { FuriToken } from '../jp-core/worker';
-import type { DocumentRecord } from '../sync/AppSchema';
+import type { DocumentRecord } from '../db/schema';
 import { openEpub, type EpubBook } from './epub';
-import { getBlob, putBlob } from './bookCache';
-
-const BUCKET = 'documents';
+import { getBlob } from './bookCache';
 
 /** Where to land when a chapter's paragraphs render. */
 export type RestoreTarget =
@@ -38,12 +35,9 @@ interface BookState {
 }
 
 async function resolveBlob(doc: DocumentRecord): Promise<ArrayBuffer> {
-  const cached = await getBlob(doc.id);
-  if (cached) return cached.arrayBuffer();
-  const { data, error } = await supabase.storage.from(BUCKET).download(doc.storage_path ?? '');
-  if (error || !data) throw new Error(`Could not download book: ${error?.message ?? 'missing'}`);
-  await putBlob(doc.id, data);
-  return data.arrayBuffer();
+  const blob = await getBlob(doc.id);
+  if (!blob) throw new Error('The book file is missing from this device. Remove it and add it again.');
+  return blob.arrayBuffer();
 }
 
 /**

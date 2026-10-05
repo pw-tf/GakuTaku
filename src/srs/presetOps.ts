@@ -1,5 +1,5 @@
-import { db } from '../sync/system';
-import type { DeckPresetRecord } from '../sync/AppSchema';
+import { db } from '../db';
+import type { DeckPresetRecord } from '../db/schema';
 import {
   DEFAULT_PRESET_NAME,
   defaultPresetConfig,

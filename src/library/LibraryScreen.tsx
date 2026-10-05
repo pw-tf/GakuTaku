@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth } from '../auth/AuthProvider';
+import { LOCAL_USER_ID } from '../app/localUser';
+import { fileAccept } from '../app/platform';
 import { Btn, Kicker, Spinner } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
-import { useDocuments, useReadingPositions } from '../sync/hooks';
-import type { DocumentRecord } from '../sync/AppSchema';
+import { useDocuments, useReadingPositions } from '../db/hooks';
+import type { DocumentRecord } from '../db/schema';
 import { FeedsSection } from '../feeds/FeedsSection';
 import { FeedArticles } from '../feeds/FeedArticles';
 import type { FeedArticle } from '../feeds/parse';
@@ -49,7 +50,6 @@ interface Props {
 }
 
 export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, streak }: Props) {
-  const { session } = useAuth();
   const { data: docs } = useDocuments();
   const { data: positions } = useReadingPositions();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -78,14 +78,14 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !session) return;
+    if (!file) return;
     e.target.value = '';
-    await importFile(file, session.user.id);
+    await importFile(file, LOCAL_USER_ID);
   }
 
   return (
     <div className="page">
-      <input ref={fileRef} type="file" accept=".epub,application/epub+zip,.apkg" hidden onChange={onFile} />
+      <input ref={fileRef} type="file" accept={fileAccept('.epub,application/epub+zip,.apkg')} hidden onChange={onFile} />
 
       <div className="lib-hero">
         <div className="cont-card" onClick={() => cont && onOpenBook(cont)} style={{ cursor: cont ? 'pointer' : 'default' }}>

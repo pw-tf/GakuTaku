@@ -201,11 +201,11 @@ class AudioPlayer {
   }
 
   /** Play tokens in order, stopping early if anything else takes over playback. */
-  async playSequence(tokens: string[], userId: string): Promise<void> {
+  async playSequence(tokens: string[]): Promise<void> {
     this.stop();
     const gen = this.gen;
     for (const token of tokens) {
-      const url = await resolveMedia(token, userId);
+      const url = await resolveMedia(token);
       if (gen !== this.gen) return;
       if (!url) continue;
       const el = new Audio(url);
@@ -241,7 +241,6 @@ interface Props {
   /** Card template/cloze ordinal (Anki `ord`); the active cloze is `ord + 1`. */
   ord: number;
   shown: boolean;
-  userId: string;
   meta?: CardMeta;
 }
 
@@ -251,7 +250,7 @@ interface Props {
  */
 export let replayCardAudio: () => void = () => {};
 
-export function CardTemplate({ front, back, fields, css, ord, shown, userId, meta }: Props) {
+export function CardTemplate({ front, back, fields, css, ord, shown, meta }: Props) {
   const dark = usePrefs((s) => s.dark);
   const autoplayAudio = usePrefs((s) => s.autoplayAudio);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -300,7 +299,7 @@ export function CardTemplate({ front, back, fields, css, ord, shown, userId, met
     root.querySelectorAll<HTMLElement>('[data-media]').forEach((node) => {
       const token = node.getAttribute('data-media');
       if (!token) return;
-      void resolveMedia(token, userId).then((url) => {
+      void resolveMedia(token).then((url) => {
         if (url && alive && node.tagName === 'IMG') (node as HTMLImageElement).src = url;
       });
     });
@@ -314,7 +313,7 @@ export function CardTemplate({ front, back, fields, css, ord, shown, userId, met
       node.title = 'Play audio';
       // Mark refs whose blob isn't available (never imported, or offline before first download) so a
       // dead speaker button reads as dead instead of silently doing nothing when clicked.
-      void resolveMedia(token, userId).then((url) => {
+      void resolveMedia(token).then((url) => {
         if (!url && alive) {
           node.classList.add('missing');
           node.title = 'Audio unavailable — reimport this deck, or go online once to fetch it';
@@ -322,14 +321,14 @@ export function CardTemplate({ front, back, fields, css, ord, shown, userId, met
       });
       node.onclick = (e) => {
         e.stopPropagation(); // don't let a replay also reveal the answer
-        void player.playSequence([token], userId);
+        void player.playSequence([token]);
       };
     }
     // Anki's autoplay: the question's clips on the question, the answer's own clips on reveal
     // (anything inside the {{FrontSide}} copy was already heard).
     const autoNodes = shown ? audioNodes.filter((n) => !n.closest('[data-frontside]')) : audioNodes;
     const autoTokens = autoNodes.map((n) => n.getAttribute('data-audio')!);
-    replayRef.current = () => void player.playSequence(autoTokens, userId);
+    replayRef.current = () => void player.playSequence(autoTokens);
     if (autoplayRef.current && autoTokens.length) replayRef.current();
     // {{hint:…}}: clicking the field-name link reveals the hidden content (like Anki).
     root.querySelectorAll<HTMLAnchorElement>('a[data-hint]').forEach((a) => {
@@ -357,7 +356,7 @@ export function CardTemplate({ front, back, fields, css, ord, shown, userId, met
       alive = false;
       player.stop();
     };
-  }, [html, css, dark, userId, shown]);
+  }, [html, css, dark, shown]);
 
   return <div className="card-shadow-host" ref={hostRef} lang="ja" />;
 }

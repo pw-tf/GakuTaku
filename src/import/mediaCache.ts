@@ -6,8 +6,7 @@ interface CachedMedia {
   blob: Blob;
 }
 
-/** Local cache of imported Anki media (images/audio) for offline rendering; mirrors the `media`
- *  Storage bucket, the same way {@link ../reader/bookCache} caches ePUB blobs. */
+/** The on-device store of imported Anki media (images/audio), keyed `importId/name`. */
 class MediaCacheDB extends Dexie {
   media!: Table<CachedMedia, string>;
   constructor() {

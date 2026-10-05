@@ -2,7 +2,6 @@ import * as Comlink from 'comlink';
 import Tokenizer, { type IpadicToken } from '@sglkc/kuromoji/src/Tokenizer';
 import BrowserDictionaryLoader from '@sglkc/kuromoji/src/loader/BrowserDictionaryLoader';
 import { alignFurigana, type FuriSegment } from './furigana';
-import { ensureDictionary, isDictionaryLoaded, offlineStatus, type LoadProgress } from '../dictionary/loader';
 import { lookup as dictLookup, advancedKanji } from '../dictionary/lookup';
 import type { LookupResult } from '../dictionary/types';
 
@@ -98,13 +97,6 @@ const api = {
         };
       }),
     );
-  },
-
-  isDictionaryLoaded,
-  offlineStatus,
-
-  async ensureDictionary(onProgress?: (p: LoadProgress) => void): Promise<void> {
-    await ensureDictionary(onProgress ? (p) => void onProgress(p) : undefined);
   },
 
   async lookup(term: string, basicForm?: string): Promise<LookupResult> {

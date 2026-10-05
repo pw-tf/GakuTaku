@@ -9,6 +9,8 @@ body { overflow: hidden; }
 
 /* accent override hook (set by prefs) + dark-mode color guard on app root */
 .app { --accent: var(--rust); color: var(--ink); background: var(--paper); }
+.app-msg { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 24px; text-align: center; color: var(--ink-faint); }
+.storage-warning { position: fixed; top: 0; left: 0; right: 0; z-index: 200; padding: 6px 16px; font-size: 12px; text-align: center; background: var(--rate-again, #b8492f); color: #fff; }
 
 /* ---------- App shell ---------- */
 .shell { display: grid; grid-template-columns: 232px 1fr; height: 100vh; height: 100dvh; background: var(--paper); }
