@@ -162,6 +162,9 @@ body { overflow: hidden; }
 .rd-page-view.vertical .rd-pages { width: max-content; padding: 7vh 56px; writing-mode: vertical-rl; line-height: 2.2; }
 .rd-page-view.vertical .rd-pages p { margin: 0; padding: 0; }
 .rd-page-view.vertical .rd-pages ruby rt { text-orientation: upright; }
+/* 縦中横: short Latin runs in vertical text (inert horizontally). */
+.tcy { text-combine-upright: all; -webkit-text-combine: horizontal; }
+.upr { text-orientation: upright; }
 /* Opaque page margins for tategaki paging (widths set from measured geometry). */
 .rd-page-view.vertical .rd-edge-mask { position:absolute; top:0; bottom:0; background: var(--paper); z-index:2; pointer-events:none; }
 
@@ -193,14 +196,15 @@ body { overflow: hidden; }
 .m-item .mg { font-size: 12px; color: var(--ink-soft); margin-left:auto; text-align:right; }
 
 /* ---------- Lookup popup ---------- */
-.lookup-pop { position: fixed; z-index: 60; width: 348px; background: var(--paper-raised); border: 1px solid var(--rule-strong); border-radius: var(--radius-lg); box-shadow: 0 22px 48px -22px oklch(0.2 0.02 60/.5); overflow:hidden; animation: pop .14s ease; }
+.lookup-pop { position: fixed; z-index: 60; width: 348px; display: flex; flex-direction: column; background: var(--paper-raised); border: 1px solid var(--rule-strong); border-radius: var(--radius-lg); box-shadow: 0 22px 48px -22px oklch(0.2 0.02 60/.5); overflow:hidden; animation: pop .14s ease; }
 @keyframes pop { from { opacity:0; transform: translateY(6px) scale(.98); } }
 .lk-head { padding: 16px 18px 13px; border-bottom: 1px solid var(--rule); }
 .lk-term { display:flex; align-items:baseline; gap: 12px; }
 .lk-term .tm { font-family: var(--jp-mincho); font-size: 30px; font-weight: 600; }
 .lk-term .rd { font-family: var(--jp-gothic); font-size: 15px; color: var(--ink-soft); }
 .lk-tags { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
-.lk-body { padding: 14px 18px; max-height: 220px; overflow-y:auto; }
+.lk-body { padding: 14px 18px; max-height: 220px; min-height: 48px; flex: 0 1 auto; overflow-y:auto; overscroll-behavior: contain; }
+.lookup-pop > :not(.lk-body) { flex-shrink: 0; }
 .lk-sense { display:flex; gap:10px; font-size: 14.5px; line-height:1.5; }
 .lk-sense + .lk-sense { margin-top: 9px; }
 .lk-sense .n { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); padding-top:2px; }

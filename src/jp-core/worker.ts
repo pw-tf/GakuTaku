@@ -61,6 +61,28 @@ export interface TokenLite {
   pos: string;
 }
 
+/** Arabic numerals, half- or full-width (kuromoji leaves these without a reading). */
+const NUMERAL = /^[0-9０-９]+$/;
+
+/**
+ * Tokens with furigana. The dictionary reads a lone 月 as つき, so after a number (10月) it would
+ * gloss the month as "moon"; read it as がつ there.
+ */
+function toFuriTokens(tokens: IpadicToken[], advSet: Set<string> | null): FuriToken[] {
+  return tokens.map((t, i) => {
+    let reading = cleanReading(t.reading);
+    if (t.surface_form === '月' && i > 0 && NUMERAL.test(tokens[i - 1].surface_form)) reading = 'ガツ';
+    return {
+      surface: t.surface_form,
+      basic: t.basic_form,
+      reading,
+      pos: t.pos,
+      segments: alignFurigana(t.surface_form, reading),
+      adv: advSet ? [...t.surface_form].some((c) => advSet.has(c)) : undefined,
+    };
+  });
+}
+
 const api = {
   /** Build the tokenizer (loads the kuromoji dictionary once). */
   async warmup(): Promise<void> {
@@ -84,17 +106,7 @@ const api = {
     // Advanced-kanji set for "N3+" density; null when the kanji index can't be reached.
     const advList = await advancedKanji(text);
     const advSet = advList ? new Set(advList) : null;
-    return tokens.map((t: IpadicToken) => {
-      const reading = cleanReading(t.reading);
-      return {
-        surface: t.surface_form,
-        basic: t.basic_form,
-        reading,
-        pos: t.pos,
-        segments: alignFurigana(t.surface_form, reading),
-        adv: advSet ? [...t.surface_form].some((c) => advSet.has(c)) : undefined,
-      };
-    });
+    return toFuriTokens(tokens, advSet);
   },
 
   /** Batched furigana for many paragraphs (one chapter) — computes the advanced-kanji set once. */
@@ -102,19 +114,7 @@ const api = {
     const tokenizer = await getTokenizer();
     const advList = await advancedKanji(texts.join(''));
     const advSet = advList ? new Set(advList) : null;
-    return texts.map((text) =>
-      tokenizer.tokenize(text).map((t: IpadicToken) => {
-        const reading = cleanReading(t.reading);
-        return {
-          surface: t.surface_form,
-          basic: t.basic_form,
-          reading,
-          pos: t.pos,
-          segments: alignFurigana(t.surface_form, reading),
-          adv: advSet ? [...t.surface_form].some((c) => advSet.has(c)) : undefined,
-        };
-      }),
-    );
+    return texts.map((text) => toFuriTokens(tokenizer.tokenize(text), advSet));
   },
 
   async lookup(term: string, basicForm?: string): Promise<LookupResult> {
