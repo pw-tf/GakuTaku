@@ -65,3 +65,24 @@ export async function deleteBookFiles(id: string): Promise<void> {
     await cacheDb.covers.delete(id);
   });
 }
+
+/** Every stored book's files, one book at a time (for backups). */
+export async function* allBookFiles(): AsyncGenerator<{ id: string; file?: Blob; text?: TextBookData; cover?: Blob }> {
+  const ids = new Set([
+    ...((await cacheDb.books.toCollection().primaryKeys()) as string[]),
+    ...((await cacheDb.texts.toCollection().primaryKeys()) as string[]),
+  ]);
+  for (const id of ids) {
+    yield { id, file: await getBlob(id), text: await getText(id), cover: await getCover(id) };
+  }
+}
+
+/** Delete the stored files of every book whose id isn't in `keep`. */
+export async function pruneBookFiles(keep: Set<string>): Promise<void> {
+  const ids = new Set([
+    ...((await cacheDb.books.toCollection().primaryKeys()) as string[]),
+    ...((await cacheDb.texts.toCollection().primaryKeys()) as string[]),
+    ...((await cacheDb.covers.toCollection().primaryKeys()) as string[]),
+  ]);
+  for (const id of ids) if (!keep.has(id)) await deleteBookFiles(id);
+}

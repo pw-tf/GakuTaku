@@ -1,12 +1,16 @@
 import { useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useBackHandler } from '../app/back';
 import { Btn } from './atoms';
 import { Icon } from './icons';
 
-/** A centered dialog. Closes on backdrop tap and on the Android back button. */
+/**
+ * A centered dialog. Closes on backdrop tap and on the Android back button. Rendered into <body> so a
+ * dialog opened from a popover or drawer isn't clipped or positioned by it.
+ */
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   useBackHandler(true, onClose);
-  return (
+  return createPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card" style={wide ? { width: 'min(640px, 100%)' } : undefined} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
@@ -15,7 +19,8 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

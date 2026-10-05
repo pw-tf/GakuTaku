@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { ACCENTS, usePrefs } from '../app/prefs';
+import { BackupSection } from '../backup/BackupSection';
 
 interface ContentProps {
   onOpenCredits: () => void;
@@ -61,6 +62,10 @@ export function SettingsContent({ onOpenCredits }: ContentProps) {
       </div>
 
       <div className="set-sec">
+        <BackupSection />
+      </div>
+
+      <div className="set-sec">
         <div style={{ fontSize: 11, color: 'var(--ink-faint)', lineHeight: 1.5 }}>
           Study settings (day rollover, FSRS, audio autoplay, limits) are under a deck's Options, as in Anki.
         </div>
@@ -90,8 +95,8 @@ export function Settings({ onClose, onOpenCredits }: Props) {
   useEffect(() => {
     function onDown(e: MouseEvent) {
       const t = e.target as HTMLElement;
-      // Ignore clicks on the user row (it toggles the popover itself).
-      if (ref.current && !ref.current.contains(t) && !t.closest('.user-row')) onClose();
+      // Ignore clicks on the user row (it toggles the popover itself) and in dialogs opened from here.
+      if (ref.current && !ref.current.contains(t) && !t.closest('.user-row') && !t.closest('.modal-backdrop')) onClose();
     }
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
