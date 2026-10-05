@@ -34,6 +34,8 @@ interface BookState {
   /** The raw paragraph strings of the current chapter (sentence capture for mining). */
   texts: string[];
   paragraphs: FuriToken[][];
+  /** A chapter's pictures when it has no text (object URLs). */
+  images: string[];
   loadingChapter: boolean;
   /** Target the Reader applies once the chapter's paragraphs are on screen. */
   restore: RestoreTarget;
@@ -64,12 +66,12 @@ function parseLocator(loc: string): { chapter: number; anchor: { paragraphIndex:
   return { chapter: Number(ch) || 0, anchor: { paragraphIndex: 0, fraction: 0 } };
 }
 
-async function readPosition(docId: string): Promise<{ chapter: number; anchor: { paragraphIndex: number; fraction: number } }> {
+async function readPosition(docId: string): Promise<{ chapter: number; anchor: { paragraphIndex: number; fraction: number }; saved: boolean }> {
   const rows = await db.getAll<{ locator: string | null }>(
     'SELECT locator FROM reading_positions WHERE document_id = ? LIMIT 1',
     [docId],
   );
-  return parseLocator(rows[0]?.locator ?? '');
+  return { ...parseLocator(rows[0]?.locator ?? ''), saved: !!rows[0]?.locator };
 }
 
 export function useBook(doc: DocumentRecord, userId: string) {
@@ -83,6 +85,7 @@ export function useBook(doc: DocumentRecord, userId: string) {
     toc: [],
     texts: [],
     paragraphs: [],
+    images: [],
     loadingChapter: false,
     restore: { kind: 'top' },
   });
@@ -103,7 +106,16 @@ export function useBook(doc: DocumentRecord, userId: string) {
         }
         bookRef.current = book;
         const pos = await readPosition(doc.id);
-        const startChapter = Math.min(pos.chapter, Math.max(0, book.chapterCount - 1));
+        let startChapter = Math.min(pos.chapter, Math.max(0, book.chapterCount - 1));
+        if (!pos.saved) {
+          // A first read opens on the first page with text (past a cover or title picture).
+          for (let i = 0; i < Math.min(book.chapterCount, 4); i++) {
+            if ((await book.loadChapter(i)).length) {
+              startChapter = i;
+              break;
+            }
+          }
+        }
         setState((s) => ({
           ...s,
           title: book.title || s.title,
@@ -140,12 +152,14 @@ export function useBook(doc: DocumentRecord, userId: string) {
     setState((s) => ({ ...s, loadingChapter: true }));
     const texts = await book.loadChapter(index);
     const tokens = texts.length ? await jpCore.furiganaForMany(texts) : [];
+    const images = !texts.length && book.loadImages ? await book.loadImages(index).catch(() => []) : [];
     setState((s) => ({
       ...s,
       status: 'ready',
       chapterIndex: index,
       texts,
       paragraphs: tokens,
+      images,
       loadingChapter: false,
       restore,
     }));

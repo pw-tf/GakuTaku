@@ -252,5 +252,28 @@ const VOCAB_BACK_V1 = `{{FrontSide}}
   eq('no duplicate stock note types', (await col.notetypes()).filter((n) => n.name === VOCAB_NOTETYPE_NAME).length, 1);
 }
 
+
+// ---- File kind detection (names without an extension, as some Android pickers give) ----
+{
+  const { detectFileKind } = await import('../src/import/sniff');
+  const { BlobWriter, TextReader, ZipWriter } = await import('@zip.js/zip.js');
+  const zipOf = async (files: [string, string][], level = 0) => {
+    const w = new ZipWriter(new BlobWriter('application/zip'));
+    for (const [name, text] of files) await w.add(name, new TextReader(text), { level });
+    return w.close();
+  };
+  const named = (b: Blob, name: string, type = '') => Object.assign(new Blob([b], { type }), { name });
+  const epub = await zipOf([['mimetype', 'application/epub+zip'], ['META-INF/container.xml', '<container/>'], ['OEBPS/content.opf', '<package/>']]);
+  eq('kind: by extension', await detectFileKind(named(new Blob(['x']), 'Book.EPUB')), 'epub');
+  eq('kind: ePUB with no extension (mimetype entry)', await detectFileKind(named(epub, 'document:1234')), 'epub');
+  eq('kind: ePUB whose mimetype isn’t first (container)', await detectFileKind(named(await zipOf([['META-INF/container.xml', '<c/>'], ['mimetype', 'application/epub+zip']], 6), 'sennin')), 'epub');
+  eq('kind: ePUB by MIME type', await detectFileKind(named(new Blob(['x']), 'sennin', 'application/epub+zip')), 'epub');
+  eq('kind: PDF with no extension', await detectFileKind(named(new Blob(['%PDF-1.7\n...']), 'scan')), 'pdf');
+  eq('kind: Anki package with no extension', await detectFileKind(named(await zipOf([['collection.anki21', 'x'], ['media', '{}']]), 'deck')), 'apkg');
+  eq('kind: plain Japanese text', await detectFileKind(named(new Blob(['吾輩は猫である。名前はまだ無い。']), 'neko')), 'txt');
+  eq('kind: other zip', await detectFileKind(named(await zipOf([['a.txt', 'x']]), 'stuff')), null);
+  eq('kind: binary', await detectFileKind(named(new Blob([new Uint8Array([0, 1, 2, 255, 0])]), 'blob')), null);
+}
+
 console.log(`${passes} passed, ${failures} failed`);
 if (failures) process.exit(1);

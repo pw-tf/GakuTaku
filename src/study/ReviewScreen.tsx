@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { col } from '../anki/appCollection';
 import type { Rating } from '../anki/types';
-import { usePrefs } from '../app/prefs';
+import { useDark, usePrefs } from '../app/prefs';
 import { useBackHandler } from '../app/back';
 import { Btn, Chip } from '../ui/atoms';
 import { Icon } from '../ui/icons';
@@ -39,7 +39,7 @@ type Dialog = null | 'edit' | 'due' | 'forget' | 'deleteNote' | 'info';
 export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
   const study = useStudy(deckId);
   const { state } = study;
-  const dark = usePrefs((s) => s.dark);
+  const dark = useDark();
   const gestures = usePrefs((s) => s.gestures);
   const showTimer = usePrefs((s) => s.showTimer);
   const cardZoom = usePrefs((s) => s.cardZoom);

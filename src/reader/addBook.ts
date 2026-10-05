@@ -24,8 +24,9 @@ export function docKind(type: string | null): BookKind {
  * PDF books (once, here, so opening them later is instant), save an ePUB's cover, and record the
  * book in `documents`. Returns the new document id.
  */
-export async function addBook(file: File, userId: string, onProgress?: (message: string, done?: number, total?: number) => void): Promise<string> {
-  const kind = bookKindOf(file.name);
+export async function addBook(file: File, userId: string, onProgress?: (message: string, done?: number, total?: number) => void, knownKind?: BookKind | 'apkg' | 'colpkg' | null): Promise<string> {
+  // The kind may come from the file's content when its name has no extension (some Android pickers).
+  const kind = knownKind === 'epub' || knownKind === 'pdf' || knownKind === 'txt' ? knownKind : bookKindOf(file.name);
   if (!kind) throw new Error('Pick an ePUB, PDF or TXT file.');
   const buffer = await file.arrayBuffer();
   const baseName = file.name.replace(/\.(epub|pdf|txt)$/i, '');

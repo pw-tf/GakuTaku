@@ -57,6 +57,8 @@ export interface BookSource {
   toc: TocEntry[];
   /** Load and extract a chapter's paragraphs (lazy). */
   loadChapter: (index: number) => Promise<string[]>;
+  /** A chapter's pictures as object URLs — shown when it has no text (a cover page, an illustration). */
+  loadImages?: (index: number) => Promise<string[]>;
   destroy: () => void;
 }
 
@@ -96,6 +98,7 @@ export async function openEpub(data: ArrayBuffer): Promise<BookSource & { cover:
     /* no table of contents */
   }
 
+  const objectUrls: string[] = [];
   return {
     title: meta.title || 'Untitled',
     creator: meta.creator || '',
@@ -110,6 +113,31 @@ export async function openEpub(data: ArrayBuffer): Promise<BookSource & { cover:
       section.unload();
       return paragraphs;
     },
+    async loadImages(index: number) {
+      const section = sections[index];
+      if (!section) return [];
+      const contents = (await section.load(anyBook.load.bind(book))) as Element;
+      const base = `https://book${section.url ?? '/' + (section.href ?? '')}`;
+      const refs = Array.from(contents.querySelectorAll('img[src], image'))
+        .map((el) => el.getAttribute('src') ?? el.getAttribute('xlink:href') ?? el.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ?? el.getAttribute('href'))
+        .filter((src): src is string => !!src && !/^(?:data|https?):/i.test(src));
+      section.unload();
+      const out: string[] = [];
+      for (const ref of refs.slice(0, 6)) {
+        try {
+          const path = decodeURIComponent(new URL(ref, base).pathname);
+          const blob = (await anyBook.archive.getBlob(path)) as Blob | undefined;
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            objectUrls.push(url);
+            out.push(url);
+          }
+        } catch {
+          /* missing picture */
+        }
+      }
+      return out;
+    },
     async cover() {
       try {
         await book.loaded.cover;
@@ -120,7 +148,12 @@ export async function openEpub(data: ArrayBuffer): Promise<BookSource & { cover:
       }
     },
     destroy() {
-      book.destroy();
+      objectUrls.forEach((u) => URL.revokeObjectURL(u));
+      // epub.js finishes setting up the book's resources after it reports ready; destroying it before
+      // then throws inside epub.js ("reading 'replaceCss'").
+      const opened = anyBook.opened as Promise<unknown> | undefined;
+      if (opened) void opened.then(() => book.destroy(), () => book.destroy());
+      else book.destroy();
     },
   };
 }

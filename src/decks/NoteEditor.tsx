@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { col } from '../anki/appCollection';
 import type { Notetype } from '../anki/notetype';
 import { generatedOrdinals, renderCard } from '../anki/template';
-import { usePrefs } from '../app/prefs';
+import { useDark } from '../app/prefs';
 import { useLive } from '../db/useLive';
 import { hasMediaFile, putMediaFile, renamedForConflict } from '../media/store';
 import { CardView } from '../study/CardView';
@@ -265,7 +265,7 @@ export function TagInput({ value, onChange }: { value: string; onChange: (v: str
 
 /** Preview the cards a note makes (both sides), as the reviewer would show them. */
 export function CardPreview({ notetype, values, tags, deckName, onClose }: { notetype: Notetype; values: string[]; tags: string; deckName: string; onClose: () => void }) {
-  const dark = usePrefs((s) => s.dark);
+  const dark = useDark();
   const flds = values.join(FIELD_SEP);
   const ords = useMemo(() => generatedOrdinals(notetype, flds), [notetype, flds]);
   const [ordIdx, setOrdIdx] = useState(0);
