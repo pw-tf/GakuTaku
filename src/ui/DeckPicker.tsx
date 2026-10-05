@@ -14,7 +14,7 @@ interface Props {
 
 /** Choose (or create) the deck a mined word goes into. */
 export function DeckPicker({ currentDeckId, onPick, onClose }: Props) {
-  const { data: decks = [] } = useLive(() => col.decks(), [], ['decks']);
+  const { data: decks = [] } = useLive(async () => (await col.decks()).filter((d) => !d.filtered), [], ['decks']);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   useBackHandler(true, onClose);

@@ -42,7 +42,7 @@ export function AddNoteModal({ deckId, onClose }: { deckId: number; onClose: () 
     void (async () => {
       const [ts, ds] = await Promise.all([col.notetypes(), col.decks()]);
       setTypes(ts);
-      setDecks(ds.sort((a, b) => a.name.localeCompare(b.name)));
+      setDecks(ds.filter((d) => !d.filtered).sort((a, b) => a.name.localeCompare(b.name)));
       let last: number | null = null;
       try {
         last = Number(localStorage.getItem(LAST_TYPE_KEY)) || null;

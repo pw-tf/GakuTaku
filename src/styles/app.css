@@ -641,3 +641,15 @@ body { overflow: hidden; }
 .ce-tabs { margin: 4px 0 0; }
 .ce-code { width: 100%; min-height: 220px; border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 10px; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: var(--paper-sunk); color: var(--ink); outline: none; resize: vertical; tab-size: 2; }
 .ce-code:focus { border-color: var(--accent); }
+
+/* Filtered decks, custom study */
+.deck-row.filtered .dr-name { color: #3d76c4; }
+.theme-dark .deck-row.filtered .dr-name { color: #7fa8e6; }
+.fd-term { border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px 12px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.fd-term legend { font-size: 12px; color: var(--ink-faint); padding: 0 4px; }
+.fd-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.fd-row .opt-field.col input { width: 110px; }
+.cs-note { font-size: 12.5px; margin: 0; }
+.cs-tags { display: flex; flex-direction: column; gap: 8px; }
+.cs-tag.inc { background: color-mix(in oklch, var(--rate-good) 18%, var(--paper)); border-color: var(--rate-good); color: var(--ink); }
+.cs-tag.exc { background: color-mix(in oklch, var(--rate-again) 15%, var(--paper)); border-color: var(--rate-again); color: var(--ink); text-decoration: line-through; }

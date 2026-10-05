@@ -237,6 +237,10 @@ export const MIGRATIONS: string[] = [
     looked_up_at TEXT
   );
   `,
+  // 3: filtered decks (Anki's filtered / custom study decks): their search terms and options as JSON.
+  `
+  ALTER TABLE decks ADD COLUMN filtered TEXT;
+  `,
 ];
 
 /* Row types (all columns nullable, as SQLite returns them). */

@@ -22,6 +22,8 @@ export interface DeckTreeNode {
   fullName: string;
   level: number;
   collapsed: boolean;
+  /** A filtered deck (Anki shows these in blue). */
+  filtered: boolean;
   children: DeckTreeNode[];
   newCount: number;
   learnCount: number;
@@ -80,6 +82,7 @@ export function buildDeckNodes(decks: Deck[]): DeckTreeNode[] {
       fullName: d.name,
       level,
       collapsed: d.collapsed,
+      filtered: !!d.filtered,
       children: [],
       newCount: 0,
       learnCount: 0,

@@ -14,6 +14,7 @@ import { ConfirmModal, PromptModal } from '../ui/Modal';
 import { AddNoteModal } from './AddNoteModal';
 import { BrowseCards } from './BrowseCards';
 import { DeckOptionsModal } from './DeckOptionsModal';
+import { CustomStudyModal, FilteredDeckModal } from './FilteredDeck';
 import { NotetypesModal } from './NotetypesModal';
 
 const DECK_TABLES = ['cards', 'decks', 'deck_config', 'config'];
@@ -34,12 +35,19 @@ interface Props {
 
 export function DecksScreen({ onStudy }: Props) {
   const { data: roots, loading } = useDeckTree();
-  const [openId, setOpenId] = useState<number | null>(null);
+  const [openId, setOpenIdState] = useState<number | null>(null);
+  // The deck tree when a deck was opened: a just-created deck isn't in it yet, so only a newer tree
+  // without the deck means it was deleted.
+  const openedWith = useRef(roots);
+  const setOpenId = (id: number | null) => {
+    openedWith.current = roots;
+    setOpenIdState(id);
+  };
   const node = openId != null && roots ? findDeckNode(roots, openId) : null;
 
   useBackHandler(openId != null, () => setOpenId(null));
   useEffect(() => {
-    if (openId != null && roots && !node) setOpenId(null); // deleted
+    if (openId != null && roots && !node && roots !== openedWith.current) setOpenIdState(null); // deleted
   }, [openId, roots, node]);
 
   if (node) return <DeckOverview node={node} onBack={() => setOpenId(null)} onOpen={setOpenId} onStudy={onStudy} />;
@@ -67,6 +75,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
   const [creating, setCreating] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [notetypes, setNotetypes] = useState(false);
+  const [creatingFiltered, setCreatingFiltered] = useState(false);
   const rows = useMemo(() => flatten(roots), [roots]);
   useBackHandler(menuOpen, () => setMenuOpen(false));
 
@@ -97,6 +106,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
               <div className="popmenu">
                 <button onClick={() => { setMenuOpen(false); setCreating(true); }}><Icon.plus s={15} /> Create deck</button>
                 <button onClick={() => { setMenuOpen(false); fileRef.current?.click(); }}><Icon.upload s={15} /> Import Anki deck or backup (.apkg / .colpkg)</button>
+                <button onClick={() => { setMenuOpen(false); setCreatingFiltered(true); }}><Icon.search s={15} /> Create filtered deck…</button>
                 <button onClick={() => { setMenuOpen(false); setNotetypes(true); }}><Icon.study s={15} /> Note types…</button>
               </div>
             </>
@@ -119,7 +129,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
             <span className="dr-counts"><span className="c">New</span><span className="c">Learn</span><span className="c">Due</span></span>
           </div>
           {rows.map(({ node, depth }) => (
-            <div key={node.deckId} className="deck-row" style={{ paddingLeft: 10 + depth * 18 }} onClick={() => onOpen(node.deckId)}>
+            <div key={node.deckId} className={'deck-row' + (node.filtered ? ' filtered' : '')} style={{ paddingLeft: 10 + depth * 18 }} onClick={() => onOpen(node.deckId)}>
               <button
                 className={'dr-caret' + (node.children.length ? '' : ' empty')}
                 aria-label={node.collapsed ? 'Expand' : 'Collapse'}
@@ -138,6 +148,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
       )}
 
       {notetypes && <NotetypesModal onClose={() => setNotetypes(false)} />}
+      {creatingFiltered && <FilteredDeckModal initialSearch="is:due" onClose={() => setCreatingFiltered(false)} onSaved={onOpen} />}
       {creating && (
         <PromptModal
           title="Create deck"
@@ -157,12 +168,13 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
   );
 }
 
-type Dialog = null | 'options' | 'add' | 'rename' | 'delete' | 'description';
+type Dialog = null | 'options' | 'add' | 'rename' | 'delete' | 'description' | 'custom';
 
 function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; onBack: () => void; onOpen: (id: number) => void; onStudy: (id: number, name: string) => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [browsing, setBrowsing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   useBackHandler(menuOpen, () => setMenuOpen(false));
   const { data: info } = useLive(
     async () => {
@@ -194,8 +206,9 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
               <div className="popmenu-backdrop" onClick={() => setMenuOpen(false)} />
               <div className="popmenu">
                 <button onClick={() => { setMenuOpen(false); setDialog('options'); }}><Icon.gear s={15} /> Options</button>
-                <button onClick={() => { setMenuOpen(false); setDialog('rename'); }}><Icon.study s={15} /> Rename</button>
-                <button onClick={() => { setMenuOpen(false); setDialog('description'); }}><Icon.reader s={15} /> Description</button>
+                {!node.filtered && <button onClick={() => { setMenuOpen(false); setDialog('rename'); }}><Icon.study s={15} /> Rename</button>}
+                {!node.filtered && <button onClick={() => { setMenuOpen(false); setDialog('description'); }}><Icon.reader s={15} /> Description</button>}
+                {!node.filtered && <button onClick={() => { setMenuOpen(false); setDialog('custom'); }}><Icon.flame s={15} /> Custom study…</button>}
                 <button className="danger" onClick={() => { setMenuOpen(false); setDialog('delete'); }}><Icon.trash s={15} /> Delete</button>
               </div>
             </>
@@ -216,12 +229,29 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
           <Btn variant="primary" onClick={() => onStudy(node.deckId, node.fullName)} disabled={due === 0}>
             <Icon.review s={16} /> {due === 0 ? 'Nothing due' : 'Study now'}
           </Btn>
-          <Btn onClick={() => setDialog('add')}><Icon.plus s={15} /> Add</Btn>
+          {node.filtered ? (
+            <>
+              <Btn onClick={() => void col.rebuildFilteredDeck(node.deckId).catch((e: unknown) => setNotice(e instanceof Error ? e.message : String(e)))}><Icon.undo s={15} /> Rebuild</Btn>
+              <Btn onClick={() => void col.emptyFilteredDeck(node.deckId)}><Icon.close s={15} /> Empty</Btn>
+            </>
+          ) : (
+            <>
+              <Btn onClick={() => setDialog('add')}><Icon.plus s={15} /> Add</Btn>
+              {due === 0 && <Btn onClick={() => setDialog('custom')}><Icon.flame s={15} /> Custom study</Btn>}
+            </>
+          )}
           <Btn onClick={() => setBrowsing(true)}><Icon.search s={15} /> Browse</Btn>
           {(info?.buried ?? 0) > 0 && (
             <Btn onClick={() => void col.unburyDeck(node.deckId)} title="Return buried cards to today's queue"><Icon.moon s={15} /> Unbury ({info!.buried})</Btn>
           )}
         </div>
+        {notice && <p style={{ color: 'var(--rate-again)', fontSize: 13, marginTop: 10 }}>{notice}</p>}
+        {node.filtered && info?.deck?.filtered && (
+          <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>
+            Filtered deck · {info.deck.filtered.terms.map((t) => `“${t.search || 'all cards'}”`).join(' + ')}
+            {info.deck.filtered.reschedule ? '' : ' · preview (answers don’t reschedule)'}
+          </p>
+        )}
         <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>
           {node.totalIncludingChildren.toLocaleString()} cards{info?.suspended ? ` · ${info.suspended} suspended` : ''}
         </p>
@@ -242,7 +272,10 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
         </>
       )}
 
-      {dialog === 'options' && <DeckOptionsModal deckId={node.deckId} onClose={() => setDialog(null)} />}
+      {dialog === 'options' && (node.filtered
+        ? <FilteredDeckModal deckId={node.deckId} onClose={() => setDialog(null)} />
+        : <DeckOptionsModal deckId={node.deckId} onClose={() => setDialog(null)} />)}
+      {dialog === 'custom' && <CustomStudyModal deckId={node.deckId} deckName={node.fullName} onClose={() => setDialog(null)} onStudy={onStudy} />}
       {dialog === 'add' && <AddNoteModal deckId={node.deckId} onClose={() => setDialog(null)} />}
       {dialog === 'rename' && (
         <PromptModal

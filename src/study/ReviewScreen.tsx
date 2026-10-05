@@ -9,6 +9,7 @@ import { ConfirmModal, PromptModal } from '../ui/Modal';
 import { CardView, type CardEvent } from './CardView';
 import { tapGesture, type Gesture, type ReviewAction } from './gestures';
 import { CardInfoModal } from '../decks/CardInfo';
+import { CustomStudyModal } from '../decks/FilteredDeck';
 import { EditNoteModal } from './EditNoteModal';
 import { useStudy } from './useStudy';
 
@@ -28,12 +29,14 @@ interface Props {
   deckId: number;
   title: string;
   onExit: () => void;
+  /** Start studying another deck (a Custom Study session built from the done screen). */
+  onStudy?: (deckId: number, title: string) => void;
 }
 
 type Dialog = null | 'edit' | 'due' | 'forget' | 'deleteNote' | 'info';
 
 /** The reviewer: Anki's study flow with AnkiDroid-style controls. */
-export function ReviewScreen({ deckId, title, onExit }: Props) {
+export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
   const study = useStudy(deckId);
   const { state } = study;
   const dark = usePrefs((s) => s.dark);
@@ -42,6 +45,11 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
   const cardZoom = usePrefs((s) => s.cardZoom);
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [customStudy, setCustomStudy] = useState(false);
+  const [isFilteredDeck, setIsFilteredDeck] = useState(false);
+  useEffect(() => {
+    if (deckId) void col.deck(deckId).then((d) => setIsFilteredDeck(!!d?.filtered));
+  }, [deckId]);
   const card = state.card?.prepared.card ?? null;
 
   useBackHandler(menuOpen, () => setMenuOpen(false));
@@ -316,6 +324,9 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
   }
 
   if (!card) {
+    const customDialog = customStudy && (
+      <CustomStudyModal deckId={deckId} deckName={title} onClose={() => setCustomStudy(false)} onStudy={(id, name) => onStudy?.(id, name)} />
+    );
     const waitSecs = state.nextLearningAt ? Math.max(0, state.nextLearningAt - Math.floor(Date.now() / 1000)) : null;
     return (
       <div className="review-wrap">
@@ -335,10 +346,12 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
             </p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 24 }}>
               {state.canUndo && <Btn onClick={() => void study.undo()}>Undo {state.undoLabel?.toLowerCase() ?? 'last answer'}</Btn>}
+              {waitSecs == null && deckId !== 0 && !isFilteredDeck && <Btn onClick={() => setCustomStudy(true)}>Custom study</Btn>}
               <Btn variant="primary" onClick={onExit}>Back</Btn>
             </div>
           </div>
         </div>
+        {customDialog}
       </div>
     );
   }

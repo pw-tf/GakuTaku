@@ -190,7 +190,7 @@ export function AppShell() {
         </Suspense>
       )}
       {overlay === 'review' && (
-        <ReviewScreen deckId={reviewSource.deckId} title={reviewSource.title} onExit={() => setOverlay(null)} />
+        <ReviewScreen deckId={reviewSource.deckId} title={reviewSource.title} onExit={() => setOverlay(null)} onStudy={(id, name) => startReview(id, name)} />
       )}
 
       <BackgroundTasks />

@@ -425,7 +425,7 @@ function ActionsSheet({ cids, row, onClose, onDeleted }: { cids: number[]; row?:
 }
 
 function DeckPickModal({ current, onPick, onClose }: { current?: number; onPick: (did: number) => void; onClose: () => void }) {
-  const { data: decks } = useLive(() => col.decks(), [], ['decks']);
+  const { data: decks } = useLive(async () => (await col.decks()).filter((d) => !d.filtered), [], ['decks']);
   const [q, setQ] = useState('');
   const list = (decks ?? []).filter((d) => d.name.toLowerCase().includes(q.trim().toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
   return (
