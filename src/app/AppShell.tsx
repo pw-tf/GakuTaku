@@ -1,21 +1,19 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useBackHandler } from './back';
-import { ensurePresetsMigrated } from '../srs/presetOps';
-import { sweepExpiredBuried } from '../srs/cardOps';
+import { col } from '../anki/appCollection';
+import { ensureStockNotetypes } from '../anki/stock';
+import { WHOLE_COLLECTION } from '../anki/queue';
 import { Icon, type IconName } from '../ui/icons';
 import { Settings, SettingsContent } from '../ui/Settings';
 import { Attribution } from '../ui/Attribution';
 import { BackgroundTasks } from '../ui/BackgroundTasks';
 import { LibraryScreen } from '../library/LibraryScreen';
-import { DecksScreen } from '../srs/DecksScreen';
+import { DecksScreen, useDeckTree } from '../decks/DecksScreen';
 import { AnalyticsScreen } from '../analytics/AnalyticsScreen';
-import { ReviewScreen } from '../srs/ReviewScreen';
-import type { ReviewSource } from '../srs/useReview';
-import { useStudyCount, type DeckStat } from '../srs/srsHooks';
+import { ReviewScreen } from '../study/ReviewScreen';
 import { useStreak } from '../analytics/analyticsHooks';
 import type { MinedItem } from '../ui/LookupPopup';
 import type { DocumentRecord } from '../db/schema';
-import { LOCAL_USER_ID } from './localUser';
 import type { FeedArticle } from '../feeds/parse';
 import type { FeedView } from '../feeds/useFeeds';
 
@@ -46,22 +44,21 @@ export function AppShell() {
   const [book, setBook] = useState<DocumentRecord | null>(null);
   const [articleView, setArticleView] = useState<{ article: FeedArticle; feed: FeedView } | null>(null);
   const [mined, setMined] = useState<MinedItem[]>([]);
-  const [reviewSource, setReviewSource] = useState<ReviewSource>({ kind: 'due' });
+  const [reviewSource, setReviewSource] = useState<{ deckId: number; title: string }>({ deckId: WHOLE_COLLECTION, title: 'All decks' });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const due = useStudyCount();
+  const { data: deckTree, loading: dueLoading } = useDeckTree();
+  const dueCount = (deckTree ?? []).reduce((n, d) => n + d.newCount + d.learnCount + d.reviewCount, 0);
   const streak = useStreak();
-  const dueCount = due.count;
 
-  // SRS housekeeping: migrate legacy per-deck config into presets (one-shot, idempotent) and
-  // converge expired burials back to active — Anki's day-rollover unbury — on load and whenever
-  // the tab comes back into view (it may have been open across a rollover).
+  // Collection housekeeping: the stock note types exist, and cards buried on an earlier day come
+  // back (Anki's rollover unbury) — on start and whenever the app returns to the foreground.
   useEffect(() => {
-    void ensurePresetsMigrated(LOCAL_USER_ID).catch(() => undefined);
-    void sweepExpiredBuried().catch(() => undefined);
+    void ensureStockNotetypes(col).catch((e) => console.error(e));
+    void col.unburyIfDayRolledOver().catch(() => undefined);
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void sweepExpiredBuried().catch(() => undefined);
+      if (document.visibilityState === 'visible') void col.unburyIfDayRolledOver().catch(() => undefined);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -84,13 +81,17 @@ export function AppShell() {
   function mine(item: MinedItem) {
     setMined((m) => (m.find((x) => x.term === item.term) ? m : [...m, item]));
   }
-  function startReview(source: ReviewSource) {
-    setReviewSource(source);
+  function startReview(deckId: number, title: string) {
+    setReviewSource({ deckId, title });
     setOverlay('review');
+  }
+  function reviewMined() {
+    const last = mined[mined.length - 1];
+    if (last) startReview(last.deckId, 'Mined');
   }
   function navTo(item: (typeof NAV)[number]) {
     if (item.id === 'review') {
-      startReview({ kind: 'due' });
+      startReview(WHOLE_COLLECTION, 'All decks');
       return;
     }
     setOverlay(null);
@@ -144,8 +145,8 @@ export function AppShell() {
           <span className="spacer" />
         </div>
         <div className="scroll">
-          {view === 'library' && <LibraryScreen onOpenBook={openBook} onOpenArticle={openArticle} due={dueCount} dueLoading={due.loading} streak={streak} />}
-          {view === 'decks' && <DecksScreen onReviewDeck={(d: DeckStat, ids: string[]) => startReview({ kind: 'deck', deckIds: ids, deckName: d.name })} />}
+          {view === 'library' && <LibraryScreen onOpenBook={openBook} onOpenArticle={openArticle} due={dueCount} dueLoading={dueLoading} streak={streak} />}
+          {view === 'decks' && <DecksScreen onStudy={(id, name) => startReview(id, name)} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'credits' && <Attribution />}
         </div>
@@ -171,7 +172,7 @@ export function AppShell() {
             doc={book}
             mined={mined}
             onMine={mine}
-            onReviewMined={() => startReview({ kind: 'cards', cardIds: mined.map((m) => m.cardId), label: 'Mined this session' })}
+            onReviewMined={reviewMined}
             onClose={() => setOverlay(null)}
           />
         </Suspense>
@@ -183,13 +184,13 @@ export function AppShell() {
             feed={articleView.feed}
             mined={mined}
             onMine={mine}
-            onReviewMined={() => startReview({ kind: 'cards', cardIds: mined.map((m) => m.cardId), label: 'Mined this session' })}
+            onReviewMined={reviewMined}
             onClose={() => setOverlay(null)}
           />
         </Suspense>
       )}
       {overlay === 'review' && (
-        <ReviewScreen source={reviewSource} onExit={() => setOverlay(null)} />
+        <ReviewScreen deckId={reviewSource.deckId} title={reviewSource.title} onExit={() => setOverlay(null)} />
       )}
 
       <BackgroundTasks />

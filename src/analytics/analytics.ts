@@ -1,209 +1,121 @@
-import type { ReviewLogRecord } from '../db/schema';
-import { Rating, State, cardStateLabel, replaySteps } from '../srs/fsrs';
-import { parsePresetConfig, resolveDeckConfig } from '../srs/presets';
+import type { Sql } from '../anki/collection';
+import { timingAt } from '../anki/timing';
 
 /**
- * Analytics computation (build plan M5). Pure functions over the synced `review_logs` + `cards`
- * caches — no React, no I/O — so they're unit-testable against fixed fixtures and reusable.
- *
- * Most metrics are plain aggregations over log timestamps. The one exception is *true retention*,
- * which must count only reviews of already-graduated (Review-state) cards; raw logs don't store the
- * state at review time, so we recover it per card via {@link replaySteps} (§3.3 event-sourcing).
+ * The analytics dashboard's numbers, computed with SQL aggregates over Anki's `revlog` and `cards`
+ * (so a collection with hundreds of thousands of reviews stays fast). Definitions follow Anki's
+ * statistics screen: "true retention" counts only reviews of review cards (revlog type 1), a card
+ * is mature at an interval of 21 days, and days are study days (they start at the rollover hour).
  */
 
 export const HEATMAP_WEEKS = 18;
-const DAYS_PER_WEEK = 7;
-export const HEATMAP_DAYS = HEATMAP_WEEKS * DAYS_PER_WEEK; // 126
+export const HEATMAP_DAYS = HEATMAP_WEEKS * 7;
 const FORECAST_DAYS = 7;
-const DAY_MS = 86_400_000;
-
-/** A card row (current cache state) needed for maturity buckets, the forecast, and retention replay. */
-export interface AnalyticsCard {
-  id: string;
-  createdAt: string;
-  fsrsParams: string | null;
-  /** The deck's preset reference + config text, for resolving the replay's scheduler config. */
-  presetId?: string | null;
-  presetConfig?: string | null;
-  due: string | null;
-  reps: number;
-  state: number;
-  lastReview: string | null;
-  /** Suspended cards stay out of the maturity buckets and the due forecast (like Anki). */
-  suspended?: boolean;
-}
-
-/** A review log row. `card_id` groups logs per card for the retention replay. */
-export type AnalyticsLog = Pick<ReviewLogRecord, 'card_id' | 'rating' | 'review_time' | 'elapsed_ms'>;
+const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export interface AnalyticsData {
-  retention: number; // true retention %, integer
-  streak: number; // consecutive days with ≥1 review, ending today/yesterday
+  /** True retention over the last 30 days, %, or null with no reviews of review cards. */
+  retention: number | null;
+  streak: number;
   reviewsToday: number;
   minutesToday: number;
   mature: number;
   young: number;
   learning: number;
   newCards: number;
-  forecast: { d: string; n: number }[]; // next 7 days
-  heatmap: number[]; // HEATMAP_DAYS cells, intensity 0–4, column-major (see .heat CSS)
-  tod: number[]; // 24 hourly review counts
-  totalReviews: number; // gates the empty/low-data state
+  suspended: number;
+  forecast: { d: string; n: number }[];
+  /** HEATMAP_DAYS cells (oldest first), intensity 0–4. */
+  heatmap: number[];
+  /** Reviews per hour of day. */
+  tod: number[];
+  totalReviews: number;
   totalCards: number;
 }
 
-const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-/** Local midnight for a date, as ms. */
-function startOfDay(d: Date): number {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x.getTime();
+/** Study-day number of a revlog id (ms), matching {@link timingAt}'s day numbering. */
+function studyDayOf(ms: number, rollover: number): number {
+  return timingAt(ms, rollover).today;
 }
 
-/** Local `YYYY-M-D` key (calendar day in the user's timezone, not UTC). */
-function dayKey(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-}
+export async function loadAnalytics(sql: Sql, nowMs: number, rollover: number): Promise<AnalyticsData> {
+  const t = timingAt(nowMs, rollover);
+  const dayStartMs = (t.nextDayAt - 86_400) * 1000;
+  const heatStartMs = dayStartMs - (HEATMAP_DAYS - 1) * 86_400_000;
 
-/**
- * Consecutive calendar days with ≥1 review, ending today (or yesterday if nothing yet today, so the
- * streak isn't shown broken before the day's first review). Shared by the dashboard and the cheap
- * {@link useStreak} library-header hook.
- */
-export function computeStreak(reviewTimes: Array<string | null | undefined>, now: Date = new Date()): number {
-  const days = new Set<string>();
-  for (const t of reviewTimes) {
-    if (!t) continue;
-    const ms = new Date(t).getTime();
-    if (!Number.isNaN(ms)) days.add(dayKey(ms));
+  const [cards] = await sql.all<{ total: number; newc: number; learning: number; young: number; mature: number; suspended: number }>(
+    `SELECT COUNT(*) AS total,
+       SUM(type = 0 AND queue >= 0) AS newc,
+       SUM(type IN (1, 3) AND queue >= 0) AS learning,
+       SUM(type = 2 AND queue >= 0 AND ivl < 21) AS young,
+       SUM(type = 2 AND queue >= 0 AND ivl >= 21) AS mature,
+       SUM(queue = -1) AS suspended
+     FROM cards`,
+  );
+  const [today] = await sql.all<{ n: number; ms: number }>(`SELECT COUNT(*) AS n, COALESCE(SUM(time), 0) AS ms FROM revlog WHERE id >= ? AND ease > 0`, [dayStartMs]);
+  const [ret] = await sql.all<{ total: number; passed: number }>(
+    `SELECT COUNT(*) AS total, SUM(ease > 1) AS passed FROM revlog WHERE type = 1 AND ease > 0 AND id >= ?`,
+    [dayStartMs - 29 * 86_400_000],
+  );
+  const [{ n: totalReviews }] = await sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM revlog WHERE ease > 0`);
+
+  // Forecast: reviews (and interday learning) due over the next week; today includes overdue.
+  const due = await sql.all<{ day: number; n: number }>(
+    `SELECT MAX(due, ?1) AS day, COUNT(*) AS n FROM cards WHERE queue IN (2, 3) AND due < ?1 + ?2 GROUP BY MAX(due, ?1)`,
+    [t.today, FORECAST_DAYS],
+  );
+  const [lrn] = await sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM cards WHERE queue IN (1, 4) AND due < ?`, [t.nextDayAt]);
+  const byDay = new Map(due.map((r) => [r.day, r.n]));
+  const forecast = Array.from({ length: FORECAST_DAYS }, (_, i) => {
+    const d = new Date(nowMs + i * 86_400_000);
+    return { d: i === 0 ? 'Today' : WEEKDAY[d.getDay()], n: (byDay.get(t.today + i) ?? 0) + (i === 0 ? lrn.n : 0) };
+  });
+
+  // Activity: reviews per day (bucketed in JS so day boundaries follow the rollover hour and DST).
+  const recent = await sql.all<{ id: number }>(`SELECT id FROM revlog WHERE id >= ? AND ease > 0`, [heatStartMs]);
+  const perDay = new Map<number, number>();
+  for (const r of recent) {
+    const d = studyDayOf(r.id, rollover);
+    perDay.set(d, (perDay.get(d) ?? 0) + 1);
   }
-  const todayStart = startOfDay(now);
-  let cursor = days.has(dayKey(todayStart)) ? todayStart : todayStart - DAY_MS;
-  let streak = 0;
-  while (days.has(dayKey(cursor))) {
-    streak++;
-    cursor -= DAY_MS;
-  }
-  return streak;
-}
+  const counts = Array.from({ length: HEATMAP_DAYS }, (_, i) => perDay.get(t.today - (HEATMAP_DAYS - 1 - i)) ?? 0);
+  const max = Math.max(1, ...counts);
+  const heatmap = counts.map((n) => (n === 0 ? 0 : Math.min(4, Math.ceil((n / max) * 4))));
 
-export function computeAnalytics(cards: AnalyticsCard[], logs: AnalyticsLog[], now: Date = new Date()): AnalyticsData {
-  const todayStart = startOfDay(now);
+  const streak = await loadStreak(sql, nowMs, rollover);
 
-  // --- Per-day / per-hour aggregations over all logs (no replay needed) ---
-  const perDay = new Map<string, number>();
   const tod = new Array<number>(24).fill(0);
-  let reviewsToday = 0;
-  let minutesTodayMs = 0;
-  let totalReviews = 0;
-
-  for (const log of logs) {
-    // rating 0 rows are manual events (forget / set due date), not reviews.
-    if (!log.review_time || (log.rating ?? 0) < 1) continue;
-    const t = new Date(log.review_time).getTime();
-    if (Number.isNaN(t)) continue;
-    totalReviews++;
-    perDay.set(dayKey(t), (perDay.get(dayKey(t)) ?? 0) + 1);
-    tod[new Date(t).getHours()]++;
-    if (t >= todayStart) {
-      reviewsToday++;
-      minutesTodayMs += log.elapsed_ms ?? 0;
-    }
-  }
-
-  // --- Heatmap: HEATMAP_DAYS cells ending today. Column-major (7 rows = weekdays); the grid's
-  // last column is the current week, so cell (week w, row r) is `todayDow - r` days into that week. ---
-  const todayDow = now.getDay();
-  const dailyCounts: number[] = new Array<number>(HEATMAP_DAYS).fill(0);
-  for (let i = 0; i < HEATMAP_DAYS; i++) {
-    const w = Math.floor(i / DAYS_PER_WEEK);
-    const r = i % DAYS_PER_WEEK;
-    const offset = (HEATMAP_WEEKS - 1 - w) * DAYS_PER_WEEK + (todayDow - r);
-    if (offset < 0) continue; // future days in the current (partial) week
-    dailyCounts[i] = perDay.get(dayKey(todayStart - offset * DAY_MS)) ?? 0;
-  }
-  const maxDaily = Math.max(0, ...dailyCounts.filter((n) => n > 0));
-  const heatmap = dailyCounts.map((count) =>
-    count === 0 || maxDaily === 0 ? 0 : Math.min(4, 1 + Math.floor((count / maxDaily) * 3)),
-  );
-
-  const streak = computeStreak(
-    logs.filter((l) => (l.rating ?? 0) >= 1).map((l) => l.review_time),
-    now,
-  );
-
-  // --- Maturity buckets + forecast over current cards ---
-  let mature = 0;
-  let young = 0;
-  let learning = 0;
-  let newCards = 0;
-  const forecastCounts = new Array<number>(FORECAST_DAYS).fill(0);
-
-  for (const c of cards) {
-    if (c.suspended) continue;
-    const label = cardStateLabel({
-      state: c.state,
-      reps: c.reps,
-      due: c.due ? new Date(c.due) : new Date(0),
-      last_review: c.lastReview ? new Date(c.lastReview) : null,
-    });
-    if (label === 'mature') mature++;
-    else if (label === 'young') young++;
-    else if (label === 'learning') learning++;
-    else newCards++;
-
-    // Forecast: scheduled (reps>0) cards due in the next 7 days; overdue lump into today (day 0).
-    if (c.reps > 0 && c.due) {
-      const dueMs = new Date(c.due).getTime();
-      if (!Number.isNaN(dueMs)) {
-        const dayIdx = dueMs < todayStart + DAY_MS ? 0 : Math.floor((startOfDay(new Date(dueMs)) - todayStart) / DAY_MS);
-        if (dayIdx >= 0 && dayIdx < FORECAST_DAYS) forecastCounts[dayIdx]++;
-      }
-    }
-  }
-  const forecast = forecastCounts.map((n, i) => ({ d: WEEKDAY[new Date(todayStart + i * DAY_MS).getDay()], n }));
-
-  // --- True retention: pass-rate over reviews whose card was already in the Review state ---
-  const cardById = new Map(cards.map((c) => [c.id, c]));
-  const logsByCard = new Map<string, AnalyticsLog[]>();
-  for (const log of logs) {
-    if (!log.card_id) continue;
-    const arr = logsByCard.get(log.card_id) ?? [];
-    arr.push(log);
-    logsByCard.set(log.card_id, arr);
-  }
-  let retTotal = 0;
-  let retPass = 0;
-  for (const [cardId, cardLogs] of logsByCard) {
-    const meta = cardById.get(cardId);
-    const createdAt = meta?.createdAt ?? cardLogs[0]?.review_time ?? new Date(0).toISOString();
-    const cfg = resolveDeckConfig(
-      { preset_id: meta?.presetId ?? null, fsrs_params: meta?.fsrsParams ?? null },
-      meta?.presetConfig ? parsePresetConfig(meta.presetConfig) : null,
-    );
-    for (const step of replaySteps(cardLogs as ReviewLogRecord[], createdAt, cfg, cardId)) {
-      if (step.prevState !== State.Review) continue;
-      retTotal++;
-      if (step.rating !== Rating.Again) retPass++;
-    }
-  }
-  const retention = retTotal === 0 ? 0 : Math.round((retPass / retTotal) * 100);
+  for (const r of recent) tod[new Date(r.id).getHours()]++;
 
   return {
-    retention,
+    retention: ret.total ? Math.round((100 * (ret.passed ?? 0)) / ret.total) : null,
     streak,
-    reviewsToday,
-    minutesToday: Math.round(minutesTodayMs / 60000),
-    mature,
-    young,
-    learning,
-    newCards,
+    reviewsToday: today.n,
+    minutesToday: Math.round(today.ms / 60_000),
+    mature: cards.mature ?? 0,
+    young: cards.young ?? 0,
+    learning: cards.learning ?? 0,
+    newCards: cards.newc ?? 0,
+    suspended: cards.suspended ?? 0,
     forecast,
     heatmap,
     tod,
     totalReviews,
-    totalCards: cards.length,
+    totalCards: cards.total ?? 0,
   };
+}
+
+/** Consecutive study days with at least one review, ending today (or yesterday if not yet studied today). */
+export async function loadStreak(sql: Sql, nowMs: number, rollover: number): Promise<number> {
+  const t = timingAt(nowMs, rollover);
+  // One representative review per UTC hour is enough to know which study days had reviews.
+  const rows = await sql.all<{ id: number }>(`SELECT MAX(id) AS id FROM revlog WHERE ease > 0 GROUP BY id / 3600000`);
+  const studied = new Set(rows.map((r) => studyDayOf(r.id, rollover)));
+  let streak = 0;
+  let day = studied.has(t.today) ? t.today : t.today - 1;
+  while (studied.has(day)) {
+    streak++;
+    day--;
+  }
+  return streak;
 }

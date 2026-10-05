@@ -85,7 +85,7 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
 
   return (
     <div className="page">
-      <input ref={fileRef} type="file" accept={fileAccept('.epub,application/epub+zip,.apkg')} hidden onChange={onFile} />
+      <input ref={fileRef} type="file" accept={fileAccept('.epub,application/epub+zip,.apkg,.colpkg')} hidden onChange={onFile} />
 
       <div className="lib-hero">
         <div className="cont-card" onClick={() => cont && onOpenBook(cont)} style={{ cursor: cont ? 'pointer' : 'default' }}>

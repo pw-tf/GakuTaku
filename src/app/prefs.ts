@@ -16,29 +16,20 @@ interface PrefsState {
   dark: boolean;
   furigana: FuriganaDensity;
   /** Last deck a word was mined into — used for one-tap "Add to deck". */
-  lastDeckId: string | null;
+  lastDeckId: number | null;
   /** null = not yet chosen, so a book's own direction can seed the first default. */
   readerOrientation: ReaderOrientation | null;
   readerFlow: ReaderFlow;
   readerFontScale: ReaderFontScale;
   readerWidth: ReaderWidth;
-  /** Anki-style day rollover hour (0–23). Reviews before this count toward the previous study day. */
-  dayCutoffHour: number;
-  /** Anki's learn-ahead limit (Preferences → Scheduling), in minutes. */
-  learnAheadMinutes: number;
-  /** Play a card's `[sound:…]` audio automatically on show/reveal (Anki's default). */
-  autoplayAudio: boolean;
   setAccent: (a: string) => void;
   setDark: (d: boolean) => void;
   setFurigana: (f: FuriganaDensity) => void;
-  setLastDeckId: (id: string | null) => void;
+  setLastDeckId: (id: number | null) => void;
   setReaderOrientation: (o: ReaderOrientation) => void;
   setReaderFlow: (f: ReaderFlow) => void;
   setReaderFontScale: (s: ReaderFontScale) => void;
   setReaderWidth: (w: ReaderWidth) => void;
-  setDayCutoffHour: (h: number) => void;
-  setLearnAheadMinutes: (m: number) => void;
-  setAutoplayAudio: (a: boolean) => void;
 }
 
 /**
@@ -57,9 +48,6 @@ export const usePrefs = create<PrefsState>()(
       readerFlow: 'paged',
       readerFontScale: 'm',
       readerWidth: 'normal',
-      dayCutoffHour: 4,
-      learnAheadMinutes: 20,
-      autoplayAudio: true,
       setAccent: (accent) => set({ accent }),
       setDark: (dark) => set({ dark }),
       setFurigana: (furigana) => set({ furigana }),
@@ -68,10 +56,12 @@ export const usePrefs = create<PrefsState>()(
       setReaderFlow: (readerFlow) => set({ readerFlow }),
       setReaderFontScale: (readerFontScale) => set({ readerFontScale }),
       setReaderWidth: (readerWidth) => set({ readerWidth }),
-      setDayCutoffHour: (dayCutoffHour) => set({ dayCutoffHour }),
-      setLearnAheadMinutes: (learnAheadMinutes) => set({ learnAheadMinutes }),
-      setAutoplayAudio: (autoplayAudio) => set({ autoplayAudio }),
     }),
-    { name: 'gakutaku-prefs' },
+    {
+      name: 'gakutaku-prefs',
+      version: 1,
+      // v0 stored deck ids as UUID strings (pre-Anki schema); they no longer exist.
+      migrate: (persisted) => ({ ...(persisted as object), lastDeckId: null }) as PrefsState,
+    },
   ),
 );

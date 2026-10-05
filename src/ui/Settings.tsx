@@ -8,8 +8,8 @@ interface ContentProps {
 /** The settings controls (accent / dark / furigana / credits), reused by the desktop popover and the mobile menu. */
 export function SettingsContent({ onOpenCredits }: ContentProps) {
   const {
-    accent, dark, furigana, dayCutoffHour, autoplayAudio,
-    setAccent, setDark, setFurigana, setDayCutoffHour, setAutoplayAudio,
+    accent, dark, furigana,
+    setAccent, setDark, setFurigana,
   } = usePrefs();
   return (
     <>
@@ -46,30 +46,8 @@ export function SettingsContent({ onOpenCredits }: ContentProps) {
       </div>
 
       <div className="set-sec">
-        <div className="toggle-row">
-          <span>Autoplay card audio</span>
-          <input type="checkbox" checked={autoplayAudio} onChange={(e) => setAutoplayAudio(e.target.checked)} />
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6, lineHeight: 1.5 }}>
-          Plays a card's <code>[sound:…]</code> clips on show and on reveal, like Anki. Press R to replay.
-        </div>
-      </div>
-
-      <div className="set-sec">
-        <div className="toggle-row">
-          <span>Day starts at</span>
-          <select
-            className="set-select"
-            value={dayCutoffHour}
-            onChange={(e) => setDayCutoffHour(Number(e.target.value))}
-          >
-            {Array.from({ length: 24 }, (_, h) => (
-              <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
-            ))}
-          </select>
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6, lineHeight: 1.5 }}>
-          Reviews before this time count toward the previous study day (Anki-style rollover).
+        <div style={{ fontSize: 11, color: 'var(--ink-faint)', lineHeight: 1.5 }}>
+          Study settings (day rollover, FSRS, audio autoplay, limits) are under a deck's Options, as in Anki.
         </div>
       </div>
 

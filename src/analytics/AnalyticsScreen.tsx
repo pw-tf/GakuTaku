@@ -2,9 +2,10 @@ import { Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { useAnalytics } from './analyticsHooks';
 
-/** Analytics dashboard (build plan M5) — computed live from the user's real review_logs + cards. */
+/** Analytics dashboard, computed live from Anki's review log and cards. */
 export function AnalyticsScreen() {
   const s = useAnalytics();
+  if (!s) return <div className="page" />;
   const heatColor = (n: number) =>
     n === 0 ? 'var(--paper-sunk)' : `color-mix(in oklch, var(--accent) ${18 + n * 20}%, var(--paper))`;
   const fcMax = Math.max(1, ...s.forecast.map((f) => f.n));
@@ -18,7 +19,7 @@ export function AnalyticsScreen() {
         <div className="empty-analytics">
           <Icon.chart s={40} />
           <h3>No review history yet</h3>
-          <p>Mine words while reading and review them — your retention, forecast, and activity stats will appear here.</p>
+          <p>Import your Anki collection or study some cards — retention, forecast and activity will appear here.</p>
         </div>
       </div>
     );
@@ -33,10 +34,10 @@ export function AnalyticsScreen() {
   return (
     <div className="page">
       <div className="stat-row">
-        <div className="stat"><div className="sv">{s.retention}<span className="su">%</span></div><div className="sl">True retention</div></div>
+        <div className="stat"><div className="sv">{s.retention ?? '—'}{s.retention != null && <span className="su">%</span>}</div><div className="sl">True retention · 30 days</div></div>
         <div className="stat"><div className="sv">{s.reviewsToday}</div><div className="sl">Reviews today</div><div className="sk"><Icon.flame s={13} />{s.streak}-day streak</div></div>
         <div className="stat"><div className="sv">{s.minutesToday}<span className="su">min</span></div><div className="sl">Time today</div></div>
-        <div className="stat"><div className="sv">{(matTotal / 1000).toFixed(1)}<span className="su">k</span></div><div className="sl">Cards total</div></div>
+        <div className="stat"><div className="sv">{s.totalCards >= 1000 ? <>{(s.totalCards / 1000).toFixed(1)}<span className="su">k</span></> : s.totalCards}</div><div className="sl">Cards total</div></div>
       </div>
 
       <div className="panel-row">

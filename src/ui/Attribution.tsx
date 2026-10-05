@@ -26,7 +26,7 @@ export function Attribution() {
       </p>
 
       <h2>Spaced repetition</h2>
-      <p>Scheduling powered by FSRS via the open-source ts-fsrs library.</p>
+      <p>The scheduler, card renderer and package importer are ports of <a href="https://github.com/ankitects/anki" target="_blank" rel="noreferrer">Anki</a> (© Ankitects Pty Ltd and contributors, AGPL-3.0). FSRS follows <a href="https://github.com/open-spaced-repetition/fsrs-rs" target="_blank" rel="noreferrer">fsrs-rs</a> (BSD-3-Clause).</p>
 
       <h2>Sample text</h2>
       <p lang="ja">夏目漱石「吾輩は猫である」（パブリックドメイン）</p>
