@@ -35,6 +35,8 @@ interface Props {
   sourceLabel: string;
   documentId?: string | null;
   paragraphs: FuriToken[][];
+  /** Pictures to show when the chapter has no text (a cover or an illustration page). */
+  images?: string[];
   loadingChapter: boolean;
   restore: RestoreTarget;
   mined: MinedItem[];
@@ -446,6 +448,15 @@ export function Reader(props: Props) {
     ? Math.round(((props.chapterIndex + (paged ? (pageCount > 1 ? page / (pageCount - 1) : 0) : 0)) / props.chapterCount) * 100)
     : 0;
 
+  // A page with no text: its pictures (a cover, an illustration), else a short note.
+  const noText = props.images?.length ? (
+    <div className="rd-images">
+      {props.images.map((src) => <img key={src} src={src} alt="" />)}
+    </div>
+  ) : (
+    <p style={{ color: 'var(--ink-faint)' }}>(No text on this page.)</p>
+  );
+
   const paras = () =>
     props.paragraphs.map((tokens, pi) => (
       <p key={pi} data-pi={pi}>
@@ -501,7 +512,7 @@ export function Reader(props: Props) {
             onWheel={onWheel}
           >
             <div className={`rd-pages fs-${fontScale} w-${width}`} ref={pagesRef} lang="ja" style={{ transform: translate, transition: instant ? 'none' : 'transform .26s ease' }}>
-              {props.paragraphs.length === 0 ? <p style={{ color: 'var(--ink-faint)' }}>(No text on this page.)</p> : paras()}
+              {props.paragraphs.length === 0 ? noText : paras()}
             </div>
             {vertical && metrics.stride > 0 && (
               <>
@@ -530,11 +541,7 @@ export function Reader(props: Props) {
                 Chapter {props.chapterIndex + 1} · {pct}%
               </Kicker>
               <div className={'rd-body fs-' + fontScale} lang="ja">
-                {props.paragraphs.length === 0 ? (
-                  <p style={{ color: 'var(--ink-faint)' }}>(No text on this page.)</p>
-                ) : (
-                  paras()
-                )}
+                {props.paragraphs.length === 0 ? noText : paras()}
               </div>
             </div>
           </div>

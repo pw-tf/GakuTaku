@@ -7,11 +7,11 @@ export { UnsupportedApkgError };
 export type { ImportProgress, ImportSummary };
 
 /** Import an Anki `.apkg` (deck) or `.colpkg` (whole collection) file. */
-export async function importAnkiFile(file: File, onProgress?: (p: ImportProgress) => void): Promise<ImportSummary> {
+export async function importAnkiFile(file: File, isCollection: boolean, onProgress?: (p: ImportProgress) => void): Promise<ImportSummary> {
   onProgress?.({ phase: 'reading' });
   const pkg = await parseApkg(file);
   return importPackage(col, appSql, pkg, { names: mediaFileNames, has: hasMediaFile, putMany: putMediaFiles, rename: renamedForConflict }, {
-    isCollection: /\.colpkg$/i.test(file.name),
+    isCollection,
     onProgress,
   });
 }

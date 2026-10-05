@@ -1,121 +1,98 @@
-import { useEffect, useRef, useState } from 'react';
-import { ACCENTS, usePrefs } from '../app/prefs';
+import { useState } from 'react';
+import { ACCENTS, usePrefs, type ThemeMode } from '../app/prefs';
 import { BackupSection } from '../backup/BackupSection';
 import { ACTION_NAMES, GESTURE_NAMES, type Gesture, type ReviewAction } from '../study/gestures';
 import { remindersAvailable, requestReminderPermission } from '../native/reminders';
 import { Btn } from './atoms';
 import { Modal } from './Modal';
 
-interface ContentProps {
-  onOpenCredits: () => void;
-}
+const THEMES: [ThemeMode, string][] = [['system', 'Match phone'], ['light', 'Light'], ['dark', 'Dark'], ['black', 'Black']];
+const ACCENT_NAMES = ['Vermilion', 'Indigo', 'Pine', 'Plum', 'Teal', 'Rose'];
 
-/** The settings controls (accent / dark / furigana / credits), reused by the desktop popover and the mobile menu. */
-export function SettingsContent({ onOpenCredits }: ContentProps) {
-  const {
-    accent, dark, furigana, mineWordAudio, mineSentenceAudio,
-    setAccent, setDark, setFurigana, setMineWordAudio, setMineSentenceAudio,
-  } = usePrefs();
+/** The Settings screen: appearance, reading, review, mining, backup and about. */
+export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void }) {
+  const p = usePrefs();
   return (
-    <>
-      <div className="set-sec">
-        <div className="set-h">Accent</div>
-        <div className="accent-swatches">
-          {ACCENTS.map((c) => (
-            <div
-              key={c}
-              className={'sw' + (accent === c ? ' on' : '')}
-              style={{ background: c }}
-              onClick={() => setAccent(c)}
-            />
-          ))}
+    <div className="page settings-page">
+      <section className="set-card">
+        <h3>Appearance</h3>
+        <div className="set-row col">
+          <span className="set-label">Theme</span>
+          <div className="density-seg">
+            {THEMES.map(([v, label]) => (
+              <div key={v} className={'d' + (p.theme === v ? ' on' : '')} onClick={() => p.setTheme(v)}>{label}</div>
+            ))}
+          </div>
+          <span className="set-help">Black uses true black, which saves battery on OLED screens.</span>
         </div>
-      </div>
+        <div className="set-row col">
+          <span className="set-label">Accent colour</span>
+          <div className="accent-swatches">
+            {ACCENTS.map((c, i) => (
+              <button key={c} type="button" className={'sw' + (p.accent === c ? ' on' : '')} style={{ background: c }} aria-label={ACCENT_NAMES[i] ?? c} title={ACCENT_NAMES[i]} onClick={() => p.setAccent(c)} />
+            ))}
+          </div>
+        </div>
+      </section>
 
-      <div className="set-sec">
-        <div className="toggle-row">
-          <span>Dark mode</span>
-          <input type="checkbox" checked={dark} onChange={(e) => setDark(e.target.checked)} />
+      <section className="set-card">
+        <h3>Reading</h3>
+        <div className="set-row col">
+          <span className="set-label">Furigana</span>
+          <div className="density-seg">
+            {(['all', 'n3', 'off'] as const).map((v) => (
+              <div key={v} className={'d' + (p.furigana === v ? ' on' : '')} onClick={() => p.setFurigana(v)}>
+                {v === 'all' ? 'All' : v === 'n3' ? 'N3 and harder' : 'Off'}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
-
-      <div className="set-sec">
-        <div className="set-h">Furigana</div>
-        <div className="density-seg">
-          {(['all', 'n3', 'off'] as const).map((v) => (
-            <div key={v} className={'d' + (furigana === v ? ' on' : '')} onClick={() => setFurigana(v)}>
-              {v === 'all' ? 'All' : v === 'n3' ? 'N3+' : 'Off'}
-            </div>
-          ))}
+        <div className="set-row col">
+          <span className="set-label">Text size</span>
+          <div className="density-seg">
+            {(['s', 'm', 'l'] as const).map((v) => (
+              <div key={v} className={'d' + (p.readerFontScale === v ? ' on' : '')} onClick={() => p.setReaderFontScale(v)}>
+                {v === 's' ? 'Small' : v === 'm' ? 'Medium' : 'Large'}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+        <div className="set-row col">
+          <span className="set-label">Line width</span>
+          <div className="density-seg">
+            {(['normal', 'wide'] as const).map((v) => (
+              <div key={v} className={'d' + (p.readerWidth === v ? ' on' : '')} onClick={() => p.setReaderWidth(v)}>
+                {v === 'normal' ? 'Normal' : 'Wide'}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       <ReviewSettings />
 
-      <div className="set-sec">
-        <div className="set-h">Mining</div>
+      <section className="set-card">
+        <h3>Mining</h3>
         <div className="toggle-row">
           <span>Word audio (native speaker)</span>
-          <input type="checkbox" checked={mineWordAudio} onChange={(e) => setMineWordAudio(e.target.checked)} />
+          <input type="checkbox" checked={p.mineWordAudio} onChange={(e) => p.setMineWordAudio(e.target.checked)} />
         </div>
-        <div className="toggle-row" style={{ marginTop: 8 }}>
+        <div className="toggle-row">
           <span>Sentence audio (device voice)</span>
-          <input type="checkbox" checked={mineSentenceAudio} onChange={(e) => setMineSentenceAudio(e.target.checked)} />
+          <input type="checkbox" checked={p.mineSentenceAudio} onChange={(e) => p.setMineSentenceAudio(e.target.checked)} />
         </div>
-        <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 6, lineHeight: 1.5 }}>
-          Added to mined cards in the Android app. Elsewhere, cards read the word and sentence aloud at review time.
-        </div>
-      </div>
+        <span className="set-help">Added to mined cards in the Android app. Elsewhere, cards read the word and sentence aloud at review time.</span>
+      </section>
 
-      <div className="set-sec">
+      <section className="set-card">
         <BackupSection />
-      </div>
+      </section>
 
-      <div className="set-sec">
-        <div style={{ fontSize: 11, color: 'var(--ink-faint)', lineHeight: 1.5 }}>
-          Study settings (day rollover, FSRS, audio autoplay, limits) are under a deck's Options, as in Anki.
-        </div>
-      </div>
-
-      <div className="set-sec">
-        <a
-          style={{ color: 'var(--accent)', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}
-          onClick={onOpenCredits}
-        >
-          Credits &amp; licenses →
-        </a>
-      </div>
-    </>
-  );
-}
-
-interface Props {
-  onClose: () => void;
-  onOpenCredits: () => void;
-}
-
-/** Desktop settings popover (anchored above the sidebar user row). */
-export function Settings({ onClose, onOpenCredits }: Props) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function onDown(e: MouseEvent) {
-      const t = e.target as HTMLElement;
-      // Ignore clicks on the user row (it toggles the popover itself) and in dialogs opened from here.
-      if (ref.current && !ref.current.contains(t) && !t.closest('.user-row') && !t.closest('.modal-backdrop')) onClose();
-    }
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [onClose]);
-
-  return (
-    <div className="settings-pop" ref={ref}>
-      <SettingsContent
-        onOpenCredits={() => {
-          onOpenCredits();
-          onClose();
-        }}
-      />
+      <section className="set-card">
+        <h3>About</h3>
+        <span className="set-help">Study settings (new cards per day, learning steps, FSRS, day rollover) are in each deck’s Options, as in Anki.</span>
+        <a className="set-link" onClick={onOpenCredits}>Credits &amp; licenses →</a>
+      </section>
     </div>
   );
 }
@@ -126,8 +103,8 @@ function ReviewSettings() {
   const [gesturesOpen, setGesturesOpen] = useState(false);
   const [reminderNote, setReminderNote] = useState<string | null>(null);
   return (
-    <div className="set-sec">
-      <div className="set-h">Review</div>
+    <section className="set-card">
+      <h3>Review</h3>
       <div className="toggle-row">
         <span>Show answer timer</span>
         <input type="checkbox" checked={showTimer} onChange={(e) => setShowTimer(e.target.checked)} />
@@ -171,7 +148,7 @@ function ReviewSettings() {
         Gestures and tap zones →
       </a>
       {gesturesOpen && <GesturesModal onClose={() => setGesturesOpen(false)} />}
-    </div>
+    </section>
   );
 }
 

@@ -73,7 +73,7 @@ export function BackupSection() {
 
   return (
     <>
-      <div className="set-h">Backup</div>
+      <h3>Backup</h3>
       <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginBottom: 8, lineHeight: 1.5 }}>
         Everything lives on this device. A backup is one file with your cards, review history, media, books and settings.
         <br />

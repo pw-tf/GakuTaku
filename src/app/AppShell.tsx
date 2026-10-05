@@ -6,7 +6,7 @@ import { col } from '../anki/appCollection';
 import { ensureStockNotetypes } from '../anki/stock';
 import { WHOLE_COLLECTION } from '../anki/queue';
 import { Icon, type IconName } from '../ui/icons';
-import { Settings, SettingsContent } from '../ui/Settings';
+import { SettingsScreen } from '../ui/Settings';
 import { Attribution } from '../ui/Attribution';
 import { BackgroundTasks } from '../ui/BackgroundTasks';
 import { LibraryScreen } from '../library/LibraryScreen';
@@ -19,7 +19,7 @@ import type { DocumentRecord } from '../db/schema';
 import type { FeedArticle } from '../feeds/parse';
 import type { FeedView } from '../feeds/useFeeds';
 
-type View = 'library' | 'decks' | 'analytics' | 'credits';
+type View = 'library' | 'decks' | 'analytics' | 'settings' | 'credits';
 type Overlay = null | 'reader' | 'article' | 'review';
 
 const NAV: { id: 'library' | 'review' | 'decks' | 'analytics'; label: string; icon: IconName; overlay?: boolean }[] = [
@@ -33,6 +33,7 @@ const TITLES: Record<View, [string, string]> = {
   library: ['Library', '本棚 · フィード'],
   decks: ['Decks', 'カード'],
   analytics: ['Analytics', '統計'],
+  settings: ['Settings', '設定'],
   credits: ['Credits', 'クレジット'],
 };
 
@@ -47,7 +48,6 @@ export function AppShell() {
   const [articleView, setArticleView] = useState<{ article: FeedArticle; feed: FeedView } | null>(null);
   const [mined, setMined] = useState<MinedItem[]>([]);
   const [reviewSource, setReviewSource] = useState<{ deckId: number; title: string }>({ deckId: WHOLE_COLLECTION, title: 'All decks' });
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const { data: deckTree, loading: dueLoading } = useDeckTree();
@@ -82,7 +82,6 @@ export function AppShell() {
   // Android back: close the innermost open thing; on a tab other than Library, go to Library.
   useBackHandler(view !== 'library', () => setView('library'));
   useBackHandler(overlay !== null, () => setOverlay(null));
-  useBackHandler(settingsOpen, () => setSettingsOpen(false));
   useBackHandler(menuOpen, () => setMenuOpen(false));
 
   function openBook(b: DocumentRecord) {
@@ -134,20 +133,9 @@ export function AppShell() {
           );
         })}
         <div className="side-foot">
-          {settingsOpen && (
-            <Settings
-              onClose={() => setSettingsOpen(false)}
-              onOpenCredits={() => {
-                setOverlay(null);
-                setView('credits');
-              }}
-            />
-          )}
-          <div className="user-row" style={{ cursor: 'pointer' }} onClick={() => setSettingsOpen((o) => !o)}>
+          <div className={'nav-item' + (!overlay && view === 'settings' ? ' on' : '')} onClick={() => { setOverlay(null); setView('settings'); }} title="Settings">
             <span className="nav-ic"><Icon.gear s={20} /></span>
-            <div className="sf-text">
-              <div className="nm">Settings</div>
-            </div>
+            <span className="nav-lbl">Settings</span>
           </div>
         </div>
       </aside>
@@ -163,6 +151,7 @@ export function AppShell() {
           {view === 'library' && <LibraryScreen onOpenBook={openBook} onOpenArticle={openArticle} due={dueCount} dueLoading={dueLoading} streak={streak} />}
           {view === 'decks' && <DecksScreen onStudy={(id, name) => startReview(id, name)} />}
           {view === 'analytics' && <AnalyticsScreen />}
+          {view === 'settings' && <SettingsScreen onOpenCredits={() => setView('credits')} />}
           {view === 'credits' && <Attribution />}
         </div>
       </div>
@@ -224,14 +213,18 @@ export function AppShell() {
                 );
               })}
             </nav>
-            <div className="mm-sep">Settings</div>
-            <SettingsContent
-              onOpenCredits={() => {
-                setOverlay(null);
-                setView('credits');
+            <div className="mm-sep" />
+            <button
+              className={'mm-item' + (!overlay && view === 'settings' ? ' on' : '')}
+              onClick={() => {
                 setMenuOpen(false);
+                setOverlay(null);
+                setView('settings');
               }}
-            />
+            >
+              <Icon.gear s={20} />
+              <span>Settings</span>
+            </button>
           </div>
         </div>
       )}

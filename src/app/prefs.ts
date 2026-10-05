@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_GESTURES, type Gesture, type ReviewAction } from '../study/gestures';
@@ -10,11 +11,14 @@ export type ReaderFlow = 'paged' | 'scroll';
 export type ReaderFontScale = 's' | 'm' | 'l';
 export type ReaderWidth = 'normal' | 'wide';
 
-export const ACCENTS = ['#b8492f', '#3f5bb0', '#2f6b4f', '#7d4a86'];
+export const ACCENTS = ['#b8492f', '#3f5bb0', '#2f6b4f', '#7d4a86', '#1f7a80', '#a8476b'];
+
+/** App theme: follow the phone, or always light, dark, or black (true black, for OLED screens). */
+export type ThemeMode = 'system' | 'light' | 'dark' | 'black';
 
 interface PrefsState {
   accent: string;
-  dark: boolean;
+  theme: ThemeMode;
   furigana: FuriganaDensity;
   /** Last deck a word was mined into — used for one-tap "Add to deck". */
   lastDeckId: number | null;
@@ -43,7 +47,7 @@ interface PrefsState {
   setShowTimer: (on: boolean) => void;
   setCardZoom: (z: number) => void;
   setAccent: (a: string) => void;
-  setDark: (d: boolean) => void;
+  setTheme: (t: ThemeMode) => void;
   setFurigana: (f: FuriganaDensity) => void;
   setLastDeckId: (id: number | null) => void;
   setReaderOrientation: (o: ReaderOrientation) => void;
@@ -63,7 +67,7 @@ export const usePrefs = create<PrefsState>()(
   persist(
     (set) => ({
       accent: ACCENTS[0],
-      dark: false,
+      theme: 'system',
       furigana: 'all',
       lastDeckId: null,
       readerOrientation: null,
@@ -84,7 +88,7 @@ export const usePrefs = create<PrefsState>()(
       setShowTimer: (showTimer) => set({ showTimer }),
       setCardZoom: (cardZoom) => set({ cardZoom }),
       setAccent: (accent) => set({ accent }),
-      setDark: (dark) => set({ dark }),
+      setTheme: (theme) => set({ theme }),
       setFurigana: (furigana) => set({ furigana }),
       setLastDeckId: (lastDeckId) => set({ lastDeckId }),
       setReaderOrientation: (readerOrientation) => set({ readerOrientation }),
@@ -101,9 +105,32 @@ export const usePrefs = create<PrefsState>()(
       migrate: (persisted) => ({ ...(persisted as object), lastDeckId: null }) as PrefsState,
       // Gestures added later keep their defaults.
       merge: (persisted, current) => {
-        const p = (persisted ?? {}) as Partial<PrefsState>;
-        return { ...current, ...p, gestures: { ...DEFAULT_GESTURES, ...(p.gestures ?? {}) } };
+        const p = (persisted ?? {}) as Partial<PrefsState> & { dark?: boolean };
+        // Older versions stored a dark-mode switch instead of a theme.
+        const theme: ThemeMode = p.theme ?? (p.dark === true ? 'dark' : p.dark === false ? 'light' : current.theme);
+        return { ...current, ...p, theme, gestures: { ...DEFAULT_GESTURES, ...(p.gestures ?? {}) } };
       },
     },
   ),
 );
+
+const darkQuery = () => (typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null);
+
+/** The theme in effect: 'system' resolved against the phone's light/dark setting (live). */
+export function useEffectiveTheme(): 'light' | 'dark' | 'black' {
+  const theme = usePrefs((s) => s.theme);
+  const [systemDark, setSystemDark] = useState(() => darkQuery()?.matches ?? false);
+  useEffect(() => {
+    const q = darkQuery();
+    if (!q) return;
+    const on = () => setSystemDark(q.matches);
+    q.addEventListener('change', on);
+    return () => q.removeEventListener('change', on);
+  }, []);
+  return theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
+}
+
+/** True when the app is dark (dark or black theme). */
+export function useDark(): boolean {
+  return useEffectiveTheme() !== 'light';
+}

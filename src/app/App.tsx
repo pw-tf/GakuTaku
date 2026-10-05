@@ -1,12 +1,14 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { openDb } from '../db';
 import { AppShell } from './AppShell';
-import { usePrefs } from './prefs';
+import { useEffectiveTheme, usePrefs } from './prefs';
 
 type DbState = { status: 'opening' } | { status: 'ready'; persistent: boolean } | { status: 'error'; message: string };
 
 export function App() {
-  const { accent, dark } = usePrefs();
+  const accent = usePrefs((s) => s.accent);
+  const theme = useEffectiveTheme();
+  const dark = theme !== 'light';
   const [dbState, setDbState] = useState<DbState>({ status: 'opening' });
 
   useEffect(() => {
@@ -21,15 +23,26 @@ export function App() {
     void navigator.storage?.persist?.().catch(() => undefined);
   }, []);
 
-  // Accent is a runtime-swappable CSS variable; dark theme toggles the token overrides.
+  // Accent is a runtime-swappable CSS variable; the theme classes swap the colour tokens. Both also go
+  // on <html>, so dialogs (rendered into <body>, outside .app) and the page background match.
   const style = {
     '--rust': accent,
     '--accent': accent,
     '--rust-ink': `color-mix(in oklch, ${accent} 84%, black)`,
   } as CSSProperties;
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('theme-dark', dark);
+    root.classList.toggle('theme-black', theme === 'black');
+    root.style.setProperty('--rust', accent);
+    root.style.setProperty('--accent', accent);
+    root.style.setProperty('--rust-ink', `color-mix(in oklch, ${accent} 84%, black)`);
+    root.style.colorScheme = dark ? 'dark' : 'light';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', getComputedStyle(root).getPropertyValue('--paper').trim() || (dark ? '#1b1815' : '#f7f3ec'));
+  }, [dark, theme, accent]);
 
   return (
-    <div className={'app' + (dark ? ' theme-dark' : '')} style={style}>
+    <div className={'app' + (dark ? ' theme-dark' : '') + (theme === 'black' ? ' theme-black' : '')} style={style}>
       {dbState.status === 'opening' ? (
         <div className="app-msg">Loading…</div>
       ) : dbState.status === 'error' ? (
