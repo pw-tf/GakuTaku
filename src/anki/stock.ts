@@ -49,7 +49,8 @@ hr#answer { margin: 22px auto; width: 50px; border: none; height: 1px; backgroun
 `;
 
 const VOCAB_FRONT = `<div class="word">{{Word}}</div>`;
-const VOCAB_BACK = `{{FrontSide}}
+/** The back template GakuTaku first shipped (upgraded in place when untouched). */
+const VOCAB_BACK_V1 = `{{FrontSide}}
 <hr id=answer>
 <div class="reading">{{Reading}}</div>
 {{Word Audio}}
@@ -57,6 +58,21 @@ const VOCAB_BACK = `{{FrontSide}}
 {{#Sentence}}<div class="sentence">{{Sentence}}</div>{{/Sentence}}
 {{#Sentence Meaning}}<div class="sentence-meaning">{{Sentence Meaning}}</div>{{/Sentence Meaning}}
 {{Sentence Audio}}
+{{#Picture}}<div>{{Picture}}</div>{{/Picture}}
+{{#Source}}<div class="source">{{Source}}</div>{{/Source}}`;
+
+/**
+ * Sentences are stored in Anki's furigana syntax. Without recorded audio, the card speaks the word
+ * and sentence with the device's Japanese voice instead.
+ */
+const VOCAB_BACK = `{{FrontSide}}
+<hr id=answer>
+<div class="reading">{{Reading}}</div>
+{{#Word Audio}}{{Word Audio}}{{/Word Audio}}{{^Word Audio}}{{tts ja_JP:Word}}{{/Word Audio}}
+<div class="meaning">{{Meaning}}</div>
+{{#Sentence}}<div class="sentence">{{furigana:Sentence}}</div>{{/Sentence}}
+{{#Sentence Meaning}}<div class="sentence-meaning">{{Sentence Meaning}}</div>{{/Sentence Meaning}}
+{{#Sentence Audio}}{{Sentence Audio}}{{/Sentence Audio}}{{^Sentence Audio}}{{#Sentence}}{{tts ja_JP:kanji:Sentence}}{{/Sentence}}{{/Sentence Audio}}
 {{#Picture}}<div>{{Picture}}</div>{{/Picture}}
 {{#Source}}<div class="source">{{Source}}</div>{{/Source}}`;
 
@@ -86,8 +102,16 @@ export function stockNotetypes(): Omit<Notetype, 'id'>[] {
   ];
 }
 
-/** Create any missing stock note types (by name). Safe to call on every start. */
+/**
+ * Create any missing stock note types (by name), and bring GakuTaku's vocab type's back template up to
+ * date if it is still the one we shipped (a user-edited template is left alone). Safe on every start.
+ */
 export async function ensureStockNotetypes(col: Collection): Promise<void> {
-  const existing = new Set((await col.notetypes()).map((n) => n.name));
-  for (const nt of stockNotetypes()) if (!existing.has(nt.name)) await col.addNotetype(nt);
+  const existing = await col.notetypes();
+  const names = new Set(existing.map((n) => n.name));
+  for (const nt of stockNotetypes()) if (!names.has(nt.name)) await col.addNotetype(nt);
+  const vocab = existing.find((n) => n.name === VOCAB_NOTETYPE_NAME);
+  if (vocab && vocab.templates[0]?.afmt === VOCAB_BACK_V1) {
+    await col.updateNotetype({ ...vocab, templates: vocab.templates.map((t, i) => (i === 0 ? { ...t, afmt: VOCAB_BACK } : t)) });
+  }
 }

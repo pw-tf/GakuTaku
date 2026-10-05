@@ -570,3 +570,15 @@ body { overflow: hidden; }
 .deck-pick { display: block; width: 100%; text-align: left; font: inherit; font-size: 14.5px; color: var(--ink); padding: 10px 12px; border: 1px solid transparent; border-radius: 9px; background: none; cursor: pointer; }
 .deck-pick:hover { background: var(--paper-sunk); }
 .deck-pick.on { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- Mining context + reader contents ---------- */
+.lk-sentence { padding: 9px 18px; border-top: 1px solid var(--rule); font-size: 13px; line-height: 1.6; color: var(--ink-soft); max-height: 5.2em; overflow: hidden; }
+.lk-audio { font-weight: 500; color: var(--ink-faint); font-size: 12.5px; }
+.toc-list { display: flex; flex-direction: column; max-height: 40vh; overflow-y: auto; margin: 0 -6px; }
+.toc-item { text-align: left; font: inherit; font-size: 13.5px; line-height: 1.4; color: var(--ink-soft); background: none; border: none; border-radius: 7px; padding: 7px 8px; cursor: pointer; }
+.toc-item:hover { background: var(--paper-sunk); color: var(--ink); }
+.toc-item.on { color: var(--accent); font-weight: 600; }
+.bcard .cv img.cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.bcard .cv .kind { position: absolute; top: 6px; left: 10px; font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; padding: 2px 5px; border-radius: 4px; background: rgba(0,0,0,.35); color: #fff; }
+.bcard .cv .bc-more { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 50%; background: rgba(0,0,0,.35); color: #fff; cursor: pointer; opacity: .75; }
+.bcard .cv .bc-more:hover { opacity: 1; background: rgba(0,0,0,.55); }

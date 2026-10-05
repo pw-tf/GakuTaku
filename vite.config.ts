@@ -7,42 +7,42 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * Dev-only: serve the bundled dictionary `*.gz` files (kuromoji + JMdict buckets) as raw bytes.
+ * Local servers: serve the bundled dictionary `*.gz` files (kuromoji + JMdict buckets) as raw bytes.
  *
- * Vite's dev static server tags `.gz` responses with `Content-Encoding: gzip`, so the
+ * Vite's static servers tag `.gz` responses with `Content-Encoding: gzip`, so the
  * browser transparently inflates them and the kuromoji loader receives already-decompressed
  * bytes — its own gunzip step then throws "invalid gzip data". Serving them ourselves with
  * `application/octet-stream` and no `Content-Encoding` keeps the raw gzip bytes intact, matching
- * how the Android app and static hosts serve them. `configureServer` only runs during `vite dev`.
+ * how the Android app and static hosts serve them. Applies to `vite dev` and `vite preview`.
  */
 function serveRawGzipDict(): PluginOption {
+  const middleware = (publicDir: string) => (req: { url?: string }, res: import('node:http').ServerResponse, next: () => void) => {
+    const url = (req.url ?? '').split('?')[0];
+    if (!/^\/dict\/.*\.gz$/.test(url)) return next();
+    const filePath = path.join(publicDir, decodeURIComponent(url));
+    // Guard against path traversal escaping the served dir.
+    if (!path.resolve(filePath).startsWith(path.resolve(publicDir))) return next();
+    readFile(filePath)
+      .then((buf) => {
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Length', buf.length);
+        res.end(buf);
+      })
+      .catch(() => next());
+  };
   return {
     name: 'serve-raw-gzip-dict',
     configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        const url = (req.url ?? '').split('?')[0];
-        if (!/^\/dict\/.*\.gz$/.test(url)) return next();
-        const publicDir = server.config.publicDir;
-        const filePath = path.join(publicDir, decodeURIComponent(url));
-        // Guard against path traversal escaping the public dir.
-        if (!path.resolve(filePath).startsWith(path.resolve(publicDir))) return next();
-        readFile(filePath)
-          .then((buf) => {
-            res.setHeader('Content-Type', 'application/octet-stream');
-            res.setHeader('Content-Length', buf.length);
-            res.end(buf);
-          })
-          .catch(() => next());
-      });
+      server.middlewares.use(middleware(server.config.publicDir));
+    },
+    // `vite preview` serves the build output the same way.
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware(path.resolve(server.config.root, server.config.build.outDir)));
     },
   };
 }
 
-/**
- * Cross-origin isolation headers. The FSRS optimizer (fsrs-browser → wasm-bindgen-rayon) trains on
- * a `SharedArrayBuffer` across worker threads, which the browser only exposes when the document is
- * cross-origin isolated.
- */
+/** Cross-origin isolation headers (lets a future multi-threaded FSRS optimizer use SharedArrayBuffer). */
 const COI_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'credentialless',
@@ -72,7 +72,7 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         runtimeCaching: [
           {
-            // SQLite + optimizer WASM.
+            // SQLite WASM.
             urlPattern: /\.(?:wasm)$/,
             handler: 'CacheFirst',
             options: {
@@ -121,9 +121,8 @@ export default defineConfig({
     }),
   ],
   optimizeDeps: {
-    // These must not be pre-bundled (they load their own wasm / spawn workers relative to
-    // themselves): SQLite and the fsrs-browser optimizer (wasm-bindgen-rayon).
-    exclude: ['@sqlite.org/sqlite-wasm', 'fsrs-browser'],
+    // SQLite must not be pre-bundled (it loads its own wasm relative to itself).
+    exclude: ['@sqlite.org/sqlite-wasm'],
     include: ['epubjs'],
   },
   worker: {

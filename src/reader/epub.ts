@@ -40,43 +40,84 @@ function extractParagraphs(root: Element): string[] {
   return out;
 }
 
-export interface EpubBook {
+export interface TocEntry {
+  label: string;
+  /** Chapter (spine) index the entry opens. */
+  chapter: number;
+  depth: number;
+}
+
+/** A book the reader can show: chapters of plain-text paragraphs, loaded one at a time. */
+export interface BookSource {
   title: string;
   creator: string;
   chapterCount: number;
   /** OPF spine page-progression-direction — 'rtl' for vertically-set Japanese books. */
   direction: 'ltr' | 'rtl';
+  toc: TocEntry[];
   /** Load and extract a chapter's paragraphs (lazy). */
   loadChapter: (index: number) => Promise<string[]>;
   destroy: () => void;
 }
 
+interface NavItem {
+  label?: string;
+  href?: string;
+  subitems?: NavItem[];
+}
+
 /** Parse an ePUB from raw bytes for text extraction (no iframe rendering). */
-export async function openEpub(data: ArrayBuffer): Promise<EpubBook> {
+export async function openEpub(data: ArrayBuffer): Promise<BookSource & { cover: () => Promise<Blob | null> }> {
   const book = ePub();
   await book.open(data, 'binary');
   await book.ready;
 
   const meta = await book.loaded.metadata;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const anyBook = book as any;
   // epub.js parses <spine page-progression-direction> into metadata.direction.
+  const direction: 'ltr' | 'rtl' = (meta as { direction?: string }).direction === 'rtl' ? 'rtl' : 'ltr';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const direction: 'ltr' | 'rtl' = (meta as any).direction === 'rtl' ? 'rtl' : 'ltr';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sections: any[] = (book.spine as any).spineItems ?? [];
+  const sections: any[] = anyBook.spine.spineItems ?? [];
+
+  const toc: TocEntry[] = [];
+  try {
+    const nav = await book.loaded.navigation;
+    const walk = (items: NavItem[], depth: number) => {
+      for (const it of items) {
+        const href = (it.href ?? '').split('#')[0];
+        const section = href ? anyBook.spine.get(href) : null;
+        if (section && it.label?.trim()) toc.push({ label: it.label.trim(), chapter: section.index, depth });
+        if (it.subitems?.length) walk(it.subitems, depth + 1);
+      }
+    };
+    walk((nav as unknown as { toc: NavItem[] }).toc ?? [], 0);
+  } catch {
+    /* no table of contents */
+  }
 
   return {
     title: meta.title || 'Untitled',
     creator: meta.creator || '',
     chapterCount: sections.length,
     direction,
+    toc,
     async loadChapter(index: number) {
       const section = sections[index];
       if (!section) return [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const contents = (await section.load((book as any).load.bind(book))) as Element;
+      const contents = (await section.load(anyBook.load.bind(book))) as Element;
       const paragraphs = extractParagraphs(contents);
       section.unload();
       return paragraphs;
+    },
+    async cover() {
+      try {
+        await book.loaded.cover;
+        if (!anyBook.cover) return null;
+        return (await anyBook.archive.getBlob(anyBook.cover)) as Blob;
+      } catch {
+        return null;
+      }
     },
     destroy() {
       book.destroy();

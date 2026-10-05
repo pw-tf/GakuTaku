@@ -110,3 +110,18 @@ export async function proxyFetch(target: string): Promise<ProxyResult> {
   const contentType = res.headers.get('content-type') ?? '';
   return { body: decode(new Uint8Array(await res.arrayBuffer()), contentType), contentType, url: res.url || url.toString() };
 }
+
+/** Fetch raw bytes (audio clips for mining). Same transport rules as {@link proxyFetch}. */
+export async function fetchBytes(target: string): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const url = checkUrl(target);
+  if (Capacitor.isNativePlatform()) {
+    const res = await CapacitorHttp.get({ url: url.toString(), responseType: 'arraybuffer', connectTimeout: 15_000, readTimeout: 15_000 });
+    if (res.status < 200 || res.status >= 300) throw new ProxyError(upstreamMessage(res.status), res.status);
+    const headers = Object.fromEntries(Object.entries(res.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+    const bytes = typeof res.data === 'string' ? base64ToBytes(res.data) : new Uint8Array(res.data as ArrayBuffer);
+    return { bytes, contentType: headers['content-type'] ?? '' };
+  }
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new ProxyError(upstreamMessage(res.status), res.status);
+  return { bytes: new Uint8Array(await res.arrayBuffer()), contentType: res.headers.get('content-type') ?? '' };
+}

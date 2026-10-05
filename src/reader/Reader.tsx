@@ -3,7 +3,9 @@ import type { FuriToken } from '../jp-core/worker';
 import { usePrefs, type ReaderFontScale, type ReaderOrientation, type ReaderWidth } from '../app/prefs';
 import { useLookup } from '../jp-core/lookupService';
 import { TokenizedText } from '../ui/FuriganaText';
-import { LookupPopup, type MinedItem } from '../ui/LookupPopup';
+import { LookupPopup, type MineContext, type MinedItem } from '../ui/LookupPopup';
+import { captureSentence } from '../books/sentence';
+import type { TocEntry } from './epub';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import type { ReadingPos, RestoreTarget } from './useBook';
@@ -27,6 +29,11 @@ interface Props {
   direction: 'ltr' | 'rtl';
   chapterIndex: number;
   chapterCount: number;
+  /** Table of contents (chapter jump list); empty for articles. */
+  toc?: TocEntry[];
+  /** Where mined sentences come from (book or article title), and the library document if any. */
+  sourceLabel: string;
+  documentId?: string | null;
   paragraphs: FuriToken[][];
   loadingChapter: boolean;
   restore: RestoreTarget;
@@ -36,6 +43,7 @@ interface Props {
   onPrevChapter: () => void;
   onNextChapter: () => void;
   onPrevChapterEnd: () => void;
+  onGoChapter?: (index: number) => void;
   onProgress: (pos: ReadingPos, immediate?: boolean) => void;
   onClose: () => void;
 }
@@ -81,6 +89,7 @@ export function Reader(props: Props) {
 
   const [railOpen, setRailOpen] = useState(false);
   const [activeKey, setActiveKey] = useState<number | null>(null);
+  const [mineContext, setMineContext] = useState<MineContext | undefined>(undefined);
   const [page, setPage] = useState(0);
   const [pageCount, setPageCount] = useState(1);
   const [metrics, setMetrics] = useState({ total: 0, viewSize: 0, stride: 0, padStart: 0 });
@@ -404,6 +413,15 @@ export function Reader(props: Props) {
 
   function handleTap(token: FuriToken, key: number, anchor: DOMRect) {
     setActiveKey(key);
+    // The paragraph holding this token (keys are chapter-global), and the sentence around it.
+    let pi = 0;
+    while (pi + 1 < offsets.length && offsets[pi + 1] <= key) pi++;
+    const tokens = props.paragraphs[pi];
+    const local = key - (offsets[pi] ?? 0);
+    if (tokens && tokens[local]) {
+      const s = captureSentence(tokens, local);
+      setMineContext({ sentence: s.furigana, sentencePlain: s.plain, source: props.sourceLabel, documentId: props.documentId ?? null });
+    } else setMineContext(undefined);
     lookup.lookupTerm(token.surface, anchor, token.basic);
   }
   function closeLook() {
@@ -416,6 +434,13 @@ export function Reader(props: Props) {
     if (ignoreScroll.current) return;
     reportProgress(false);
   }
+
+  // The TOC entry covering the current chapter (the last one starting at or before it).
+  const currentTocChapter = (() => {
+    let best = -1;
+    for (const t of props.toc ?? []) if (t.chapter <= props.chapterIndex && t.chapter > best) best = t.chapter;
+    return best;
+  })();
 
   const pct = props.chapterCount
     ? Math.round(((props.chapterIndex + (paged ? (pageCount > 1 ? page / (pageCount - 1) : 0) : 0)) / props.chapterCount) * 100)
@@ -533,6 +558,28 @@ export function Reader(props: Props) {
                 </div>
               </div>
 
+              {props.toc && props.toc.length > 1 && props.onGoChapter && (
+                <>
+                  <hr className="hr" />
+                  <div className="rail-sec">
+                    <div className="rs-h"><Kicker>Contents</Kicker></div>
+                    <div className="toc-list">
+                      {props.toc.map((t, i) => (
+                        <button
+                          key={i}
+                          className={'toc-item' + (t.chapter === currentTocChapter ? ' on' : '')}
+                          style={{ paddingLeft: 8 + t.depth * 14 }}
+                          lang="ja"
+                          onClick={() => { pendingSave.current = true; props.onGoChapter!(t.chapter); setRailOpen(false); }}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
               <hr className="hr" />
               <div className="rail-sec">
                 <div className="rs-h"><Kicker>Mined this session</Kicker><Chip accent>{props.mined.length}</Chip></div>
@@ -596,6 +643,7 @@ export function Reader(props: Props) {
           error={lookup.error}
           onClose={closeLook}
           onMine={props.onMine}
+          context={mineContext}
         />
       )}
     </div>

@@ -22,6 +22,10 @@ interface PrefsState {
   readerFlow: ReaderFlow;
   readerFontScale: ReaderFontScale;
   readerWidth: ReaderWidth;
+  /** Mining: fetch a native-speaker recording of the word (JapanesePod101, Android app only). */
+  mineWordAudio: boolean;
+  /** Mining: record the sentence with the device's Japanese voice (Android app only). */
+  mineSentenceAudio: boolean;
   setAccent: (a: string) => void;
   setDark: (d: boolean) => void;
   setFurigana: (f: FuriganaDensity) => void;
@@ -30,6 +34,8 @@ interface PrefsState {
   setReaderFlow: (f: ReaderFlow) => void;
   setReaderFontScale: (s: ReaderFontScale) => void;
   setReaderWidth: (w: ReaderWidth) => void;
+  setMineWordAudio: (on: boolean) => void;
+  setMineSentenceAudio: (on: boolean) => void;
 }
 
 /**
@@ -48,6 +54,8 @@ export const usePrefs = create<PrefsState>()(
       readerFlow: 'paged',
       readerFontScale: 'm',
       readerWidth: 'normal',
+      mineWordAudio: true,
+      mineSentenceAudio: true,
       setAccent: (accent) => set({ accent }),
       setDark: (dark) => set({ dark }),
       setFurigana: (furigana) => set({ furigana }),
@@ -56,6 +64,8 @@ export const usePrefs = create<PrefsState>()(
       setReaderFlow: (readerFlow) => set({ readerFlow }),
       setReaderFontScale: (readerFontScale) => set({ readerFontScale }),
       setReaderWidth: (readerWidth) => set({ readerWidth }),
+      setMineWordAudio: (mineWordAudio) => set({ mineWordAudio }),
+      setMineSentenceAudio: (mineSentenceAudio) => set({ mineSentenceAudio }),
     }),
     {
       name: 'gakutaku-prefs',
