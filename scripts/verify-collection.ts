@@ -428,6 +428,37 @@ async function main() {
     check('undo removes the leech tag', !/\bleech\b/.test(tags()), tags());
   }
 
+  // ---- Undo for card actions -------------------------------------------------------------
+  {
+    const { col, mid } = await emptyCol();
+    const a = await addBasic(col, mid, 'undo-a');
+    const before = await col.card(a);
+    const snap1 = await col.snapshot([a]);
+    await col.buryOrSuspend([a], 'buryUser');
+    eq('bury applied', (await col.card(a))!.queue, CardQueue.UserBuried);
+    await col.restoreSnapshot(snap1);
+    eq('undo bury restores the card exactly', await col.card(a), before);
+
+    const snap2 = await col.snapshot([a]);
+    await col.setDueDate([a], '5!');
+    const revAfterSet = (await col.cardInfo(a))!.revlog.length;
+    await col.restoreSnapshot(snap2);
+    eq('undo set due date restores the card', await col.card(a), before);
+    eq('…and removes its review-log entry', [revAfterSet > 0, (await col.cardInfo(a))!.revlog.length], [true, 0]);
+
+    const note = (await col.note((await col.card(a))!.nid))!;
+    const snap3 = await col.snapshot([a], [note.id]);
+    await col.removeNotes([note.id]);
+    eq('delete applied', await col.card(a), null);
+    await col.restoreSnapshot(snap3);
+    eq('undo delete brings back the card', await col.card(a), before);
+    eq('…and the note', await col.note(note.id), note);
+
+    eq('mark', await col.toggleMark(note.id), true);
+    check('marked tag added', /\bmarked\b/.test((await col.note(note.id))!.tags));
+    eq('unmark', await col.toggleMark(note.id), false);
+  }
+
   if (failures) {
     console.error(`\n${failures} check(s) failed, ${passes} passed.`);
     process.exit(1);

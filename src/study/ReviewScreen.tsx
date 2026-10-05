@@ -7,6 +7,7 @@ import { Btn, Chip } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { ConfirmModal, PromptModal } from '../ui/Modal';
 import { CardView, type CardEvent } from './CardView';
+import { tapGesture, type Gesture, type ReviewAction } from './gestures';
 import { CardInfoModal } from '../decks/CardInfo';
 import { EditNoteModal } from './EditNoteModal';
 import { useStudy } from './useStudy';
@@ -36,6 +37,9 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
   const study = useStudy(deckId);
   const { state } = study;
   const dark = usePrefs((s) => s.dark);
+  const gestures = usePrefs((s) => s.gestures);
+  const showTimer = usePrefs((s) => s.showTimer);
+  const cardZoom = usePrefs((s) => s.cardZoom);
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const card = state.card?.prepared.card ?? null;
@@ -44,11 +48,12 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
 
   const noteCardIds = useCallback((nid: number) => col.cardIdsOfNote(nid), []);
 
+  // Card actions go through study.perform, so each can be undone.
   const toggleFlag = useCallback(
     async (n: number) => {
       if (!card) return;
-      await col.setFlag([card.id], (card.flags & 7) === n ? 0 : n);
-      await study.refreshCurrent();
+      const next = (card.flags & 7) === n ? 0 : n;
+      await study.perform(next ? `${FLAG_NAMES[n]} flag` : 'Remove flag', () => col.setFlag([card.id], next), { cids: [card.id] });
     },
     [card, study],
   );
@@ -57,8 +62,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
     async (wholeNote: boolean) => {
       if (!card) return;
       const ids = wholeNote ? await noteCardIds(card.nid) : [card.id];
-      await col.buryOrSuspend(ids, 'buryUser');
-      await study.removeFromSession(ids);
+      await study.perform(wholeNote ? 'Bury note' : 'Bury card', () => col.buryOrSuspend(ids, 'buryUser'), { cids: ids, leave: ids });
     },
     [card, study, noteCardIds],
   );
@@ -67,10 +71,42 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
     async (wholeNote: boolean) => {
       if (!card) return;
       const ids = wholeNote ? await noteCardIds(card.nid) : [card.id];
-      await col.buryOrSuspend(ids, 'suspend');
-      await study.removeFromSession(ids);
+      await study.perform(wholeNote ? 'Suspend note' : 'Suspend card', () => col.buryOrSuspend(ids, 'suspend'), { cids: ids, leave: ids });
     },
     [card, study, noteCardIds],
+  );
+
+  const marked = !!state.card && /(^|\s)marked(\s|$)/i.test(state.card.note.tags);
+  const mark = useCallback(async () => {
+    if (!card) return;
+    await study.perform(marked ? 'Unmark note' : 'Mark note', () => col.toggleMark(card.nid), { cids: [card.id], nids: [card.nid] });
+  }, [card, study, marked]);
+
+  /** A gesture's action (Settings › Review gestures). Answers show the answer first. */
+  const runAction = useCallback(
+    (a: ReviewAction) => {
+      const answerWith = (r: Rating) => (state.shown ? void study.answer(r) : study.reveal());
+      switch (a) {
+        case 'none': return;
+        case 'reveal': if (!state.shown) study.reveal(); return;
+        case 'again': return answerWith(1);
+        case 'hard': return answerWith(2);
+        case 'good': return answerWith(3);
+        case 'easy': return answerWith(4);
+        case 'undo': void study.undo(); return;
+        case 'edit': setDialog('edit'); return;
+        case 'info': setDialog('info'); return;
+        case 'replay': study.replay(); return;
+        case 'mark': void mark(); return;
+        case 'buryCard': void bury(false); return;
+        case 'suspendCard': void suspend(false); return;
+        case 'flagRed': void toggleFlag(1); return;
+        case 'flagOrange': void toggleFlag(2); return;
+        case 'flagGreen': void toggleFlag(3); return;
+        case 'flagBlue': void toggleFlag(4); return;
+      }
+    },
+    [state.shown, study, mark, bury, suspend, toggleFlag],
   );
 
   // Keyboard: Anki desktop's bindings.
@@ -110,6 +146,9 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
       } else if (e.key === 'i' || e.key === 'I') {
         pd();
         setDialog('info');
+      } else if (e.key === '*') {
+        pd();
+        void mark();
       } else if (e.key === ' ' || e.key === 'Enter') {
         pd();
         if (!state.shown) study.reveal();
@@ -127,18 +166,19 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
     window.addEventListener('keydown', listener);
     (window as unknown as { __cardKey?: typeof onKey }).__cardKey = onKey;
     return () => window.removeEventListener('keydown', listener);
-  }, [card, state.shown, study, toggleFlag, bury, suspend, dialog]);
+  }, [card, state.shown, study, toggleFlag, bury, suspend, mark, dialog]);
 
   const onCardEvent = useCallback(
     (e: CardEvent) => {
       switch (e.type) {
         case 'tap':
-          if (!state.shown) study.reveal();
+          runAction(gestures[tapGesture(e.x, e.y, e.w, e.h)]);
           break;
-        case 'swipe':
-          // AnkiDroid defaults: swipe up = show answer, left/right navigate nothing destructive.
-          if (e.dir === 'up' && !state.shown) study.reveal();
+        case 'swipe': {
+          const g: Gesture = e.dir === 'up' ? 'swipeUp' : e.dir === 'down' ? 'swipeDown' : e.dir === 'left' ? 'swipeLeft' : 'swipeRight';
+          runAction(gestures[g]);
           break;
+        }
         case 'key':
           (window as unknown as { __cardKey?: (k: typeof e) => void }).__cardKey?.(e);
           break;
@@ -155,7 +195,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
           break;
       }
     },
-    [state.shown, study],
+    [state.shown, study, runAction, gestures],
   );
 
   const top = (
@@ -171,9 +211,11 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
       {card && (card.flags & 7) > 0 && (
         <span title={`Flag: ${FLAG_NAMES[card.flags & 7]}`} style={{ width: 10, height: 10, borderRadius: 3, background: FLAG_COLORS[card.flags & 7], display: 'inline-block' }} />
       )}
+      {card && marked && <span className="rv-marked" title="Marked"><Icon.star s={14} /></span>}
+      {card && showTimer && <AnswerTimer key={state.shownAt} since={state.shownAt} stopped={state.shown} limitSecs={state.card?.config.capAnswerTimeToSecs ?? 60} />}
       <span className="spacer" style={{ flex: 1 }} />
       {state.canUndo && (
-        <button className="rv-edit" title="Undo (Z)" aria-label="Undo" onClick={() => void study.undo()}><Icon.undo s={16} /></button>
+        <button className="rv-edit" title={`Undo ${state.undoLabel?.toLowerCase() ?? ''} (Z)`} aria-label={`Undo ${state.undoLabel?.toLowerCase() ?? ''}`} onClick={() => void study.undo()}><Icon.undo s={16} /></button>
       )}
       {card && (
         <>
@@ -200,6 +242,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
                   <button onClick={() => { setMenuOpen(false); void bury(true); }}><Icon.moon s={15} /> Bury note <span className="rate-key">=</span></button>
                   <button onClick={() => { setMenuOpen(false); void suspend(false); }}><Icon.pause s={15} /> Suspend card <span className="rate-key">@</span></button>
                   <button onClick={() => { setMenuOpen(false); void suspend(true); }}><Icon.pause s={15} /> Suspend note <span className="rate-key">!</span></button>
+                  <button onClick={() => { setMenuOpen(false); void mark(); }}><Icon.star s={15} /> {marked ? 'Unmark note' : 'Mark note'} <span className="rate-key">*</span></button>
                   <button onClick={() => { setMenuOpen(false); setDialog('info'); }}><Icon.chart s={15} /> Card info <span className="rate-key">I</span></button>
                   <button onClick={() => { setMenuOpen(false); setDialog('due'); }}><Icon.clock s={15} /> Set due date…</button>
                   <button onClick={() => { setMenuOpen(false); setDialog('forget'); }}><Icon.undo s={15} /> Reset card (Forget)…</button>
@@ -210,7 +253,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
           </span>
         </>
       )}
-      <Chip>{title}</Chip>
+      <Chip className="rv-deck">{title}</Chip>
     </div>
   );
 
@@ -233,10 +276,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
           help="“0” = today, “1” = tomorrow, “3-7” = a random day in that range. Add “!” (e.g. “7!”) to also set the interval."
           confirmLabel="Set"
           onClose={() => setDialog(null)}
-          onSubmit={async (v) => {
-            await col.setDueDate([card.id], v);
-            await study.removeFromSession([card.id]);
-          }}
+          onSubmit={(v) => study.perform('Set due date', () => col.setDueDate([card.id], v), { cids: [card.id], leave: [card.id] })}
         />
       )}
       {dialog === 'forget' && (
@@ -246,8 +286,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
           confirmLabel="Reset"
           onClose={() => setDialog(null)}
           onConfirm={async () => {
-            await col.forget([card.id], { resetCounts: false, restorePosition: true });
-            await study.removeFromSession([card.id]);
+            await study.perform('Reset card', () => col.forget([card.id], { resetCounts: false, restorePosition: true }), { cids: [card.id], leave: [card.id] });
           }}
         />
       )}
@@ -260,8 +299,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
           onClose={() => setDialog(null)}
           onConfirm={async () => {
             const ids = await noteCardIds(card.nid);
-            await col.removeNotes([card.nid]);
-            await study.removeFromSession(ids);
+            await study.perform('Delete note', () => col.removeNotes([card.nid]), { cids: ids, nids: [card.nid], leave: ids });
           }}
         />
       )}
@@ -296,7 +334,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
                     : 'Nothing is due right now.'}
             </p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 24 }}>
-              {state.canUndo && <Btn onClick={() => void study.undo()}>Undo last answer</Btn>}
+              {state.canUndo && <Btn onClick={() => void study.undo()}>Undo {state.undoLabel?.toLowerCase() ?? 'last answer'}</Btn>}
               <Btn variant="primary" onClick={onExit}>Back</Btn>
             </div>
           </div>
@@ -309,7 +347,7 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
     <div className="review-wrap">
       {top}
       <div className="rv-card">
-        <CardView html={state.html} css={state.rendered?.css ?? ''} ord={card.ord} dark={dark} onEvent={onCardEvent} version={state.version} side={state.shown ? 'a' : 'q'} />
+        <CardView html={state.html} css={state.rendered?.css ?? ''} ord={card.ord} dark={dark} onEvent={onCardEvent} version={state.version} side={state.shown ? 'a' : 'q'} zoom={cardZoom} />
       </div>
       <div className="rv-foot">
         {!state.shown ? (
@@ -327,5 +365,22 @@ export function ReviewScreen({ deckId, title, onExit }: Props) {
       </div>
       {dialogs}
     </div>
+  );
+}
+
+/** Seconds the card has been on screen (AnkiDroid's answer timer); stops at the answer and the cap. */
+function AnswerTimer({ since, stopped, limitSecs }: { since: number; stopped: boolean; limitSecs: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (stopped) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [stopped]);
+  const secs = Math.min(limitSecs || 60, Math.max(0, Math.floor((now - since) / 1000)));
+  const capped = secs >= (limitSecs || 60);
+  return (
+    <span className={'rv-timer' + (capped ? ' capped' : '')} title="Time on this card">
+      {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}
+    </span>
   );
 }

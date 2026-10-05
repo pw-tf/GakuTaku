@@ -35,6 +35,8 @@ interface Props {
   version?: number;
   /** Which side `html` is (the answer scrolls to `#answer`, as in Anki). */
   side?: 'q' | 'a';
+  /** Card text size (1 = 100%). */
+  zoom?: number;
 }
 
 /** Anki's ts/reviewer/reviewer.scss essentials + its palette variables, so deck CSS behaves the same. */
@@ -106,6 +108,7 @@ const BRIDGE = `
     var d = e.data;
     if (e.source !== parent || !d || d.__gakutakuRender !== 1) return;
     document.documentElement.className = d.htmlClass;
+    document.documentElement.style.zoom = d.zoom && d.zoom !== 1 ? String(d.zoom) : '';
     document.body.className = d.bodyClass;
     var css = document.getElementById('note-css');
     if (css.textContent !== d.css) css.textContent = d.css;
@@ -195,9 +198,10 @@ interface Content {
   bodyClass: string;
   htmlClass: string;
   side: 'q' | 'a';
+  zoom: number;
 }
 
-async function buildContent(html: string, css: string, ord: number, dark: boolean, side: 'q' | 'a'): Promise<Content> {
+async function buildContent(html: string, css: string, ord: number, dark: boolean, side: 'q' | 'a', zoom: number): Promise<Content> {
   const [body, noteCss] = await Promise.all([
     inlineMedia(html, LOCAL_SRC, (m) => m[3], (m, url) => `${m[1]}${m[2]}${url}${m[2]}`),
     inlineMedia(css, CSS_URL, (m) => m[2], (_m, url) => `url("${url}")`),
@@ -208,10 +212,11 @@ async function buildContent(html: string, css: string, ord: number, dark: boolea
     bodyClass: `card card${ord + 1}${dark ? ' nightMode night_mode' : ''} mobile android`,
     htmlClass: dark ? 'night-mode' : '',
     side,
+    zoom,
   };
 }
 
-export function CardView({ html, css, ord, dark, onEvent, version = 0, side = 'q' }: Props) {
+export function CardView({ html, css, ord, dark, onEvent, version = 0, side = 'q', zoom = 1 }: Props) {
   const ref = useRef<HTMLIFrameElement>(null);
   const ready = useRef(false);
   const pending = useRef<Content | null>(null);
@@ -229,12 +234,12 @@ export function CardView({ html, css, ord, dark, onEvent, version = 0, side = 'q
 
   useEffect(() => {
     let alive = true;
-    void buildContent(html, css, ord, dark, side).then((c) => alive && send(c));
+    void buildContent(html, css, ord, dark, side, zoom).then((c) => alive && send(c));
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, css, ord, dark, version, side]);
+  }, [html, css, ord, dark, version, side, zoom]);
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
