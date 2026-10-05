@@ -58,7 +58,7 @@ export function BackupSection() {
     }
   }
 
-  async function restore(file: File) {
+  async function restore(file: Blob) {
     const t = useTasks.getState();
     t.start(TASK, 'Restoring backup');
     try {
@@ -84,6 +84,7 @@ export function BackupSection() {
         <Btn size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>Restore…</Btn>
       </div>
       <input ref={fileRef} type="file" hidden accept={fileAccept('.zip,application/zip')} onChange={(e) => void pick(e)} />
+      <AutoBackups busy={busy} onRestore={(blob) => void restore(blob)} />
       {pending && (
         <ConfirmModal
           title="Restore this backup?"
@@ -105,5 +106,67 @@ export function BackupSection() {
         />
       )}
     </>
+  );
+}
+
+/** Settings → Backup → automatic backups: on/off, and restoring one of the kept ones. */
+function AutoBackups({ busy, onRestore }: { busy: boolean; onRestore: (blob: Blob) => void }) {
+  const [enabled, setEnabled] = useState(true);
+  const [list, setList] = useState<{ id: number; at: Date; bytes: number }[]>([]);
+  const [open, setOpen] = useState(false);
+  const [confirm, setConfirm] = useState<{ id: number; at: Date } | null>(null);
+
+  useEffect(() => {
+    void import('./auto').then(async (m) => {
+      setEnabled(m.autoBackupEnabled());
+      setList(await m.listAutoBackups());
+    });
+  }, [open]);
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="toggle-row">
+        <span>Automatic daily backups</span>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            const on = e.target.checked;
+            setEnabled(on);
+            void import('./auto').then((m) => m.setAutoBackupEnabled(on));
+          }}
+        />
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 4, lineHeight: 1.5 }}>
+        Cards, history and settings, kept on this device (the last {5}). Media and books aren’t included.{' '}
+        {list.length > 0 && <a style={{ color: 'var(--accent)', cursor: 'pointer', fontWeight: 600 }} onClick={() => setOpen((o) => !o)}>{open ? 'Hide' : `Restore one (${list.length})`}</a>}
+      </div>
+      {open && (
+        <div className="auto-backups">
+          {list.map((b) => (
+            <div key={b.id} className="ab-row">
+              <span>{b.at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+              <span className="muted">{size(b.bytes)}</span>
+              <Btn size="sm" disabled={busy} onClick={() => setConfirm(b)}>Restore</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+      {confirm && (
+        <ConfirmModal
+          title="Restore this automatic backup?"
+          message={<>Your cards, review history and settings go back to how they were on <b>{confirm.at.toLocaleString()}</b>. Media and books stay as they are. Anything studied or added since then will be lost.</>}
+          confirmLabel="Restore"
+          danger
+          onClose={() => setConfirm(null)}
+          onConfirm={async () => {
+            const m = await import('./auto');
+            const blob = await m.autoBackupBlob(confirm.id);
+            setConfirm(null);
+            if (blob) onRestore(blob);
+          }}
+        />
+      )}
+    </div>
   );
 }

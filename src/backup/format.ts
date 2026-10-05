@@ -21,6 +21,11 @@ export const BACKUP_VERSION = 1;
 export interface BackupManifest {
   format: typeof BACKUP_FORMAT;
   version: number;
+  /**
+   * 'collection' = cards, history and settings only (the automatic backups): restoring one leaves
+   * media and books as they are. Missing = 'full'.
+   */
+  kind?: 'full' | 'collection';
   createdAt: string;
   counts: { media: number; books: number; databaseBytes: number };
 }
@@ -60,7 +65,8 @@ export type Progress = (message: string, done?: number, total?: number) => void;
 
 const SQLITE_HEADER = 'SQLite format 3\0';
 
-export async function createBackup(src: BackupSource, onProgress?: Progress): Promise<Blob> {
+export async function createBackup(src: BackupSource, onProgress?: Progress, opts: { files?: boolean } = {}): Promise<Blob> {
+  const files = opts.files ?? true;
   const zip = new ZipWriter(new BlobWriter('application/zip'), { bufferedWrite: true });
   onProgress?.('Saving cards and history…');
   const database = await src.database();
@@ -69,14 +75,14 @@ export async function createBackup(src: BackupSource, onProgress?: Progress): Pr
   if (prefs) await zip.add('prefs.json', new TextReader(prefs));
 
   let media = 0;
-  for await (const f of src.media()) {
+  for await (const f of files ? src.media() : emptyIter<{ name: string; blob: Blob }>()) {
     await zip.add(`media/${encodeURIComponent(f.name)}`, new BlobReader(f.blob), { level: 0 });
     if (++media % 50 === 0) onProgress?.(`Saving media… (${media.toLocaleString()} files)`);
   }
 
   let books = 0;
   onProgress?.('Saving books…');
-  for await (const b of src.books()) {
+  for await (const b of files ? src.books() : emptyIter<BackupBook>()) {
     if (b.file) await zip.add(`books/${b.id}/file`, new BlobReader(b.file), { level: 0 });
     if (b.text) await zip.add(`books/${b.id}/text.json`, new TextReader(JSON.stringify(b.text)));
     if (b.cover) await zip.add(`books/${b.id}/cover`, new BlobReader(b.cover), { level: 0 });
@@ -86,12 +92,18 @@ export async function createBackup(src: BackupSource, onProgress?: Progress): Pr
   const manifest: BackupManifest = {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
+    kind: files ? 'full' : 'collection',
     createdAt: new Date().toISOString(),
     counts: { media, books, databaseBytes: database.length },
   };
   await zip.add('manifest.json', new TextReader(JSON.stringify(manifest, null, 2)));
   onProgress?.('Finishing…');
   return zip.close();
+}
+
+// eslint-disable-next-line require-yield
+async function* emptyIter<T>(): AsyncGenerator<T> {
+  return;
 }
 
 const text = async (e: Entry) => new TextDecoder().decode(await bytes(e));
@@ -146,6 +158,14 @@ export async function restoreBackup(file: Blob, target: RestoreTarget, onProgres
     if (schema > target.schemaVersion) throw new Error('This backup was made by a newer version of GakuTaku. Update the app, then restore it.');
     const prefs = entries.get('prefs.json');
     const prefsJson = prefs ? await text(prefs) : null;
+
+    if (manifest.kind === 'collection') {
+      // Cards, history and settings only: media and books stay as they are.
+      onProgress?.('Restoring cards and history…');
+      await target.database(database);
+      target.prefs(prefsJson);
+      return manifest;
+    }
 
     // Files are written over the top first and the database is swapped last, so a failure part-way
     // leaves the current collection working (with some extra files). Only then is anything the

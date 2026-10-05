@@ -71,6 +71,14 @@ const WRITE_CHUNK = 3 * 1024 * 1024;
  * or Downloads, or send it to another device. In a browser it downloads.
  */
 async function deliver(blob: Blob, name: string, onProgress?: Progress): Promise<void> {
+  return deliverFile(blob, name, { title: 'GakuTaku backup', dialogTitle: 'Save your GakuTaku backup', replace: /^GakuTaku-backup-.*\.zip$/ }, onProgress);
+}
+
+/**
+ * Hand a file to the user: the share sheet in the Android app (save to Files, Drive, Downloads, or
+ * send it), a download in a browser. Earlier files matching `replace` are cleared from the cache.
+ */
+export async function deliverFile(blob: Blob, name: string, opts: { title: string; dialogTitle: string; replace: RegExp }, onProgress?: Progress): Promise<void> {
   if (!isNative) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -85,18 +93,18 @@ async function deliver(blob: Blob, name: string, onProgress?: Progress): Promise
   // Only the newest backup is kept in the cache.
   try {
     const { files } = await Filesystem.readdir({ path: '', directory: Directory.Cache });
-    for (const f of files) if (/^GakuTaku-backup-.*\.zip$/.test(f.name)) await Filesystem.deleteFile({ path: f.name, directory: Directory.Cache });
+    for (const f of files) if (opts.replace.test(f.name) || f.name === name) await Filesystem.deleteFile({ path: f.name, directory: Directory.Cache });
   } catch {
     /* nothing to clean */
   }
   await Filesystem.writeFile({ path: name, data: '', directory: Directory.Cache });
   for (let off = 0; off < blob.size; off += WRITE_CHUNK) {
     await Filesystem.appendFile({ path: name, data: await base64Of(blob.slice(off, off + WRITE_CHUNK)), directory: Directory.Cache });
-    onProgress?.('Writing the backup file…', Math.min(off + WRITE_CHUNK, blob.size), blob.size);
+    onProgress?.('Writing the file…', Math.min(off + WRITE_CHUNK, blob.size), blob.size);
   }
   const { uri } = await Filesystem.getUri({ path: name, directory: Directory.Cache });
   try {
-    await Share.share({ title: 'GakuTaku backup', files: [uri], dialogTitle: 'Save your GakuTaku backup' });
+    await Share.share({ title: opts.title, files: [uri], dialogTitle: opts.dialogTitle });
   } catch (e) {
     if (/cancel/i.test(e instanceof Error ? e.message : String(e))) throw new BackupCancelled();
     throw e;

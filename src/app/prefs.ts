@@ -33,6 +33,11 @@ interface PrefsState {
   showTimer: boolean;
   /** Reviewer: card text size, as a fraction (1 = 100%). */
   cardZoom: number;
+  /** Daily study reminder (Android notifications) at `reminderTime` (HH:MM, local). */
+  reminder: boolean;
+  reminderTime: string;
+  setReminder: (on: boolean) => void;
+  setReminderTime: (t: string) => void;
   setGesture: (g: Gesture, a: ReviewAction) => void;
   resetGestures: () => void;
   setShowTimer: (on: boolean) => void;
@@ -70,6 +75,10 @@ export const usePrefs = create<PrefsState>()(
       gestures: { ...DEFAULT_GESTURES },
       showTimer: false,
       cardZoom: 1,
+      reminder: false,
+      reminderTime: '19:00',
+      setReminder: (reminder) => set({ reminder }),
+      setReminderTime: (reminderTime) => set({ reminderTime }),
       setGesture: (g, a) => set((s) => ({ gestures: { ...s.gestures, [g]: a } })),
       resetGestures: () => set({ gestures: { ...DEFAULT_GESTURES } }),
       setShowTimer: (showTimer) => set({ showTimer }),

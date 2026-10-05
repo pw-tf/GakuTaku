@@ -161,5 +161,26 @@ eq('an older schema version restores (the app migrates it on open)', [...E.state
 
 eq('file name', backupFileName(new Date(2026, 9, 5)), 'GakuTaku-backup-2026-10-05.zip');
 
+// Collection-only backups (the automatic ones) leave media and books alone.
+const colOnly = await createBackup(
+  {
+    database: async () => fakeDb('auto'),
+    prefs: () => deviceA.prefs,
+    media: () => iter([...deviceA.media].map(([name, blob]) => ({ name, blob }))),
+    books: () => iter(deviceA.books.values()),
+  },
+  undefined,
+  { files: false },
+);
+const colOnlyRead = await readBackup(colOnly);
+await colOnlyRead.close();
+eq('collection-only manifest', [colOnlyRead.manifest.kind, colOnlyRead.manifest.counts.media, colOnlyRead.manifest.counts.books], ['collection', 0, 0]);
+const F = memoryDevice({ db: fakeDb('F'), media: { 'mine.mp3': 'mine' }, books: ['my-book'] });
+await restoreBackup(colOnly, F.target);
+eq('collection-only restore: database replaced', [...F.state.db], [...fakeDb('auto')]);
+eq('…prefs restored', F.state.prefs, deviceA.prefs);
+eq('…media and books untouched', [[...F.state.media.keys()], [...F.state.books.keys()]], [['mine.mp3'], ['my-book']]);
+eq('full backups say so', manifest.kind, 'full');
+
 console.log(`${passes} passed, ${failures} failed`);
 if (failures) process.exit(1);

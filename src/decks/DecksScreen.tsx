@@ -16,6 +16,7 @@ import { BrowseCards } from './BrowseCards';
 import { DeckOptionsModal } from './DeckOptionsModal';
 import { CustomStudyModal, FilteredDeckModal } from './FilteredDeck';
 import { NotetypesModal } from './NotetypesModal';
+import { ExportModal } from './ExportModal';
 
 const DECK_TABLES = ['cards', 'decks', 'deck_config', 'config'];
 
@@ -76,6 +77,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
   const [browsing, setBrowsing] = useState(false);
   const [notetypes, setNotetypes] = useState(false);
   const [creatingFiltered, setCreatingFiltered] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const rows = useMemo(() => flatten(roots), [roots]);
   useBackHandler(menuOpen, () => setMenuOpen(false));
 
@@ -108,6 +110,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
                 <button onClick={() => { setMenuOpen(false); fileRef.current?.click(); }}><Icon.upload s={15} /> Import Anki deck or backup (.apkg / .colpkg)</button>
                 <button onClick={() => { setMenuOpen(false); setCreatingFiltered(true); }}><Icon.search s={15} /> Create filtered deck…</button>
                 <button onClick={() => { setMenuOpen(false); setNotetypes(true); }}><Icon.study s={15} /> Note types…</button>
+                <button onClick={() => { setMenuOpen(false); setExporting(true); }}><Icon.upload s={15} /> Export all decks (.apkg)…</button>
               </div>
             </>
           )}
@@ -148,6 +151,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
       )}
 
       {notetypes && <NotetypesModal onClose={() => setNotetypes(false)} />}
+      {exporting && <ExportModal deckId={null} deckName={null} onClose={() => setExporting(false)} />}
       {creatingFiltered && <FilteredDeckModal initialSearch="is:due" onClose={() => setCreatingFiltered(false)} onSaved={onOpen} />}
       {creating && (
         <PromptModal
@@ -168,7 +172,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
   );
 }
 
-type Dialog = null | 'options' | 'add' | 'rename' | 'delete' | 'description' | 'custom';
+type Dialog = null | 'options' | 'add' | 'rename' | 'delete' | 'description' | 'custom' | 'export';
 
 function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; onBack: () => void; onOpen: (id: number) => void; onStudy: (id: number, name: string) => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -209,6 +213,7 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
                 {!node.filtered && <button onClick={() => { setMenuOpen(false); setDialog('rename'); }}><Icon.study s={15} /> Rename</button>}
                 {!node.filtered && <button onClick={() => { setMenuOpen(false); setDialog('description'); }}><Icon.reader s={15} /> Description</button>}
                 {!node.filtered && <button onClick={() => { setMenuOpen(false); setDialog('custom'); }}><Icon.flame s={15} /> Custom study…</button>}
+                {!node.filtered && <button onClick={() => { setMenuOpen(false); setDialog('export'); }}><Icon.upload s={15} /> Export…</button>}
                 <button className="danger" onClick={() => { setMenuOpen(false); setDialog('delete'); }}><Icon.trash s={15} /> Delete</button>
               </div>
             </>
@@ -275,6 +280,7 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
       {dialog === 'options' && (node.filtered
         ? <FilteredDeckModal deckId={node.deckId} onClose={() => setDialog(null)} />
         : <DeckOptionsModal deckId={node.deckId} onClose={() => setDialog(null)} />)}
+      {dialog === 'export' && <ExportModal deckId={node.deckId} deckName={node.fullName} onClose={() => setDialog(null)} />}
       {dialog === 'custom' && <CustomStudyModal deckId={node.deckId} deckName={node.fullName} onClose={() => setDialog(null)} onStudy={onStudy} />}
       {dialog === 'add' && <AddNoteModal deckId={node.deckId} onClose={() => setDialog(null)} />}
       {dialog === 'rename' && (

@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useBackHandler } from './back';
+import { usePrefs } from './prefs';
+import { refreshReminders } from '../native/reminders';
 import { col } from '../anki/appCollection';
 import { ensureStockNotetypes } from '../anki/stock';
 import { WHOLE_COLLECTION } from '../anki/queue';
@@ -51,6 +53,19 @@ export function AppShell() {
   const { data: deckTree, loading: dueLoading } = useDeckTree();
   const dueCount = (deckTree ?? []).reduce((n, d) => n + d.newCount + d.learnCount + d.reviewCount, 0);
   const streak = useStreak();
+
+  // Daily reminder counts and automatic backups follow the collection: refresh them on start, when
+  // the app comes back, and after each study session.
+  const reminder = usePrefs((p) => p.reminder);
+  const reminderTime = usePrefs((p) => p.reminderTime);
+  useEffect(() => {
+    if (overlay === 'review') return;
+    const id = setTimeout(() => {
+      void refreshReminders(reminder, reminderTime);
+      void import('../backup/auto').then((m) => m.maybeAutoBackup());
+    }, 4000);
+    return () => clearTimeout(id);
+  }, [overlay, reminder, reminderTime]);
 
   // Collection housekeeping: the stock note types exist, and cards buried on an earlier day come
   // back (Anki's rollover unbury) — on start and whenever the app returns to the foreground.
@@ -152,20 +167,6 @@ export function AppShell() {
         </div>
       </div>
 
-      {!overlay && (
-        <nav className="mob-nav">
-          {NAV.map((it) => {
-            const I = Icon[it.icon];
-            const on = !overlay && view === it.id;
-            return (
-              <div key={it.id} className={'mn' + (on ? ' on' : '')} onClick={() => navTo(it)}>
-                <I s={20} /><span>{it.label}</span>
-              </div>
-            );
-          })}
-        </nav>
-      )}
-
       {overlay === 'reader' && book && (
         <Suspense fallback={<div className="reader"><div className="rd-stage"><div className="rd-scroll"><div className="rd-col"><p style={{ color: 'var(--ink-faint)' }}>Opening reader…</p></div></div></div></div>}>
           <BookReader
@@ -195,14 +196,35 @@ export function AppShell() {
 
       <BackgroundTasks />
 
-      {/* Mobile menu drawer (surfaces the sidebar's settings/account, hidden on small screens). */}
+      {/* Phone side menu: the sidebar's destinations and settings (the sidebar is hidden on small screens). */}
       {menuOpen && (
         <div className="mobile-menu-backdrop" onClick={() => setMenuOpen(false)}>
           <div className="mobile-menu" onClick={(e) => e.stopPropagation()}>
             <div className="mm-head">
               <span className="brand"><span className="mk" lang="ja">学</span><span className="wd">GakuTaku</span></span>
-              <button className="icon-btn" onClick={() => setMenuOpen(false)}><Icon.close s={18} /></button>
+              <button className="icon-btn" aria-label="Close menu" onClick={() => setMenuOpen(false)}><Icon.close s={18} /></button>
             </div>
+            <nav className="mm-nav">
+              {NAV.map((it) => {
+                const I = Icon[it.icon];
+                const on = it.id === 'review' ? overlay === 'review' : !overlay && view === it.id;
+                return (
+                  <button
+                    key={it.id}
+                    className={'mm-item' + (on ? ' on' : '')}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navTo(it);
+                    }}
+                  >
+                    <I s={20} />
+                    <span>{it.label}</span>
+                    {it.id === 'review' && dueCount > 0 && <span className="nav-badge">{dueCount}</span>}
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="mm-sep">Settings</div>
             <SettingsContent
               onOpenCredits={() => {
                 setOverlay(null);
