@@ -5,6 +5,7 @@
  *   npm run verify:analytics
  */
 import { loadAnalytics, loadStreak, HEATMAP_DAYS } from '../src/analytics/analytics';
+import { loadStats } from '../src/analytics/stats';
 import { timingAt } from '../src/anki/timing';
 import { openTestDb } from './sqliteNode';
 
@@ -82,6 +83,26 @@ eq('time-of-day total', a.tod.reduce((x, y) => x + y, 0), 6);
 // Streak survives "not studied yet today" (counts back from yesterday).
 eq('streak tomorrow before studying', await loadStreak(sql, NOW + DAY, ROLLOVER), 3);
 eq('streak broken after a missed day', await loadStreak(sql, NOW + 2 * DAY, ROLLOVER), 0);
+
+// ---- Detailed statistics (Anki's Statistics screen) ----
+const st = await loadStats(sql, { deckIds: null, period: 30 }, NOW, ROLLOVER);
+eq('stats today', st.today, { reviews: 3, minutes: 2, secondsPerCard: 40, again: 1, learn: 1, review: 2, relearn: 0, filtered: 0, matureCorrect: 0, matureTotal: 0 });
+eq('stats: 30 daily review buckets', [st.reviews.length, st.reviews[29].start, st.reviews[0].start], [30, 0, -29]);
+eq('stats: today by kind', [st.reviews[29].learn, st.reviews[29].young], [1, 2]);
+eq('stats: past days', [st.reviews[28].young, st.reviews[27].young, st.reviews[26].young, st.reviews[25].young], [1, 1, 0, 1]);
+eq('stats: time per kind today', st.reviews[29].ms.young, 60_000);
+eq('stats: forecast today (learning + overdue), +1, +3', [st.forecast[0].n, st.forecast[1].n, st.forecast[3].n, st.forecast.length], [3, 1, 1, 30]);
+eq('stats: card counts', st.counts, { new: 2, learning: 1, relearning: 1, young: 2, mature: 1, suspended: 1, buried: 0 });
+eq('stats: intervals cover all review cards', st.intervals.counts.reduce((x, y) => x + y, 0), 5);
+eq('stats: interval bins', [st.intervals.counts[0], st.intervals.counts[2], st.intervals.labels[7], st.intervals.counts[7]], [1, 1, '8d–14d', 1]);
+eq('stats: ease (no FSRS)', [st.ease?.labels[6], st.ease?.counts[6], st.difficulty], ['250%', 5, null]);
+eq('stats: hours total', st.hours.reduce((x, h) => x + h.total, 0), 6);
+eq('stats: answer buttons', st.buttons, { learning: [0, 0, 1, 0], young: [1, 0, 3, 1], mature: [0, 0, 0, 0] });
+eq('stats: weekly buckets for a year', (await loadStats(sql, { deckIds: null, period: 365 }, NOW, ROLLOVER)).reviews[0].days, 7);
+eq('stats: deck life spans back to the first review', (await loadStats(sql, { deckIds: null, period: 0 }, NOW, ROLLOVER)).spanDays, 5);
+const other = await loadStats(sql, { deckIds: [999], period: 30 }, NOW, ROLLOVER);
+eq('stats: another deck has none of it', [other.today.reviews, other.counts.new, other.forecast[0].n], [0, 0, 0]);
+eq('stats: this deck has it all', (await loadStats(sql, { deckIds: [1], period: 30 }, NOW, ROLLOVER)).today.reviews, 3);
 
 // An empty collection has no retention figure.
 const empty = await openTestDb();

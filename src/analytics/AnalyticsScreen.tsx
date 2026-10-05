@@ -1,6 +1,7 @@
 import { Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { useAnalytics } from './analyticsHooks';
+import { StatsSection } from './StatsSection';
 
 /** Analytics dashboard, computed live from Anki's review log and cards. */
 export function AnalyticsScreen() {
@@ -85,6 +86,8 @@ export function AnalyticsScreen() {
           </div>
         </div>
       </div>
+
+      <StatsSection />
     </div>
   );
 }
