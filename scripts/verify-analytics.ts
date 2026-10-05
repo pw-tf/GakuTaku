@@ -1,103 +1,93 @@
 /**
- * Standalone verification for src/analytics/analytics.ts (build plan M5 acceptance: "stats match a
- * hand-computed sample"). Run with `npx tsx scripts/verify-analytics.ts`. No test framework — the
- * analytics module's only runtime dependency is ts-fsrs (its database imports are type-only), so it
- * runs directly under tsx. Exits non-zero on the first failed assertion.
+ * Verification for src/analytics/analytics.ts against a hand-built collection on an in-memory SQLite
+ * database (the app's own migrations). Exits non-zero on any failed check.
+ *
+ *   npm run verify:analytics
  */
-import { computeAnalytics, type AnalyticsCard, type AnalyticsLog } from '../src/analytics/analytics';
+import { loadAnalytics, loadStreak, HEATMAP_DAYS } from '../src/analytics/analytics';
+import { timingAt } from '../src/anki/timing';
+import { openTestDb } from './sqliteNode';
 
-const DAY = 86_400_000;
 let failures = 0;
-
-function check(label: string, actual: unknown, expected: unknown) {
-  const ok = JSON.stringify(actual) === JSON.stringify(expected);
-  if (!ok) {
+let passes = 0;
+function eq(label: string, actual: unknown, expected: unknown) {
+  if (JSON.stringify(actual) === JSON.stringify(expected)) passes++;
+  else {
     failures++;
     console.error(`✗ ${label}\n    expected ${JSON.stringify(expected)}\n    actual   ${JSON.stringify(actual)}`);
-  } else {
-    console.log(`✓ ${label}`);
-  }
-}
-function checkTrue(label: string, cond: boolean) {
-  if (!cond) {
-    failures++;
-    console.error(`✗ ${label}`);
-  } else {
-    console.log(`✓ ${label}`);
   }
 }
 
-// Fixed "now" at local noon today, so day bucketing is timezone-stable within this run.
-const now = new Date();
-now.setHours(12, 0, 0, 0);
-/** ISO timestamp for local noon `n` days before today. */
-const day = (n: number) => new Date(now.getTime() - n * DAY).toISOString();
+const DAY = 86_400_000;
+const ROLLOVER = 4;
+// Local noon today, so every bucket below is well clear of the rollover hour.
+const noon = new Date();
+noon.setHours(12, 0, 0, 0);
+const NOW = noon.getTime();
+const t = timingAt(NOW, ROLLOVER);
 
-// ---------- Scenario 1: aggregations over a hand-built fixture ----------
-const cards1: AnalyticsCard[] = [
-  // A: Review, interval 5d (<21) → young; due +5d (forecast index 5)
-  { id: 'A', createdAt: day(40), fsrsParams: null, due: day(-5), reps: 3, state: 2, lastReview: day(0) },
-  // B: Review, interval 30d (≥21) → mature; due +30d (outside 7d forecast)
-  { id: 'B', createdAt: day(40), fsrsParams: null, due: day(-30), reps: 5, state: 2, lastReview: day(0) },
-  // C: New
-  { id: 'C', createdAt: day(1), fsrsParams: null, due: day(0), reps: 0, state: 0, lastReview: null },
-  // D: Learning; due +2d (forecast index 2)
-  { id: 'D', createdAt: day(1), fsrsParams: null, due: day(-2), reps: 1, state: 1, lastReview: day(0) },
-];
-const logs1: AnalyticsLog[] = [
-  { card_id: 'A', rating: 3, review_time: day(0), elapsed_ms: 30_000 },
-  { card_id: 'A', rating: 3, review_time: day(1), elapsed_ms: 0 },
-  { card_id: 'A', rating: 1, review_time: day(2), elapsed_ms: 0 },
-  { card_id: 'B', rating: 3, review_time: day(0), elapsed_ms: 90_000 },
-  { card_id: 'B', rating: 3, review_time: day(3), elapsed_ms: 0 },
-];
+const { sql } = await openTestDb();
 
-const a = computeAnalytics(cards1, logs1, now);
-check('totalReviews', a.totalReviews, 5);
-check('totalCards', a.totalCards, 4);
-check('reviewsToday', a.reviewsToday, 2);
-check('minutesToday', a.minutesToday, 2); // (30000 + 90000) / 60000 = 2
-check('tod hour 12', a.tod[12], 5);
-check('tod elsewhere zero', a.tod.reduce((s, n) => s + n, 0), 5);
-check('streak (today..3d back)', a.streak, 4);
-check('maturity {mature,young,learning,new}', [a.mature, a.young, a.learning, a.newCards], [1, 1, 1, 1]);
+// Cards: 2 new, 1 learning (due now), 1 relearning, 2 young reviews, 1 mature, 1 suspended review.
+const card = (id: number, type: number, queue: number, due: number, ivl: number) =>
+  sql.run(
+    `INSERT INTO cards (id, nid, did, ord, mod, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags)
+     VALUES (?, 1, 1, 0, 0, ?, ?, ?, ?, 2500, 0, 0, 0, 0, 0, 0)`,
+    [id, type, queue, due, ivl],
+  );
+await card(1, 0, 0, 1, 0);
+await card(2, 0, 0, 2, 0);
+await card(3, 1, 1, t.now - 60, 0);
+await card(4, 3, 1, t.now + 600, 1);
+await card(5, 2, 2, t.today - 2, 3); // overdue → counted today
+await card(6, 2, 2, t.today + 1, 10);
+await card(7, 2, 2, t.today + 3, 40);
+await card(8, 2, -1, t.today, 30);
 
-// Heatmap: today's cell sits at week 17, row = today's weekday → index 119 + dow.
-const dow = now.getDay();
-check('heatmap length', a.heatmap.length, 126);
-check('heatmap today cell = max intensity', a.heatmap[119 + dow], 4); // count 2 = maxDaily → 4
-check('heatmap nonzero cells', a.heatmap.filter((n) => n > 0).length, 4); // today + 3 prior review days
+// Reviews: today 3 (one of a review card failed), yesterday 1, two days ago 1, four days ago 1.
+const rev = (ms: number, cid: number, ease: number, type: number, time = 10_000) =>
+  sql.run('INSERT INTO revlog (id, cid, ease, ivl, lastIvl, factor, time, type) VALUES (?, ?, ?, 1, 1, 2500, ?, ?)', [ms, cid, ease, time, type]);
+await rev(NOW - 1000, 5, 1, 1, 30_000);
+await rev(NOW - 2000, 6, 3, 1, 30_000);
+await rev(NOW - 3000, 3, 3, 0, 60_000);
+await rev(NOW - DAY, 7, 3, 1);
+await rev(NOW - 2 * DAY, 7, 4, 1);
+await rev(NOW - 4 * DAY, 6, 3, 1);
+// A manual reschedule (ease 0) is not a review.
+await rev(NOW - 4000, 8, 0, 4);
 
-// Forecast: A due +5d, D due +2d; B (+30d) excluded.
-check('forecast length', a.forecast.length, 7);
-check('forecast total in-window', a.forecast.reduce((s, f) => s + f.n, 0), 2);
-check('forecast day 2 (D)', a.forecast[2].n, 1);
-check('forecast day 5 (A)', a.forecast[5].n, 1);
+const a = await loadAnalytics(sql, NOW, ROLLOVER);
+eq('total cards', a.totalCards, 8);
+eq('new', a.newCards, 2);
+eq('learning', a.learning, 2);
+eq('young', a.young, 2);
+eq('mature', a.mature, 1);
+eq('suspended', a.suspended, 1);
+eq('reviews today', a.reviewsToday, 3);
+eq('minutes today', a.minutesToday, 2);
+eq('total reviews', a.totalReviews, 6);
+// Retention over review-card reviews only: 4 passed of 5.
+eq('true retention', a.retention, 80);
+eq('streak (3 consecutive days, gap before)', a.streak, 3);
+eq('forecast today = overdue/due reviews + learning due today', a.forecast[0].n, 1 + 2);
+eq('forecast +1', a.forecast[1].n, 1);
+eq('forecast +3', a.forecast[3].n, 1);
+eq('forecast length', a.forecast.length, 7);
+eq('heatmap length', a.heatmap.length, HEATMAP_DAYS);
+eq('heatmap today is the max bucket', a.heatmap[HEATMAP_DAYS - 1], 4);
+eq('heatmap 3 days ago empty', a.heatmap[HEATMAP_DAYS - 4], 0);
+eq('heatmap yesterday', a.heatmap[HEATMAP_DAYS - 2], 2);
+eq('time-of-day total', a.tod.reduce((x, y) => x + y, 0), 6);
 
-// ---------- Scenario 2: true retention responds to a lapse on a graduated card ----------
-const eCard: AnalyticsCard[] = [
-  { id: 'E', createdAt: day(60), fsrsParams: null, due: day(-5), reps: 6, state: 2, lastReview: day(10) },
-];
-const goodDays = [60, 58, 54, 46, 30, 10];
-const eLogsAllGood: AnalyticsLog[] = goodDays.map((d) => ({ card_id: 'E', rating: 3, review_time: day(d), elapsed_ms: 0 }));
-const eLogsLapse: AnalyticsLog[] = eLogsAllGood.map((l, i) =>
-  i === eLogsAllGood.length - 1 ? { ...l, rating: 1 } : l,
-);
+// Streak survives "not studied yet today" (counts back from yesterday).
+eq('streak tomorrow before studying', await loadStreak(sql, NOW + DAY, ROLLOVER), 3);
+eq('streak broken after a missed day', await loadStreak(sql, NOW + 2 * DAY, ROLLOVER), 0);
 
-const rGood = computeAnalytics(eCard, eLogsAllGood, now).retention;
-const rLapse = computeAnalytics(eCard, eLogsLapse, now).retention;
-checkTrue(`retention in [0,100] (got ${rGood})`, Number.isInteger(rGood) && rGood >= 0 && rGood <= 100);
-check('all-Good graduated card → 100% retention', rGood, 100);
-checkTrue(`a lapse lowers retention (${rLapse} < ${rGood})`, rLapse < rGood);
+// An empty collection has no retention figure.
+const empty = await openTestDb();
+const e = await loadAnalytics(empty.sql, NOW, ROLLOVER);
+eq('empty retention is null', e.retention, null);
+eq('empty streak', e.streak, 0);
 
-// ---------- Determinism: same input → identical output (event-sourcing property) ----------
-checkTrue(
-  'deterministic recompute',
-  JSON.stringify(computeAnalytics(cards1, logs1, now)) === JSON.stringify(a),
-);
-
-if (failures > 0) {
-  console.error(`\n${failures} assertion(s) failed.`);
-  process.exit(1);
-}
-console.log('\nAll analytics assertions passed.');
+console.log(`${passes} passed, ${failures} failed`);
+if (failures) process.exit(1);

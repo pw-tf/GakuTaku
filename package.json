@@ -9,11 +9,13 @@
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
     "build:dict": "tsx scripts/build-dict.ts",
+    "verify:anki": "tsx scripts/verify-anki.ts",
+    "verify:collection": "tsx scripts/verify-collection.ts",
+    "verify:import": "tsx scripts/verify-import.ts",
     "verify:analytics": "tsx scripts/verify-analytics.ts",
-    "verify:srs": "tsx scripts/verify-srs.ts",
     "verify:dict": "tsx scripts/verify-dict.ts",
     "build:android": "GAKUTAKU_TARGET=android vite build && cap sync android",
-    "verify": "npm run verify:srs && npm run verify:analytics && npm run verify:dict"
+    "verify": "npm run verify:anki && npm run verify:collection && npm run verify:import && npm run verify:analytics && npm run verify:dict"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",
@@ -26,6 +28,7 @@
     "@fontsource/zen-kaku-gothic-new": "^5.3.0",
     "@sglkc/kuromoji": "^1.1.0",
     "@sqlite.org/sqlite-wasm": "^3.53.4-build2",
+    "@zip.js/zip.js": "^2.23.0",
     "comlink": "^4.4.2",
     "dexie": "^4.4.3",
     "epubjs": "^0.3.93",
@@ -34,8 +37,6 @@
     "jszip": "^3.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "sql.js": "^1.14.1",
-    "ts-fsrs": "^5.4.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -45,7 +46,6 @@
     "@types/node": "^20.19.41",
     "@types/react": "^18.3.30",
     "@types/react-dom": "^18.3.7",
-    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react-swc": "^4.3.1",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.15",

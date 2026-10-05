@@ -1,9 +1,9 @@
 /**
  * Minimal protobuf wire-format reader for the handful of Anki messages the modern `.apkg`
  * (export version 3) embeds: `PackageMetadata` (the `meta` file), `MediaEntries` (the `media`
- * file), and the `Notetype.Config` / `Notetype.Template.Config` blobs in the schema-18 SQLite
- * `notetypes`/`templates` tables. We only ever need varints and length-delimited fields; anything
- * else is skipped. Field numbers come from Anki's proto/anki/{notetypes,import_export}.proto.
+ * file), and the config blobs in the schema-18 SQLite tables (`notetypes`, `templates`, `decks`,
+ * `deck_config`). Varints, floats (fixed32, packed or not) and length-delimited fields are read;
+ * 64-bit fixed fields are skipped. Field numbers come from Anki's proto/anki/{notetypes,import_export}.proto.
  */
 
 export type PbValue = number | Uint8Array;
@@ -47,6 +47,8 @@ export function decodeFields(buf: Uint8Array): Map<number, PbValue[]> {
         break;
       }
       case 5:
+        // fixed32: every fixed32 field in Anki's protos is a float.
+        push(tag, new DataView(buf.buffer, buf.byteOffset + i, 4).getFloat32(0, true));
         i += 4;
         break;
       default:
@@ -60,19 +62,47 @@ export function decodeFields(buf: Uint8Array): Map<number, PbValue[]> {
 
 const utf8 = new TextDecoder();
 
-/** First occurrence of a length-delimited field, decoded as UTF-8 (or '' when absent). */
+/** A string field (last occurrence wins, per protobuf), or '' when absent. */
 export function pbString(fields: Map<number, PbValue[]>, tag: number): string {
-  const v = fields.get(tag)?.find((x): x is Uint8Array => x instanceof Uint8Array);
+  const v = fields.get(tag)?.findLast((x): x is Uint8Array => x instanceof Uint8Array);
   return v ? utf8.decode(v) : '';
 }
 
-/** First occurrence of a varint field (or 0 when absent). */
+/** A varint field (last occurrence wins, per protobuf), or 0 when absent. */
 export function pbUint(fields: Map<number, PbValue[]>, tag: number): number {
-  const v = fields.get(tag)?.find((x): x is number => typeof x === 'number');
+  const v = fields.get(tag)?.findLast((x): x is number => typeof x === 'number');
   return v ?? 0;
 }
 
 /** All occurrences of a repeated length-delimited (sub-message) field. */
 export function pbMessages(fields: Map<number, PbValue[]>, tag: number): Uint8Array[] {
   return (fields.get(tag) ?? []).filter((x): x is Uint8Array => x instanceof Uint8Array);
+}
+
+/** A repeated float field, packed (one length-delimited blob) or not. */
+export function pbFloats(fields: Map<number, PbValue[]>, tag: number): number[] {
+  const out: number[] = [];
+  for (const v of fields.get(tag) ?? []) {
+    if (typeof v === 'number') out.push(v);
+    else {
+      const dv = new DataView(v.buffer, v.byteOffset, v.byteLength);
+      for (let i = 0; i + 4 <= v.byteLength; i += 4) out.push(dv.getFloat32(i, true));
+    }
+  }
+  return out;
+}
+
+/** A float (fixed32) field (last occurrence wins), or `fallback` when absent. */
+export function pbFloat(fields: Map<number, PbValue[]>, tag: number, fallback = 0): number {
+  const v = fields.get(tag)?.findLast((x): x is number => typeof x === 'number');
+  return v ?? fallback;
+}
+
+/** Whether a field is present at all (proto3 `optional` fields). */
+export const pbHas = (fields: Map<number, PbValue[]>, tag: number) => fields.has(tag);
+
+/** First nested message, decoded (empty map when absent). */
+export function pbMessage(fields: Map<number, PbValue[]>, tag: number): Map<number, PbValue[]> {
+  const m = pbMessages(fields, tag)[0];
+  return m ? decodeFields(m) : new Map();
 }

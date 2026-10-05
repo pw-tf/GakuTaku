@@ -2,7 +2,7 @@ import { useTasks } from '../app/tasks';
 
 /**
  * Shared file-import driver used by both the Library and Decks screens. Branches on file type
- * (.apkg → Anki import, otherwise ePUB upload), reports progress through the global task store so
+ * (.apkg/.colpkg → Anki import, .epub → library), reports progress through the global task store so
  * the `<BackgroundTasks/>` banner shows it regardless of which screen kicked it off, and dynamically
  * imports the heavy stacks so they stay out of the initial bundle.
  */
@@ -10,33 +10,37 @@ import { useTasks } from '../app/tasks';
 export const IMPORT_TASK_ID = 'library-import';
 
 export async function importFile(file: File, userId: string): Promise<void> {
-  const isApkg = /\.apkg$/i.test(file.name);
+  const isAnki = /\.(apkg|colpkg)$/i.test(file.name);
   const tasks = useTasks.getState();
-  if (!isApkg && !/\.epub$/i.test(file.name)) {
+  if (!isAnki && !/\.epub$/i.test(file.name)) {
     tasks.start(IMPORT_TASK_ID, `Can’t open ${file.name}`);
-    tasks.finish(IMPORT_TASK_ID, 'error', 'Pick an ePUB book (.epub) or an Anki deck (.apkg).');
+    tasks.finish(IMPORT_TASK_ID, 'error', 'Pick an ePUB book (.epub), an Anki deck (.apkg) or an Anki collection backup (.colpkg).');
     return;
   }
-  tasks.start(IMPORT_TASK_ID, isApkg ? `Importing ${file.name}` : `Adding ${file.name}`);
-  tasks.update(IMPORT_TASK_ID, { message: isApkg ? 'Reading deck…' : 'Adding to your library…' });
+  tasks.start(IMPORT_TASK_ID, isAnki ? `Importing ${file.name}` : `Adding ${file.name}`);
+  tasks.update(IMPORT_TASK_ID, { message: isAnki ? 'Reading the package…' : 'Adding to your library…' });
   try {
-    if (isApkg) {
-      const { importApkgFile } = await import('./index');
-      const s = await importApkgFile(file, userId, (p) => {
-        if (p.phase === 'mapping') tasks.update(IMPORT_TASK_ID, { total: 0, message: 'Reading collection…' });
+    if (isAnki) {
+      const { importAnkiFile } = await import('./index');
+      const s = await importAnkiFile(file, (p) => {
+        if (p.phase === 'reading') tasks.update(IMPORT_TASK_ID, { total: 0, message: 'Reading the package…' });
+        else if (p.phase === 'media') tasks.update(IMPORT_TASK_ID, { done: p.done ?? 0, total: p.total ?? 0, message: 'Saving images and audio…' });
         else if (p.phase === 'writing') tasks.update(IMPORT_TASK_ID, { done: p.done ?? 0, total: p.total ?? 0, message: 'Importing cards…' });
-        else if (p.phase === 'media') tasks.update(IMPORT_TASK_ID, { done: p.done ?? 0, total: p.total ?? 0, message: 'Saving media…' });
       });
-      const bits = [`${s.decks} deck${s.decks === 1 ? '' : 's'}`, `${s.cards} cards`];
+      const bits = [`${s.cards.toLocaleString()} cards`];
+      if (s.decks) bits.unshift(`${s.decks} deck${s.decks === 1 ? '' : 's'}`);
       if (s.reviews) bits.push(`${s.reviews.toLocaleString()} reviews`);
-      if (s.mediaFiles) bits.push(`${s.mediaFiles} media`);
-      tasks.finish(IMPORT_TASK_ID, 'success', `Imported ${bits.join(', ')}.`);
+      if (s.mediaFiles) bits.push(`${s.mediaFiles.toLocaleString()} media files`);
+      let msg = `Imported ${bits.join(', ')}.`;
+      if (s.skippedNotes) msg += ` ${s.skippedNotes.toLocaleString()} notes were already here and were skipped.`;
+      tasks.finish(IMPORT_TASK_ID, 'success', msg);
     } else {
       const { uploadEpub } = await import('../reader/uploadEpub');
       await uploadEpub(file, userId);
       tasks.finish(IMPORT_TASK_ID, 'success', `“${file.name}” added to your library.`);
     }
   } catch (err) {
+    console.error(err);
     tasks.finish(IMPORT_TASK_ID, 'error', err instanceof Error ? err.message : 'Import failed.');
   }
 }

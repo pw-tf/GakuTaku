@@ -123,60 +123,124 @@ export const MIGRATIONS: string[] = [
     looked_up_at TEXT
   );
   `,
+  // 2 — Anki's data model (src/anki/types.ts). Replaces the old FSRS-replay tables: cards now keep
+  // their scheduling state directly, exactly as Anki stores it, and `revlog` is Anki's review log.
+  // (Nothing had been studied with the old tables yet, so they are dropped rather than converted.)
+  `
+  DROP TABLE IF EXISTS cards;
+  DROP TABLE IF EXISTS review_logs;
+  DROP TABLE IF EXISTS notes;
+  DROP TABLE IF EXISTS note_types;
+  DROP TABLE IF EXISTS decks;
+  DROP TABLE IF EXISTS deck_presets;
+  DROP TABLE IF EXISTS mined_words;
+
+  CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+  CREATE TABLE deck_config (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    config TEXT NOT NULL,
+    mtime INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO deck_config (id, name, config) VALUES (1, 'Default', '{}');
+
+  CREATE TABLE decks (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    conf_id INTEGER NOT NULL DEFAULT 1,
+    description TEXT NOT NULL DEFAULT '',
+    review_limit INTEGER,
+    new_limit INTEGER,
+    review_limit_today TEXT,
+    new_limit_today TEXT,
+    desired_retention REAL,
+    collapsed INTEGER NOT NULL DEFAULT 0,
+    last_day_studied INTEGER NOT NULL DEFAULT 0,
+    new_studied INTEGER NOT NULL DEFAULT 0,
+    review_studied INTEGER NOT NULL DEFAULT 0,
+    learning_studied INTEGER NOT NULL DEFAULT 0,
+    ms_studied INTEGER NOT NULL DEFAULT 0,
+    mtime INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE notetypes (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind INTEGER NOT NULL DEFAULT 0,
+    fields TEXT NOT NULL,
+    templates TEXT NOT NULL,
+    css TEXT NOT NULL DEFAULT '',
+    sort_idx INTEGER NOT NULL DEFAULT 0,
+    latex_pre TEXT,
+    latex_post TEXT,
+    mtime INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE notes (
+    id INTEGER PRIMARY KEY,
+    guid TEXT NOT NULL,
+    mid INTEGER NOT NULL,
+    mod INTEGER NOT NULL,
+    tags TEXT NOT NULL DEFAULT '',
+    flds TEXT NOT NULL,
+    sfld TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX notes_mid ON notes(mid);
+  CREATE INDEX notes_guid ON notes(guid);
+
+  CREATE TABLE cards (
+    id INTEGER PRIMARY KEY,
+    nid INTEGER NOT NULL,
+    did INTEGER NOT NULL,
+    ord INTEGER NOT NULL,
+    mod INTEGER NOT NULL,
+    type INTEGER NOT NULL,
+    queue INTEGER NOT NULL,
+    due INTEGER NOT NULL,
+    ivl INTEGER NOT NULL DEFAULT 0,
+    factor INTEGER NOT NULL DEFAULT 0,
+    reps INTEGER NOT NULL DEFAULT 0,
+    lapses INTEGER NOT NULL DEFAULT 0,
+    left INTEGER NOT NULL DEFAULT 0,
+    odue INTEGER NOT NULL DEFAULT 0,
+    odid INTEGER NOT NULL DEFAULT 0,
+    flags INTEGER NOT NULL DEFAULT 0,
+    stability REAL,
+    difficulty REAL,
+    desired_retention REAL,
+    last_review INTEGER,
+    original_position INTEGER
+  );
+  CREATE INDEX cards_nid ON cards(nid);
+  CREATE INDEX cards_sched ON cards(did, queue, due);
+
+  CREATE TABLE revlog (
+    id INTEGER PRIMARY KEY,
+    cid INTEGER NOT NULL,
+    ease INTEGER NOT NULL,
+    ivl INTEGER NOT NULL,
+    lastIvl INTEGER NOT NULL,
+    factor INTEGER NOT NULL,
+    time INTEGER NOT NULL,
+    type INTEGER NOT NULL
+  );
+  CREATE INDEX revlog_cid ON revlog(cid);
+
+  CREATE TABLE mined_words (
+    id TEXT PRIMARY KEY,
+    term TEXT,
+    reading TEXT,
+    context TEXT,
+    document_id TEXT,
+    note_id INTEGER,
+    looked_up_at TEXT
+  );
+  `,
 ];
 
 /* Row types (all columns nullable, as SQLite returns them). */
 type Nullable<T> = { [K in keyof T]: T[K] | null };
-
-export type DeckRecord = { id: string } & Nullable<{
-  user_id: string;
-  name: string;
-  fsrs_params: string;
-  preset_id: string;
-  created_at: string;
-}>;
-
-export type DeckPresetRecord = { id: string } & Nullable<{
-  user_id: string;
-  name: string;
-  config: string;
-  created_at: string;
-}>;
-
-export type NoteRecord = { id: string } & Nullable<{
-  user_id: string;
-  deck_id: string;
-  note_type_id: string;
-  fields: string;
-  tags: string;
-  created_at: string;
-}>;
-
-export type CardRecord = { id: string } & Nullable<{
-  user_id: string;
-  note_id: string;
-  template_index: number;
-  due: string;
-  stability: number;
-  difficulty: number;
-  reps: number;
-  lapses: number;
-  state: number;
-  last_review: string;
-  queue: number;
-  flag: number;
-  position: number;
-  buried_until: string;
-}>;
-
-export type ReviewLogRecord = { id: string } & Nullable<{
-  user_id: string;
-  card_id: string;
-  rating: number;
-  review_time: string;
-  elapsed_ms: number;
-  scheduled_days: number;
-}>;
 
 export type DocumentRecord = { id: string } & Nullable<{
   user_id: string;

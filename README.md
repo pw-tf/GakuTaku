@@ -31,7 +31,7 @@ data. Uninstalling the app **deletes its data** — make a backup first.
 npm install
 npm run dev          # http://localhost:5173
 npm run lint         # typecheck
-npm run verify       # SRS / analytics / dictionary logic checks
+npm run verify       # scheduler, collection, import, analytics and dictionary checks
 npm run build        # production web build (PWA)
 ```
 
@@ -62,6 +62,23 @@ release.
   `PRAGMA user_version`).
 - **Anki media needs an explicit MIME type** on the stored Blob, or `<audio>` refuses to play it.
   See `src/import/mediaMime.ts`.
+- **Anki engine** (`src/anki/`) is a port of Anki's Rust core, not a look-alike. It covers:
+  - the collection model (decks, presets, note types, notes and cards with Anki's
+    `type`/`queue`/`due` semantics, plus the revlog);
+  - the v3 scheduler, including learning steps, FSRS-6, SM-2, fuzz, limits, sibling burying and
+    learn-ahead;
+  - deck-tree counts and the template renderer (furigana, cloze, type-in, `[sound:]`).
+
+  Things that look odd are usually Anki's behaviour; check `rslib/src/scheduler` before changing them.
+  The `scripts/verify-*.ts` checks pin the port to Anki's own test vectors and to
+  `test_schedv3.py` scenarios.
+- **Import** (`src/import/`) reads `.apkg` and `.colpkg` files, both legacy and schema-18/zstd. It
+  keeps every card's scheduling state and FSRS memory state, plus the review history and the
+  deck-options presets, so due counts match Anki after import. Day-based due dates are shifted from
+  the source collection's day numbering to ours.
+- **Cards render in a sandboxed iframe** (`src/study/CardView.tsx`). It uses Anki's reviewer
+  document structure (`<body class="card cardN">`, `nightMode`), so a note type's CSS behaves as it
+  does in Anki and AnkiDroid. Media is inlined from the local store.
 - **Feeds** are fetched with Capacitor's native HTTP on Android, which isn't subject to CORS and
   decodes Shift_JIS / EUC-JP feeds (`src/feeds/proxy.ts`). In a desktop browser only sites that allow
   cross-origin reads work.
