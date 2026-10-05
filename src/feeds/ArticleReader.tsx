@@ -5,7 +5,9 @@ import { Reader } from '../reader/Reader';
 import type { RestoreTarget } from '../reader/useBook';
 import type { MinedItem } from '../ui/LookupPopup';
 import { Icon } from '../ui/icons';
-import { NhkAgreeNotice } from './NhkAgree';
+import { isNative } from '../app/platform';
+import { isNhkUrl, nhkRender } from '../native/nhk';
+import { NhkAgreeNotice, NhkUnreadableNotice } from './NhkAgree';
 import { proxyFetch, ProxyError } from './proxy';
 import { extractArticle, htmlToParagraphs, htmlToText, jpLength, type FeedArticle } from './parse';
 import type { FeedView } from './useFeeds';
@@ -28,7 +30,14 @@ interface ArticleState {
   paragraphs: FuriToken[][];
   error?: string;
   needsNhkAgreement?: boolean;
+  /** NHK's page loaded but gave no article text: offer to open it on NHK. */
+  nhkUnreadable?: boolean;
 }
+
+/** NHK ONE markup that holds an article's text. */
+const NHK_BODY = /article-main__body|js-article-body|content--detail-body/;
+
+class NhkUnreadable extends Error {}
 
 /**
  * RSS article view: resolves the article's text (feed-embedded content, else the
@@ -47,9 +56,19 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
         let paras = article.content ? htmlToParagraphs(article.content) : [];
         // Feed content that's missing or just a stub → fetch the article page itself.
         if (jpLength(paras.join('')) < 100 && article.link) {
-          const res = await proxyFetch(article.link);
-          const extracted = extractArticle(res.body);
-          if (extracted.paragraphs.length) paras = extracted.paragraphs;
+          if (isNative && isNhkUrl(article.link)) {
+            // NHK ONE builds the article with its own scripts: let NHK's page load in the app's
+            // hidden browser, then take the text from it.
+            const { html } = await nhkRender(article.link);
+            if (!NHK_BODY.test(html) && /同意/.test(html)) throw new ProxyError('NHK asks you to agree to its terms first.', 403, true);
+            const extracted = extractArticle(html);
+            if (jpLength(extracted.paragraphs.join('')) < 30) throw new NhkUnreadable('NHK’s page didn’t include the article text.');
+            paras = extracted.paragraphs;
+          } else {
+            const res = await proxyFetch(article.link);
+            const extracted = extractArticle(res.body);
+            if (extracted.paragraphs.length) paras = extracted.paragraphs;
+          }
         }
         if (paras.length === 0 && article.summary) paras = [htmlToText(article.summary)];
         if (paras.length === 0) throw new Error('No readable text found in this article.');
@@ -57,7 +76,11 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
         if (!cancelled) setState({ status: 'ready', paragraphs: tokens });
       } catch (e) {
         if (!cancelled) {
-          setState({ status: 'error', paragraphs: [], error: e instanceof Error ? e.message : String(e), needsNhkAgreement: e instanceof ProxyError && e.needsNhkAgreement });
+          setState({
+            status: 'error', paragraphs: [], error: e instanceof Error ? e.message : String(e),
+            needsNhkAgreement: e instanceof ProxyError && e.needsNhkAgreement,
+            nhkUnreadable: e instanceof NhkUnreadable,
+          });
         }
       }
     })();
@@ -76,6 +99,8 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
         <div className="rd-stage"><div className="rd-scroll"><div className="rd-col">
           {state.status === 'loading' ? (
             <p style={{ color: 'var(--ink-faint)' }}>Fetching article…</p>
+          ) : state.nhkUnreadable ? (
+            <NhkUnreadableNotice url={article.link!} onRetry={() => setAttempt((n) => n + 1)} />
           ) : state.needsNhkAgreement ? (
             <NhkAgreeNotice onAgreed={() => setAttempt((n) => n + 1)} />
           ) : (

@@ -3,14 +3,18 @@ package app.gakutaku;
 import android.app.Dialog;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -19,6 +23,9 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+
+import org.json.JSONArray;
+import org.json.JSONException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -34,6 +41,10 @@ import java.util.Map;
  * user can do that, and `get` fetches NHK pages with the same cookie store, natively. The cookies
  * stay inside Android's WebView cookie store: nothing here hands their values to the web layer, and
  * `get` only talks to web.nhk hosts.
+ *
+ * NHK ONE builds its article pages with its own scripts, so `render` loads an article in a hidden
+ * WebView (where NHK's page runs as in a browser, with the agreement already given) and returns the
+ * finished page's HTML for the reader to take the text from. `open` shows an NHK page in a dialog.
  */
 @CapacitorPlugin(name = "Nhk")
 public class NhkPlugin extends Plugin {
@@ -46,6 +57,21 @@ public class NhkPlugin extends Plugin {
 
     @PluginMethod
     public void agree(PluginCall call) {
+        showDialog(call, START_URL, "Agree to NHK's terms (同意), then tap Done");
+    }
+
+    /** Show an NHK page (an article the reader couldn't take apart) in a dialog. */
+    @PluginMethod
+    public void open(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!isNhk(url)) {
+            call.reject("Only NHK (web.nhk) addresses are allowed.");
+            return;
+        }
+        showDialog(call, url, "NHK");
+    }
+
+    private void showDialog(PluginCall call, String startUrl, String heading) {
         getActivity().runOnUiThread(() -> {
             CookieManager cookies = CookieManager.getInstance();
             cookies.setAcceptCookie(true);
@@ -60,7 +86,7 @@ public class NhkPlugin extends Plugin {
             bar.setPadding(32, 16, 16, 16);
             bar.setBackgroundColor(Color.parseColor("#F4EFE6"));
             TextView title = new TextView(getContext());
-            title.setText("Agree to NHK's terms (同意), then tap Done");
+            title.setText(heading);
             title.setTextColor(Color.parseColor("#26221D"));
             title.setTextSize(15);
             bar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -84,8 +110,94 @@ public class NhkPlugin extends Plugin {
             });
             dialog.setContentView(root);
             dialog.show();
-            web.loadUrl(START_URL);
+            web.loadUrl(startUrl);
         });
+    }
+
+    private static final int RENDER_TIMEOUT_MS = 20000;
+    private static final int POLL_MS = 600;
+
+    /**
+     * Load an NHK page in a hidden WebView, wait until its text stops changing, and return the
+     * page's HTML. The WebView sits behind the app (invisible, not touchable) and may only navigate
+     * within web.nhk.
+     */
+    @PluginMethod
+    public void render(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!isNhk(url)) {
+            call.reject("Only NHK (web.nhk) addresses are allowed.");
+            return;
+        }
+        getActivity().runOnUiThread(() -> {
+            ViewGroup root = getActivity().findViewById(android.R.id.content);
+            WebView web = new WebView(getContext());
+            WebSettings settings = web.getSettings();
+            settings.setJavaScriptEnabled(true);
+            settings.setDomStorageEnabled(true);
+            web.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    return !isNhk(request.getUrl().toString());
+                }
+            });
+            web.setFocusable(false);
+            root.addView(web, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+            Handler handler = new Handler(Looper.getMainLooper());
+            long started = System.currentTimeMillis();
+            int[] last = { -1 };
+            int[] steady = { 0 };
+            boolean[] done = { false };
+
+            Runnable finish = () -> {
+                if (done[0]) return;
+                done[0] = true;
+                web.evaluateJavascript("document.documentElement ? document.documentElement.outerHTML : ''", html -> {
+                    JSObject ret = new JSObject();
+                    ret.put("url", web.getUrl() == null ? url : web.getUrl());
+                    ret.put("html", decodeJsString(html));
+                    root.removeView(web);
+                    web.destroy();
+                    call.resolve(ret);
+                });
+            };
+            Runnable poll = new Runnable() {
+                @Override
+                public void run() {
+                    if (done[0]) return;
+                    if (System.currentTimeMillis() - started > RENDER_TIMEOUT_MS) {
+                        finish.run();
+                        return;
+                    }
+                    web.evaluateJavascript("(function(){var b=document.body;return b?b.innerText.length:0})()", value -> {
+                        int len;
+                        try {
+                            len = Integer.parseInt(value.trim());
+                        } catch (NumberFormatException e) {
+                            len = 0;
+                        }
+                        // Settled: some text, unchanged over two polls, and the page past its first moments.
+                        steady[0] = len > 0 && len == last[0] ? steady[0] + 1 : 0;
+                        last[0] = len;
+                        if (steady[0] >= 2 && System.currentTimeMillis() - started > 2500) finish.run();
+                        else handler.postDelayed(this, POLL_MS);
+                    });
+                }
+            };
+            web.loadUrl(url);
+            handler.postDelayed(poll, POLL_MS);
+        });
+    }
+
+    /** `evaluateJavascript` hands back a JSON value; a string result arrives quoted. */
+    private static String decodeJsString(String json) {
+        if (json == null || json.equals("null")) return "";
+        try {
+            return new JSONArray("[" + json + "]").getString(0);
+        } catch (JSONException e) {
+            return "";
+        }
     }
 
     /** GET an NHK URL with the WebView cookie store (runs on the plugin's background thread). */
