@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useQuery } from '../sync/hooks';
+import { useQuery } from '../db/hooks';
 import { usePrefs } from '../app/prefs';
 import { parseJsonObject } from './fsrs';
 import { NOTE_TYPE_NAME, parseNoteFields } from './mining';
@@ -15,8 +15,8 @@ import {
 import { parseDeckOverrides, parsePresetConfig, resolveDeckConfig, type DeckOverrides, type ResolvedDeckConfig } from './presets';
 
 /**
- * Reactive SRS queries over the synced `cards` cache (thin wrappers around PowerSync's `useQuery`,
- * like `src/sync/hooks.ts`). The FSRS columns on `cards` are a replay cache (§3.3); these read them
+ * Reactive SRS queries over the synced `cards` cache (thin wrappers around the live `useQuery` hook,
+ * like `src/db/hooks.ts`). The FSRS columns on `cards` are a replay cache (§3.3); these read them
  * for fast counts/listing without re-deriving from logs. All daily-limit/study-day logic comes from
  * `queue.ts`, shared with the review-session builder so the deck list and the session never disagree.
  */

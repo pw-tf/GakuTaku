@@ -12,15 +12,20 @@ export const IMPORT_TASK_ID = 'library-import';
 export async function importFile(file: File, userId: string): Promise<void> {
   const isApkg = /\.apkg$/i.test(file.name);
   const tasks = useTasks.getState();
-  tasks.start(IMPORT_TASK_ID, isApkg ? `Importing ${file.name}` : `Uploading ${file.name}`);
-  tasks.update(IMPORT_TASK_ID, { message: isApkg ? 'Reading deck…' : 'Uploading to your library…' });
+  if (!isApkg && !/\.epub$/i.test(file.name)) {
+    tasks.start(IMPORT_TASK_ID, `Can’t open ${file.name}`);
+    tasks.finish(IMPORT_TASK_ID, 'error', 'Pick an ePUB book (.epub) or an Anki deck (.apkg).');
+    return;
+  }
+  tasks.start(IMPORT_TASK_ID, isApkg ? `Importing ${file.name}` : `Adding ${file.name}`);
+  tasks.update(IMPORT_TASK_ID, { message: isApkg ? 'Reading deck…' : 'Adding to your library…' });
   try {
     if (isApkg) {
       const { importApkgFile } = await import('./index');
       const s = await importApkgFile(file, userId, (p) => {
         if (p.phase === 'mapping') tasks.update(IMPORT_TASK_ID, { total: 0, message: 'Reading collection…' });
         else if (p.phase === 'writing') tasks.update(IMPORT_TASK_ID, { done: p.done ?? 0, total: p.total ?? 0, message: 'Importing cards…' });
-        else if (p.phase === 'media') tasks.update(IMPORT_TASK_ID, { done: p.done ?? 0, total: p.total ?? 0, message: 'Uploading media…' });
+        else if (p.phase === 'media') tasks.update(IMPORT_TASK_ID, { done: p.done ?? 0, total: p.total ?? 0, message: 'Saving media…' });
       });
       const bits = [`${s.decks} deck${s.decks === 1 ? '' : 's'}`, `${s.cards} cards`];
       if (s.reviews) bits.push(`${s.reviews.toLocaleString()} reviews`);

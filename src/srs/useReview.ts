@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth } from '../auth/AuthProvider';
-import { db } from '../sync/system';
-import type { ReviewLogRecord } from '../sync/AppSchema';
+import { LOCAL_USER_ID } from '../app/localUser';
+import { db } from '../db';
+import type { ReviewLogRecord } from '../db/schema';
 import {
   State,
   cardFromRow,
@@ -424,8 +424,7 @@ function pickCurrent(queue: SessionCard[], pinnedId: string | null, nowMs: numbe
 }
 
 export function useReview(source: ReviewSource): ReviewState {
-  const { session } = useAuth();
-  const userId = session?.user.id ?? '';
+  const userId = LOCAL_USER_ID;
   const [queue, setQueue] = useState<SessionCard[]>([]);
   const [pinnedId, setPinnedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

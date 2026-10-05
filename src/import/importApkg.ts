@@ -1,13 +1,13 @@
-import { db } from '../sync/system';
+import { db } from '../db';
 import { MANUAL_RATING, deriveCard } from '../srs/fsrs';
 import { serializeDeckOverrides, serializePresetConfig, defaultPresetConfig, type DeckPresetConfig } from '../srs/presets';
 import { ensureDefaultPreset } from '../srs/presetOps';
 import { studyDayEnd } from '../srs/queue';
 import { usePrefs } from '../app/prefs';
-import type { ReviewLogRecord } from '../sync/AppSchema';
+import type { ReviewLogRecord } from '../db/schema';
 import type { ParsedApkg } from './apkg';
 import { mapApkgCardState, mapDconfToPreset, mapRevlogEntry } from './mapApkg';
-import { rewriteMediaRefs, uploadMedia } from './media';
+import { rewriteMediaRefs, storeMedia } from './media';
 
 /**
  * Map a parsed `.apkg` into our schema and persist it (build plan M6). Anki models→`note_types`,
@@ -39,12 +39,10 @@ type Row = (string | number | null)[];
 
 /** Insert rows in bounded transactions so a huge deck doesn't build one giant write. */
 async function insertChunked(sql: string, rows: Row[], onChunk?: (done: number) => void): Promise<void> {
-  const CHUNK = 400;
+  const CHUNK = 2000;
   for (let i = 0; i < rows.length; i += CHUNK) {
     const batch = rows.slice(i, i + CHUNK);
-    await db.writeTransaction(async (tx) => {
-      for (const params of batch) await tx.execute(sql, params);
-    });
+    await db.writeTransaction((tx) => tx.executeMany(sql, batch));
     onChunk?.(Math.min(i + CHUNK, rows.length));
   }
 }
@@ -233,11 +231,11 @@ export async function importApkg(
   await insertChunked('INSERT INTO review_logs (id, user_id, card_id, rating, review_time, elapsed_ms, scheduled_days) VALUES (?, ?, ?, ?, ?, ?, ?)', reviewRows,
     (d) => onProgress?.({ phase: 'writing', done: writtenAfterNotes + cardRows.length + d, total: noteRows.length + cardRows.length + reviewRows.length }));
 
-  // --- media: upload referenced blobs + cache locally for offline rendering ---
+  // --- media: store the referenced files on the device ---
   let mediaFiles = 0;
   if (referenced.size > 0) {
     onProgress?.({ phase: 'media', done: 0, total: referenced.size });
-    mediaFiles = await uploadMedia(parsed.zip, parsed.media, referenced, userId, importId, parsed.mediaCompressed,
+    mediaFiles = await storeMedia(parsed.zip, parsed.media, referenced, importId, parsed.mediaCompressed,
       (done, total) => onProgress?.({ phase: 'media', done, total }));
   }
 

@@ -1,17 +1,13 @@
 import type JSZip from 'jszip';
 import { decompress } from 'fzstd';
-import { supabase } from '../sync/supabase';
 import { getMedia, putMedia } from './mediaCache';
 import { mimeForMedia, withMime } from './mediaMime';
 
 /**
- * Anki media handling for `.apkg` import (build plan M6). Note fields reference media as
- * `<img src="name">` and `[sound:name]`. On import we rewrite those refs to resolvable tokens,
- * upload the referenced blobs to the private `media` Storage bucket (and cache them locally), and at
- * render time resolve a token back to an object URL (from cache, else download once and cache).
+ * Anki media handling for `.apkg` import. Note fields reference media as `<img src="name">` and
+ * `[sound:name]`. On import we rewrite those refs to resolvable tokens and store the referenced
+ * files on the device; at render time a token resolves back to an object URL.
  */
-
-const BUCKET = 'media';
 
 /**
  * Rewrite Anki media refs in a field value to tokens the renderer can resolve, recording each
@@ -36,14 +32,13 @@ export function rewriteMediaRefs(html: string, importId: string, referenced: Set
 }
 
 /**
- * Upload the referenced media blobs to `media/{userId}/{importId}/{name}` and cache them locally.
+ * Store the referenced media files on the device under `{importId}/{name}`.
  * `mediaMap` is the `.apkg`'s numbered-file → original-name map; we reverse it to find each blob.
  */
-export async function uploadMedia(
+export async function storeMedia(
   zip: JSZip,
   mediaMap: Record<string, string>,
   referenced: Set<string>,
-  userId: string,
   importId: string,
   compressed: boolean,
   onProgress?: (done: number, total: number) => void,
@@ -68,11 +63,7 @@ export async function uploadMedia(
       }
       if (bytes) {
         const blob = new Blob([bytes as BlobPart], { type: mimeForMedia(name) });
-        const path = `${userId}/${importId}/${name}`;
-        // Cache locally first: an upload can fail (offline import, quota) and the deck should still
-        // play its audio on this device — the blob syncs up again on the next import of the same file.
         await putMedia(`${importId}/${name}`, blob);
-        await supabase.storage.from(BUCKET).upload(path, blob, { upsert: true });
       }
     }
     onProgress?.(++done, total);
@@ -101,13 +92,13 @@ function cacheUrl(key: string, blob: Blob): string {
 }
 
 /**
- * Resolve a `data-media`/`data-audio` token (`importId/encodedName`) to an object URL — from the
- * local cache, else downloaded once from Storage and cached. Returns null if unavailable offline.
+ * Resolve a `data-media`/`data-audio` token (`importId/encodedName`) to an object URL, or null when
+ * the file isn't on this device (the deck referenced media its package didn't include).
  *
  * Blobs are re-typed on the way out ({@link withMime}): decks imported before media carried a MIME
  * type are cached as `application/octet-stream`, which media elements refuse to play.
  */
-export async function resolveMedia(token: string, userId: string): Promise<string | null> {
+export async function resolveMedia(token: string): Promise<string | null> {
   const slash = token.indexOf('/');
   if (slash < 0) return null;
   const importId = token.slice(0, slash);
@@ -117,12 +108,6 @@ export async function resolveMedia(token: string, userId: string): Promise<strin
   const cachedUrl = urlCache.get(key);
   if (cachedUrl) return cachedUrl;
 
-  const cached = await getMedia(key);
-  if (cached) return cacheUrl(key, withMime(cached, name));
-
-  const { data } = await supabase.storage.from(BUCKET).download(`${userId}/${key}`);
-  if (!data) return null;
-  const blob = withMime(data, name);
-  await putMedia(key, blob);
-  return cacheUrl(key, blob);
+  const stored = await getMedia(key);
+  return stored ? cacheUrl(key, withMime(stored, name)) : null;
 }

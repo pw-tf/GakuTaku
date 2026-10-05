@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useAuth } from '../auth/AuthProvider';
-import { useDecks } from '../sync/hooks';
+import { LOCAL_USER_ID } from '../app/localUser';
+import { useDecks } from '../db/hooks';
 import { createDeck, DEFAULT_DECK_NAME } from '../srs/mining';
 import { Btn } from './atoms';
 import { Icon } from './icons';
@@ -13,16 +13,15 @@ interface Props {
 
 /** Modal for choosing (or creating) the deck a mined word goes into. */
 export function DeckPicker({ currentDeckId, onPick, onClose }: Props) {
-  const { session } = useAuth();
   const { data: decks } = useDecks();
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
 
   async function create() {
-    if (!session || creating) return;
+    if (creating) return;
     setCreating(true);
     try {
-      const id = await createDeck(session.user.id, newName.trim() || DEFAULT_DECK_NAME);
+      const id = await createDeck(LOCAL_USER_ID, newName.trim() || DEFAULT_DECK_NAME);
       onPick(id);
     } finally {
       setCreating(false);

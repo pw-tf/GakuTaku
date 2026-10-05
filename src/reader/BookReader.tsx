@@ -1,5 +1,5 @@
-import { useAuth } from '../auth/AuthProvider';
-import type { DocumentRecord } from '../sync/AppSchema';
+import { LOCAL_USER_ID } from '../app/localUser';
+import type { DocumentRecord } from '../db/schema';
 import { useBook } from './useBook';
 import { Reader } from './Reader';
 import type { MinedItem } from '../ui/LookupPopup';
@@ -15,8 +15,7 @@ interface Props {
 
 /** Container: resolves the ePUB (cache/Storage), drives chapter state, and renders the Reader. */
 export function BookReader({ doc, mined, onMine, onReviewMined, onClose }: Props) {
-  const { session } = useAuth();
-  const book = useBook(doc, session!.user.id);
+  const book = useBook(doc, LOCAL_USER_ID);
 
   if (book.status === 'loading') {
     return (

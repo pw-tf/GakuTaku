@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth } from '../auth/AuthProvider';
-import { useQuery } from '../sync/hooks';
+import { LOCAL_USER_ID } from '../app/localUser';
+import { fileAccept } from '../app/platform';
+import { useQuery } from '../db/hooks';
 import { Btn, Spinner } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
@@ -94,7 +95,6 @@ function DeckCounts({ roll }: { roll: DeckNode['roll'] }) {
 }
 
 function DeckList({ roots, deckCount, loading, onOpen }: { roots: DeckNode[]; deckCount: number; loading: boolean; onOpen: (d: DeckStat) => void }) {
-  const { session } = useAuth();
   const importing = useImporting();
   const fileRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
@@ -112,7 +112,7 @@ function DeckList({ roots, deckCount, loading, onOpen }: { roots: DeckNode[]; de
   }
 
   async function addDeck() {
-    const userId = session?.user.id;
+    const userId = LOCAL_USER_ID;
     if (!userId || creating) return;
     const name = window.prompt('New deck name (use “Parent::Child” for a subdeck)', 'New deck');
     if (name === null) return;
@@ -126,14 +126,14 @@ function DeckList({ roots, deckCount, loading, onOpen }: { roots: DeckNode[]; de
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !session) return;
+    if (!file) return;
     e.target.value = '';
-    await importFile(file, session.user.id);
+    await importFile(file, LOCAL_USER_ID);
   }
 
   return (
     <div className="page">
-      <input ref={fileRef} type="file" accept=".apkg" hidden onChange={onFile} />
+      <input ref={fileRef} type="file" accept={fileAccept('.apkg')} hidden onChange={onFile} />
       <div className="sec-bar">
         <h2>Decks</h2>
         <span className="count">{loading ? '…' : `${deckCount} ${deckCount === 1 ? 'deck' : 'decks'}`}</span>
@@ -205,13 +205,12 @@ function DeckDetail({ deck, childNodes, onBack, onOpenDeck, onReview }: {
   onOpenDeck: (id: string) => void;
   onReview: () => void;
 }) {
-  const { session } = useAuth();
   const [filter, setFilter] = useState<DeckCardsFilter>({ status: 'all' });
   const cards = useDeckCards(deck.id, filter);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
-  const userId = session?.user.id ?? '';
+  const userId = LOCAL_USER_ID;
 
   function rename() {
     const name = window.prompt('Rename deck', deck.name);
@@ -304,8 +303,8 @@ function DeckDetail({ deck, childNodes, onBack, onOpenDeck, onReview }: {
 
       {modal === 'options' && <DeckOptionsModal deck={deck} onClose={() => setModal(null)} />}
       {modal === 'description' && <DescriptionModal deck={deck} onClose={() => setModal(null)} />}
-      {modal === 'add' && session && (
-        <AddCardModal deckId={deck.id} userId={session.user.id} onClose={() => setModal(null)} />
+      {modal === 'add' && (
+        <AddCardModal deckId={deck.id} userId={LOCAL_USER_ID} onClose={() => setModal(null)} />
       )}
       {editingCardId && <EditCardModal cardId={editingCardId} onClose={() => setEditingCardId(null)} />}
     </div>
@@ -546,8 +545,7 @@ function CheckField({ label, checked, onChange }: { label: string; checked: bool
  * saving affects every deck using it — except the per-deck daily-limit overrides ("This deck").
  */
 function DeckOptionsModal({ deck, onClose }: { deck: DeckStat; onClose: () => void }) {
-  const { session } = useAuth();
-  const userId = session?.user.id ?? '';
+  const userId = LOCAL_USER_ID;
   const presetParams = useMemo(() => [], []);
   const { data: presets } = useQuery<{ id: string; name: string; config: string | null }>(
     'SELECT id, name, config FROM deck_presets ORDER BY name ASC',

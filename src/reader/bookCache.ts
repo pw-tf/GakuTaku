@@ -5,7 +5,7 @@ interface CachedBook {
   blob: Blob;
 }
 
-/** Local cache of ePUB binaries for offline reading (not synced; mirrors Supabase Storage). */
+/** The on-device store of book files (the `documents` table holds their metadata). */
 class BookCacheDB extends Dexie {
   books!: Table<CachedBook, string>;
   constructor() {

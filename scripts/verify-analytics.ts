@@ -1,7 +1,7 @@
 /**
  * Standalone verification for src/analytics/analytics.ts (build plan M5 acceptance: "stats match a
  * hand-computed sample"). Run with `npx tsx scripts/verify-analytics.ts`. No test framework — the
- * analytics module's only runtime dependency is ts-fsrs (the PowerSync imports are type-only), so it
+ * analytics module's only runtime dependency is ts-fsrs (its database imports are type-only), so it
  * runs directly under tsx. Exits non-zero on the first failed assertion.
  */
 import { computeAnalytics, type AnalyticsCard, type AnalyticsLog } from '../src/analytics/analytics';

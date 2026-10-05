@@ -1,4 +1,4 @@
-import { db } from '../sync/system';
+import { db } from '../db';
 import { usePrefs } from '../app/prefs';
 import {
   MANUAL_RATING,

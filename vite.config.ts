@@ -7,13 +7,13 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * Dev-only: serve the vendored kuromoji `*.dat.gz` dictionary files as raw bytes.
+ * Dev-only: serve the bundled dictionary `*.gz` files (kuromoji + JMdict buckets) as raw bytes.
  *
  * Vite's dev static server tags `.gz` responses with `Content-Encoding: gzip`, so the
  * browser transparently inflates them and the kuromoji loader receives already-decompressed
  * bytes — its own gunzip step then throws "invalid gzip data". Serving them ourselves with
  * `application/octet-stream` and no `Content-Encoding` keeps the raw gzip bytes intact, matching
- * how Cloudflare Pages serves them in production. `configureServer` only runs during `vite dev`.
+ * how the Android app and static hosts serve them. `configureServer` only runs during `vite dev`.
  */
 function serveRawGzipDict(): PluginOption {
   return {
@@ -21,7 +21,7 @@ function serveRawGzipDict(): PluginOption {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = (req.url ?? '').split('?')[0];
-        if (!/^\/dict\/.*\.dat\.gz$/.test(url)) return next();
+        if (!/^\/dict\/.*\.gz$/.test(url)) return next();
         const publicDir = server.config.publicDir;
         const filePath = path.join(publicDir, decodeURIComponent(url));
         // Guard against path traversal escaping the public dir.
@@ -41,13 +41,15 @@ function serveRawGzipDict(): PluginOption {
 /**
  * Cross-origin isolation headers. The FSRS optimizer (fsrs-browser → wasm-bindgen-rayon) trains on
  * a `SharedArrayBuffer` across worker threads, which the browser only exposes when the document is
- * cross-origin isolated. We use `credentialless` (not `require-corp`) so the app's cross-origin
- * subresources — Google Fonts and Supabase Storage — keep loading without per-resource CORP headers.
+ * cross-origin isolated.
  */
 const COI_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'credentialless',
 };
+
+/** `npm run build:android` — the Capacitor WebView build, which has no use for a service worker. */
+const ANDROID = process.env.GAKUTAKU_TARGET === 'android';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -59,28 +61,27 @@ export default defineConfig({
     wasm(),
     topLevelAwait(),
     react(),
+    !ANDROID &&
     VitePWA({
       registerType: 'autoUpdate',
-      // PowerSync ships large WASM + worker assets that are loaded at runtime.
-      // Keep them out of the precache manifest and serve them via a runtime cache.
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
-        // Keep large runtime assets out of the precache manifest: PowerSync WASM/workers
-        // and the vendored kuromoji dictionary (~17 MB of .dat.gz).
-        globIgnores: ['**/*.wasm', '**/sqlite3*.js', '**/*worker*.js', 'dict/**'],
+        globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
+        // Keep large runtime assets out of the precache manifest: the SQLite WASM, the bundled
+        // dictionaries (kuromoji + JMdict buckets) and the font subsets, all cached as first used.
+        globIgnores: ['**/*.wasm', 'dict/**'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         runtimeCaching: [
           {
-            // wa-sqlite WASM + PowerSync worker bundles.
+            // SQLite + optimizer WASM.
             urlPattern: /\.(?:wasm)$/,
             handler: 'CacheFirst',
             options: {
-              cacheName: 'powersync-wasm',
+              cacheName: 'wasm',
               expiration: { maxEntries: 8 },
             },
           },
           {
-            // Vendored kuromoji IPADIC dictionary — cache on first tokenize for offline use.
+            // Kuromoji IPADIC — cache on first tokenize for offline use.
             urlPattern: /\/dict\/kuromoji\/.*\.dat\.gz$/,
             handler: 'CacheFirst',
             options: {
@@ -89,20 +90,16 @@ export default defineConfig({
             },
           },
           {
-            // Google Fonts stylesheets.
-            urlPattern: /^https:\/\/fonts\.googleapis\.com\//,
-            handler: 'StaleWhileRevalidate',
-            options: { cacheName: 'google-fonts-stylesheets' },
+            // Bundled font subsets (Japanese fonts are split into ~100 unicode-range files each).
+            urlPattern: /\.woff2?$/,
+            handler: 'CacheFirst',
+            options: { cacheName: 'fonts', expiration: { maxEntries: 600 } },
           },
           {
-            // Google Fonts webfont files — keep offline for a year.
-            urlPattern: /^https:\/\/fonts\.gstatic\.com\//,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'google-fonts-webfonts',
-              expiration: { maxEntries: 32, maxAgeSeconds: 60 * 60 * 24 * 365 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
+            // JMdict buckets + manifest — cache each one as it is looked up.
+            urlPattern: /\/dict\/jmdict\//,
+            handler: 'StaleWhileRevalidate',
+            options: { cacheName: 'jmdict', expiration: { maxEntries: 5000 } },
           },
         ],
       },
@@ -124,10 +121,10 @@ export default defineConfig({
     }),
   ],
   optimizeDeps: {
-    // These must not be pre-bundled (they rely on workers + wasm): PowerSync web SDK and the
-    // fsrs-browser optimizer (wasm-bindgen-rayon self-spawns module workers).
-    exclude: ['@powersync/web', '@journeyapps/wa-sqlite', 'fsrs-browser'],
-    include: ['@powersync/react', 'epubjs'],
+    // These must not be pre-bundled (they load their own wasm / spawn workers relative to
+    // themselves): SQLite and the fsrs-browser optimizer (wasm-bindgen-rayon).
+    exclude: ['@sqlite.org/sqlite-wasm', 'fsrs-browser'],
+    include: ['epubjs'],
   },
   worker: {
     format: 'es',
