@@ -87,3 +87,25 @@ export async function mediaDataUrl(name: string): Promise<string | null> {
     r.readAsDataURL(blob);
   });
 }
+
+/** Every media file, one at a time (for backups — a collection's media can be large). */
+export async function* allMediaFiles(): AsyncGenerator<{ name: string; blob: Blob }> {
+  const names = (await mediaDb.files.toCollection().primaryKeys()) as string[];
+  for (const name of names) {
+    const row = await mediaDb.files.get(name);
+    if (row) yield { name, blob: withMime(row.blob, name) };
+  }
+}
+
+export async function putMediaBlobs(files: { name: string; blob: Blob }[]): Promise<void> {
+  await mediaDb.files.bulkPut(files.map((f) => ({ name: f.name, blob: withMime(f.blob, f.name) })));
+}
+
+/** Delete every media file whose name isn't in `keep`. */
+export async function pruneMedia(keep: Set<string>): Promise<void> {
+  const names = (await mediaDb.files.toCollection().primaryKeys()) as string[];
+  const drop = names.filter((n) => !keep.has(n));
+  if (drop.length) await mediaDb.files.bulkDelete(drop);
+  for (const url of urlCache.values()) URL.revokeObjectURL(url);
+  urlCache.clear();
+}

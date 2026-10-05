@@ -13,15 +13,18 @@
     "verify:collection": "tsx scripts/verify-collection.ts",
     "verify:import": "tsx scripts/verify-import.ts",
     "verify:books": "tsx scripts/verify-books.ts",
+    "verify:backup": "tsx scripts/verify-backup.ts",
     "verify:analytics": "tsx scripts/verify-analytics.ts",
     "verify:dict": "tsx scripts/verify-dict.ts",
     "build:android": "GAKUTAKU_TARGET=android vite build && cap sync android",
-    "verify": "npm run verify:anki && npm run verify:collection && npm run verify:import && npm run verify:books && npm run verify:analytics && npm run verify:dict"
+    "verify": "npm run verify:anki && npm run verify:collection && npm run verify:import && npm run verify:books && npm run verify:backup && npm run verify:analytics && npm run verify:dict"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",
     "@capacitor/app": "^7.1.2",
     "@capacitor/core": "^7.6.9",
+    "@capacitor/filesystem": "^7.1.9",
+    "@capacitor/share": "^7.0.4",
     "@fontsource/hanken-grotesk": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/newsreader": "^5.3.0",

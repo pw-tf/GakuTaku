@@ -42,6 +42,27 @@ function serveRawGzipDict(): PluginOption {
   };
 }
 
+/**
+ * Ship fonts as WOFF2 only. @fontsource lists a WOFF fallback after each WOFF2 source, but every
+ * browser and WebView this app runs in takes the WOFF2, so the ~20 MB of WOFF files are never
+ * loaded — they only made the APK bigger.
+ */
+function woff2Only(): PluginOption {
+  const fallback = /,\s*url\([^)]*?\.woff\)\s*format\(["']?woff["']?\)/g;
+  return {
+    name: 'woff2-only',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      for (const [name, file] of Object.entries(bundle)) {
+        if (name.endsWith('.woff')) delete bundle[name];
+        else if (name.endsWith('.css') && file.type === 'asset' && typeof file.source === 'string') {
+          file.source = file.source.replace(fallback, '');
+        }
+      }
+    },
+  };
+}
+
 /** Cross-origin isolation headers (lets a future multi-threaded FSRS optimizer use SharedArrayBuffer). */
 const COI_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',
@@ -58,6 +79,7 @@ export default defineConfig({
   preview: { headers: COI_HEADERS },
   plugins: [
     serveRawGzipDict(),
+    woff2Only(),
     wasm(),
     topLevelAwait(),
     react(),

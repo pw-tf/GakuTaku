@@ -91,6 +91,15 @@ release.
   native HTTP, and the sentence recorded with the device's Japanese voice. The recording uses the
   `JapaneseTts` plugin in `android/app/src/main/java/app/gakutaku/`. Without recordings, cards speak
   the word and sentence at review time.
+- **Backups** (`src/backup/`): Settings → Back up now writes one zip containing the SQLite
+  database, all media, the books (original files, extracted text, covers) and the preferences.
+  - Android: the zip goes into the app cache and is offered through the share sheet (Drive, Files,
+    another device).
+  - Browser: it downloads.
+
+  Restoring writes the files over the existing ones, swaps in the database, and only then removes
+  whatever the backup doesn't contain. A restore that fails part-way therefore leaves the current
+  collection working.
 - **Feeds** are fetched with Capacitor's native HTTP on Android, which isn't subject to CORS and
   decodes Shift_JIS / EUC-JP feeds (`src/feeds/proxy.ts`). In a desktop browser only sites that allow
   cross-origin reads work.
