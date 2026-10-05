@@ -3,6 +3,7 @@ import { deckTreeWithCounts, dueCountsSql, type DeckTreeNode, type RawDueCounts 
 import { compareDeckNames, parentName } from './limits';
 import { buildQueues, WHOLE_COLLECTION, type CardQueues, type QueueCard } from './queue';
 import { timingAt, type Timing } from './timing';
+import { fsrsItemsForTraining, ignoreBeforeMs, memoryStateFromHistory, prepareParameters, type FsrsItem } from './fsrs';
 import { FIELD_SEP, joinFields, sortFieldValue, splitFields, type Notetype } from './notetype';
 import { generatedOrdinals } from './template';
 import {
@@ -209,6 +210,83 @@ export class Collection {
       await tx.run('UPDATE decks SET conf_id = ? WHERE conf_id = ?', [DEFAULT_CONFIG_ID, id]);
       await tx.run('DELETE FROM deck_config WHERE id = ?', [id]);
     });
+  }
+
+  // ---- FSRS per preset -----------------------------------------------------------------
+
+  /** Ids of the decks using a preset (Anki's `preset:"name"` search). */
+  private async presetDeckIds(presetId: number, sql: Sql = this.sql): Promise<number[]> {
+    return (await sql.all<{ id: number }>('SELECT id FROM decks WHERE conf_id = ?', [presetId])).map((r) => r.id);
+  }
+
+  private async revlogByCard(where: string, params: unknown[], sql: Sql = this.sql): Promise<Map<number, RevlogEntry[]>> {
+    const rows = await sql.all<RevlogEntry>(
+      `SELECT r.* FROM revlog r JOIN cards c ON c.id = r.cid WHERE ${where} ORDER BY r.cid, r.id`,
+      params,
+    );
+    const out = new Map<number, RevlogEntry[]>();
+    for (const r of rows) (out.get(r.cid) ?? out.set(r.cid, []).get(r.cid)!).push(r);
+    return out;
+  }
+
+  /**
+   * The optimizer's training data for a preset (Anki `compute_params` with its default search,
+   * `preset:"name" -is:suspended`).
+   */
+  async fsrsTrainingData(
+    presetId: number,
+    opts: { ignoreRevlogsBeforeDate?: string; nowMs?: number } = {},
+  ): Promise<{ items: FsrsItem[]; cardIds: number[]; reviewCount: number }> {
+    const cfg = (await this.deckConfigMap()).get(presetId) ?? normalizeDeckConfig(null);
+    const ignoreDate = opts.ignoreRevlogsBeforeDate ?? cfg.ignoreRevlogsBeforeDate;
+    const dids = await this.presetDeckIds(presetId);
+    if (!dids.length) return { items: [], cardIds: [], reviewCount: 0 };
+    const t = await this.timing(opts.nowMs ?? Date.now());
+    const revlog = await this.revlogByCard(`c.did IN (${dids.map(() => '?').join(',')}) AND c.queue != ${CardQueue.Suspended}`, dids);
+    return fsrsItemsForTraining(revlog, t.nextDayAt, ignoreBeforeMs(ignoreDate));
+  }
+
+  /**
+   * Anki `update_memory_state` for one preset: recompute every reviewed card's stability and
+   * difficulty from its history with the preset's current parameters (after the parameters,
+   * historical retention or ignore date change, or FSRS is switched on). Due dates are unchanged.
+   * Returns the number of cards updated.
+   */
+  async updateMemoryStates(presetId: number, nowMs = Date.now()): Promise<number> {
+    const cfg = (await this.deckConfigMap()).get(presetId) ?? normalizeDeckConfig(null);
+    const decks = (await this.decks()).filter((d) => d.conf_id === presetId);
+    if (!decks.length) return 0;
+    const t = await this.timing(nowMs);
+    const w = prepareParameters(cfg.fsrsParams);
+    const dids = decks.map((d) => d.id);
+    const deckRetention = new Map(decks.map((d) => [d.id, d.desired_retention ?? cfg.desiredRetention]));
+    const revlog = await this.revlogByCard(`c.did IN (${dids.map(() => '?').join(',')}) AND c.type != ${CardType.New}`, dids);
+    if (!revlog.size) return 0;
+    const ids = [...revlog.keys()];
+    const cards = new Map<number, { id: number; did: number; type: number; ivl: number; factor: number }>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const rows = await this.sql.all<{ id: number; did: number; type: number; ivl: number; factor: number }>(
+        `SELECT id, did, type, ivl, factor FROM cards WHERE id IN (${chunk.map(() => '?').join(',')})`,
+        chunk,
+      );
+      for (const r of rows) cards.set(r.id, r);
+    }
+    const ignore = ignoreBeforeMs(cfg.ignoreRevlogsBeforeDate);
+    const updates: unknown[][] = [];
+    for (const [cid, entries] of revlog) {
+      const card = cards.get(cid);
+      if (!card) continue;
+      const m = memoryStateFromHistory(w, entries, t.nextDayAt, cfg.historicalRetention, card, ignore);
+      updates.push([m?.stability ?? null, m?.difficulty ?? null, deckRetention.get(card.did) ?? cfg.desiredRetention, cid]);
+    }
+    await this.sql.transaction((tx) => tx.runMany('UPDATE cards SET stability = ?, difficulty = ?, desired_retention = ? WHERE id = ?', updates));
+    return updates.length;
+  }
+
+  /** FSRS switched off: drop every card's memory state (Anki `clear_fsrs_data_for_cards`). */
+  async clearMemoryStates(): Promise<void> {
+    await this.sql.run('UPDATE cards SET stability = NULL, difficulty = NULL, desired_retention = NULL WHERE stability IS NOT NULL OR difficulty IS NOT NULL OR desired_retention IS NOT NULL');
   }
 
   // ---- decks ---------------------------------------------------------------------------

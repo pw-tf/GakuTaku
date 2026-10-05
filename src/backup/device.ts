@@ -2,6 +2,7 @@ import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { isNative } from '../app/platform';
 import { db } from '../db';
+import { MIGRATIONS } from '../db/schema';
 import { allMediaFiles, pruneMedia, putMediaBlobs } from '../media/store';
 import { allBookFiles, pruneBookFiles, putBlob, putCover, putText } from '../reader/bookCache';
 import { backupFileName, createBackup, restoreBackup, type BackupManifest, type BackupSource, type Progress, type RestoreTarget } from './format';
@@ -25,6 +26,7 @@ const source: BackupSource = {
 };
 
 const target: RestoreTarget = {
+  schemaVersion: MIGRATIONS.length,
   database: (bytes) => db.importFile(bytes),
   prefs: (json) => {
     try {

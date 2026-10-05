@@ -1,4 +1,4 @@
-import { decayFromParams, memoryStateFromHistory, nextStates as fsrsNextStates, prepareParameters } from './fsrs';
+import { decayFromParams, ignoreBeforeMs, memoryStateFromHistory, nextStates as fsrsNextStates, prepareParameters } from './fsrs';
 import { fuzzFactor, fuzzSeed, learningIvlWithFuzz } from './fuzz';
 import {
   asRevlogInterval,
@@ -119,7 +119,7 @@ export function prepareCard(input: SchedulingInput): PreparedCard {
   if (input.fsrs) {
     const w = prepareParameters(config.fsrsParams);
     if ((card.stability == null || card.difficulty == null) && card.type !== CardType.New) {
-      const m = memoryStateFromHistory(w, input.revlog ?? [], timing.nextDayAt, config.historicalRetention, card);
+      const m = memoryStateFromHistory(w, input.revlog ?? [], timing.nextDayAt, config.historicalRetention, card, ignoreBeforeMs(config.ignoreRevlogsBeforeDate));
       card = { ...card, stability: m?.stability ?? null, difficulty: m?.difficulty ?? null };
     }
     const memory = card.stability != null && card.difficulty != null ? { stability: card.stability, difficulty: card.difficulty } : null;

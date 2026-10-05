@@ -148,6 +148,8 @@ export interface DeckConfig {
   historicalRetention: number;
   /** FSRS parameters; empty = defaults. */
   fsrsParams: number[];
+  /** Anki's "Ignore cards reviewed before" (YYYY-MM-DD, or empty): history the optimizer skips. */
+  ignoreRevlogsBeforeDate: string;
 }
 
 export function defaultDeckConfig(): DeckConfig {
@@ -182,6 +184,7 @@ export function defaultDeckConfig(): DeckConfig {
     desiredRetention: 0.9,
     historicalRetention: 0.9,
     fsrsParams: [],
+    ignoreRevlogsBeforeDate: '',
   };
 }
 

@@ -72,6 +72,13 @@ release.
   Things that look odd are usually Anki's behaviour; check `rslib/src/scheduler` before changing them.
   The `scripts/verify-*.ts` checks pin the port to Anki's own test vectors and to
   `test_schedv3.py` scenarios.
+- **FSRS optimizer** (`src/anki/fsrsOptimizer.ts`): a port of fsrs-rs 6.6.2, the version Anki
+  pins. It covers the analytic gradients, outlier filtering, recency weighting, the initial-stability
+  search, Adam with cosine annealing, and parameter clipping, and is checked against fsrs-rs's own
+  test vectors.
+  - It runs in a worker from Deck options → FSRS → Optimize.
+  - As in Anki, it keeps the current parameters when they already fit better.
+  - Saving new parameters recomputes the preset's cards' memory states.
 - **Import** (`src/import/`) reads `.apkg` and `.colpkg` files, both legacy and schema-18/zstd. It
   keeps every card's scheduling state and FSRS memory state, plus the review history and the
   deck-options presets, so due counts match Anki after import. Day-based due dates are shifted from

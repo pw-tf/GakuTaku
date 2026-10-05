@@ -555,3 +555,9 @@ body { overflow: hidden; }
 .bcard .cv .kind { position: absolute; top: 6px; left: 10px; font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; padding: 2px 5px; border-radius: 4px; background: rgba(0,0,0,.35); color: #fff; }
 .bcard .cv .bc-more { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 50%; background: rgba(0,0,0,.35); color: #fff; cursor: pointer; opacity: .75; }
 .bcard .cv .bc-more:hover { opacity: 1; background: rgba(0,0,0,.55); }
+
+/* FSRS optimizer (deck options) */
+.fsrs-opt { display: flex; flex-direction: column; gap: 8px; margin: -2px 0 4px; }
+.fsrs-opt-progress { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ink-soft); }
+.fsrs-opt-progress .bar { flex: 1; height: 5px; border-radius: 3px; background: var(--paper-sunk); overflow: hidden; }
+.fsrs-opt-progress .bar i { display: block; height: 100%; background: var(--accent); transition: width .2s; }

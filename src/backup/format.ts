@@ -42,6 +42,8 @@ export interface BackupSource {
 
 /** Where a restore writes it to. */
 export interface RestoreTarget {
+  /** The newest database schema version this app can open (its migration count). */
+  schemaVersion: number;
   database(bytes: Uint8Array): Promise<void>;
   prefs(json: string | null): void;
   /** Add or overwrite media files. */
@@ -137,7 +139,11 @@ export async function restoreBackup(file: Blob, target: RestoreTarget, onProgres
   try {
     onProgress?.('Checking the backup…');
     const database = await bytes(entries.get('collection.sqlite3')!);
-    if (new TextDecoder('latin1').decode(database.subarray(0, 16)) !== SQLITE_HEADER) throw new Error('The backup’s database is damaged.');
+    if (new TextDecoder('latin1').decode(database.subarray(0, 16)) !== SQLITE_HEADER || database.length < 100) throw new Error('The backup’s database is damaged.');
+    // SQLite keeps PRAGMA user_version (GakuTaku's schema version) at byte 60 of the header.
+    const schema = new DataView(database.buffer, database.byteOffset).getUint32(60);
+    if (schema === 0) throw new Error('The backup’s database isn’t a GakuTaku database.');
+    if (schema > target.schemaVersion) throw new Error('This backup was made by a newer version of GakuTaku. Update the app, then restore it.');
     const prefs = entries.get('prefs.json');
     const prefsJson = prefs ? await text(prefs) : null;
 

@@ -214,6 +214,7 @@ function deckConfigFromProto(buf: Uint8Array): DeckConfig {
     buryInterdayLearning: !!pbUint(f, 29),
     desiredRetention: pos(pbFloat(f, 37), d.desiredRetention),
     historicalRetention: pos(pbFloat(f, 40), d.historicalRetention),
+    ignoreRevlogsBeforeDate: pbString(f, 46),
   };
 }
 
@@ -257,6 +258,7 @@ function deckConfigFromJson(c: Record<string, unknown>): DeckConfig {
     desiredRetention: num(c.desiredRetention) > 0 ? num(c.desiredRetention) : d.desiredRetention,
     historicalRetention: num(c.sm2Retention) > 0 ? num(c.sm2Retention) : d.historicalRetention,
     fsrsParams: pickParams(floats(c.fsrsParams6), floats(c.fsrsParams5), floats(c.fsrsWeights)),
+    ignoreRevlogsBeforeDate: typeof c.ignoreRevlogsBeforeDate === 'string' ? c.ignoreRevlogsBeforeDate : '',
   };
 }
 
