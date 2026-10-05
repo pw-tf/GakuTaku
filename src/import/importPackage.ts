@@ -29,6 +29,8 @@ export interface ImportProgress {
 }
 
 export interface MediaSink {
+  /** Names of all media already on the device (one query, so new files need no lookup each). */
+  names?(): Promise<Set<string>>;
   has(name: string): Promise<{ size: number } | null>;
   putMany(files: { name: string; data: Uint8Array }[]): Promise<void>;
   rename(name: string, data: Uint8Array): string;
@@ -81,11 +83,12 @@ export async function importPackage(
   report({ phase: 'media', done: 0, total: entries.length });
   let batch: { name: string; data: Uint8Array }[] = [];
   let batchBytes = 0;
+  const present = media.names ? await media.names() : null;
   for (let i = 0; i < entries.length; i++) {
     const [zipName, name] = entries[i];
     const data = await pkg.readMedia(zipName);
     if (data) {
-      const existing = await media.has(name);
+      const existing = present && !present.has(name) ? null : await media.has(name);
       if (!existing) {
         batch.push({ name, data });
         batchBytes += data.length;
@@ -97,12 +100,12 @@ export async function importPackage(
         mediaFiles++;
       }
     }
-    if (batch.length >= 50 || batchBytes > 20_000_000) {
+    if (batch.length >= 200 || batchBytes > 32_000_000) {
       await media.putMany(batch);
       batch = [];
       batchBytes = 0;
     }
-    if (i % 25 === 0) report({ phase: 'media', done: i + 1, total: entries.length });
+    if (i % 50 === 0) report({ phase: 'media', done: i + 1, total: entries.length });
   }
   if (batch.length) await media.putMany(batch);
   await pkg.close();

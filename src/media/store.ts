@@ -27,6 +27,11 @@ export async function getMediaFile(name: string): Promise<Blob | null> {
   return row ? withMime(row.blob, name) : null;
 }
 
+/** Names of every media file on the device. */
+export async function mediaFileNames(): Promise<Set<string>> {
+  return new Set((await mediaDb.files.toCollection().primaryKeys()) as string[]);
+}
+
 export async function hasMediaFile(name: string): Promise<{ size: number } | null> {
   const row = await mediaDb.files.get(name);
   return row ? { size: row.blob.size } : null;
