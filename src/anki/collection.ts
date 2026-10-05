@@ -5,6 +5,7 @@ import { buildQueues, WHOLE_COLLECTION, type CardQueues, type QueueCard } from '
 import { timingAt, type Timing } from './timing';
 import { fsrsItemsForTraining, ignoreBeforeMs, memoryStateFromHistory, prepareParameters, retrievability, type FsrsItem } from './fsrs';
 import { compileSearch, sortSql, type SearchContext, type SortColumn } from './search';
+import { stripHtmlText } from '../db/sqlFunctions';
 import { FIELD_SEP, joinFields, sortFieldValue, splitFields, type Notetype } from './notetype';
 import { generatedOrdinals } from './template';
 import {
@@ -182,6 +183,16 @@ function randomGuid(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(10));
   for (const b of bytes) out += chars[b % chars.length];
   return out;
+}
+
+/** A field as Anki's duplicate check compares it (same as the strip_html SQL function). */
+const stripForDupe = stripHtmlText;
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Point a template's references to a field at its new name ({{F}}, {{#F}}, {{/F}}, {{text:F}}…). */
+export function renameFieldRefs(template: string, from: string, to: string): string {
+  return template.replace(new RegExp(`\\{\\{([#^/]?)((?:[^{}:]*:)*)${escapeRegExp(from)}\\}\\}`, 'g'), (_m, sigil: string, filters: string) => `{{${sigil}${filters}${to}}}`);
 }
 
 const tagList = (tags: string) => tags.trim().split(/\s+/).filter(Boolean);
@@ -452,6 +463,136 @@ export class Collection {
     await this.sql.run('UPDATE notetypes SET name = ?, fields = ?, templates = ?, css = ?, sort_idx = ?, mtime = ? WHERE id = ?', [
       nt.name, JSON.stringify(nt.fields), JSON.stringify(nt.templates), nt.css, nt.sortIdx, nowSecs(), nt.id,
     ]);
+  }
+
+  // ---- note type management (Anki's Manage Note Types) ---------------------------------------
+
+  /** How many notes use each note type. */
+  async notetypeUseCounts(): Promise<Map<number, number>> {
+    const rows = await this.sql.all<{ mid: number; n: number }>('SELECT mid, COUNT(*) AS n FROM notes GROUP BY mid');
+    return new Map(rows.map((r) => [r.mid, r.n]));
+  }
+
+  async renameNotetype(id: number, name: string): Promise<void> {
+    const nt = await this.notetype(id);
+    if (!nt) return;
+    const clean = name.trim();
+    if (!clean) throw new Error('Enter a name.');
+    await this.updateNotetype({ ...nt, name: clean });
+  }
+
+  /** Delete a note type with all its notes and cards. The last note type can't be removed. */
+  async removeNotetype(id: number): Promise<void> {
+    await this.sql.transaction(async (tx) => {
+      const [{ n }] = await tx.all<{ n: number }>('SELECT COUNT(*) AS n FROM notetypes');
+      if (n <= 1) throw new Error('The last note type can’t be deleted.');
+      await tx.run('DELETE FROM cards WHERE nid IN (SELECT id FROM notes WHERE mid = ?)', [id]);
+      await tx.run('DELETE FROM notes WHERE mid = ?', [id]);
+      await tx.run('DELETE FROM notetypes WHERE id = ?', [id]);
+    });
+  }
+
+  /**
+   * Change a note type's fields (Anki's Fields dialog): `fields` lists the new fields in order, each
+   * with the index of the old field it continues (null = new, empty). Notes are rewritten to match,
+   * and templates follow renamed fields.
+   */
+  async changeNotetypeFields(id: number, fields: { name: string; from: number | null }[], sortIdx: number): Promise<void> {
+    const names = fields.map((f) => f.name.trim());
+    if (!names.length) throw new Error('A note type needs at least one field.');
+    if (names.some((n) => !n)) throw new Error('Field names can’t be empty.');
+    if (names.some((n) => /[:{}"]/.test(n) || /^[#/^]/.test(n))) throw new Error('Field names can’t contain : { } " or start with # / ^.');
+    if (new Set(names.map((n) => n.toLowerCase())).size !== names.length) throw new Error('Field names must be different.');
+    await this.sql.transaction(async (tx) => {
+      const nt = await this.notetype(id, tx);
+      if (!nt) throw new Error('Note type not found');
+      const old = [...nt.fields].sort((a, b) => a.ord - b.ord);
+      let templates = nt.templates;
+      for (const [i, f] of fields.entries()) {
+        const before = f.from != null ? old[f.from]?.name : undefined;
+        if (before && before !== names[i]) templates = templates.map((t) => ({ ...t, qfmt: renameFieldRefs(t.qfmt, before, names[i]), afmt: renameFieldRefs(t.afmt, before, names[i]) }));
+      }
+      const next: Notetype = {
+        ...nt,
+        fields: names.map((name, ord) => ({ name, ord })),
+        templates,
+        sortIdx: Math.min(Math.max(0, sortIdx), names.length - 1),
+      };
+      await tx.run('UPDATE notetypes SET fields = ?, templates = ?, sort_idx = ?, mtime = ? WHERE id = ?', [
+        JSON.stringify(next.fields), JSON.stringify(next.templates), next.sortIdx, nowSecs(), id,
+      ]);
+      const notes = await tx.all<{ id: number; flds: string }>('SELECT id, flds FROM notes WHERE mid = ?', [id]);
+      const mod = nowSecs();
+      const statements: [string, unknown[]][] = [];
+      for (const n of notes) {
+        const vals = splitFields(n.flds);
+        const out = fields.map((f) => (f.from != null ? vals[f.from] ?? '' : ''));
+        statements.push(['UPDATE notes SET flds = ?, sfld = ?, mod = ? WHERE id = ?', [joinFields(out), sortFieldValue(next, out), mod, n.id]]);
+        if (statements.length >= 500) await tx.runBatch(statements.splice(0));
+      }
+      if (statements.length) await tx.runBatch(statements);
+    });
+  }
+
+  /**
+   * Change a note type's card types and styling (Anki's Cards screen): `templates` in their new
+   * order, each with the index of the card type it continues (null = new). Cards follow their card
+   * type; removed card types' cards are deleted (and notes left without cards with them); new card
+   * types get cards for the notes they aren't empty for.
+   */
+  async changeNotetypeTemplates(id: number, templates: { name: string; qfmt: string; afmt: string; from: number | null }[], css: string): Promise<void> {
+    if (!templates.length) throw new Error('A note type needs at least one card type.');
+    if (templates.some((t) => !t.name.trim())) throw new Error('Card type names can’t be empty.');
+    await this.sql.transaction(async (tx) => {
+      const nt = await this.notetype(id, tx);
+      if (!nt) throw new Error('Note type not found');
+      if (nt.kind === 1 && templates.length !== 1) throw new Error('A cloze note type has exactly one card type.');
+      const next: Notetype = { ...nt, css, templates: templates.map((t, ord) => ({ name: t.name.trim(), ord, qfmt: t.qfmt, afmt: t.afmt })) };
+      await tx.run('UPDATE notetypes SET templates = ?, css = ?, mtime = ? WHERE id = ?', [JSON.stringify(next.templates), css, nowSecs(), id]);
+      if (nt.kind === 1) return; // cloze cards are numbered by their clozes, not by card type
+
+      // Renumber kept card types' cards and delete removed ones'.
+      const kept = new Map<number, number>();
+      templates.forEach((t, ord) => t.from != null && kept.set(t.from, ord));
+      const removed = nt.templates.map((t) => t.ord).filter((o) => !kept.has(o));
+      const inType = 'nid IN (SELECT id FROM notes WHERE mid = ?)';
+      if (removed.length) await tx.run(`DELETE FROM cards WHERE ${inType} AND ord IN (${removed.join(',')})`, [id]);
+      const moves = [...kept].filter(([from, to]) => from !== to);
+      if (moves.length) await tx.run(`UPDATE cards SET ord = CASE ord ${moves.map(([f, t]) => `WHEN ${f} THEN ${t}`).join(' ')} ELSE ord END, mod = ? WHERE ${inType}`, [nowSecs(), id]);
+      if (removed.length) {
+        const orphans = await tx.all<{ id: number }>('SELECT id FROM notes WHERE mid = ? AND NOT EXISTS (SELECT 1 FROM cards WHERE cards.nid = notes.id)', [id]);
+        await this.removeOrphanNotes(tx, orphans.map((o) => o.id));
+      }
+
+      // New card types: cards for every note they render for, next to the note's other cards.
+      const added = templates.map((t, ord) => (t.from == null ? ord : -1)).filter((o) => o >= 0);
+      if (!added.length) return;
+      const notes = await tx.all<{ id: number; flds: string; did: number | null; due: number | null }>(
+        'SELECT n.id, n.flds, (SELECT did FROM cards WHERE nid = n.id ORDER BY ord LIMIT 1) AS did, (SELECT due FROM cards WHERE nid = n.id AND type = 0 ORDER BY ord LIMIT 1) AS due FROM notes n WHERE n.mid = ?',
+        [id],
+      );
+      let cid = await freshId(tx, 'cards');
+      const mod = nowSecs();
+      const statements: [string, unknown[]][] = [];
+      for (const n of notes) {
+        const ords = new Set(generatedOrdinals(next, n.flds));
+        for (const ord of added) {
+          if (!ords.has(ord)) continue;
+          const due = n.due ?? (await this.allocPositions(tx, 1, false))[0];
+          statements.push(['INSERT INTO cards (id, nid, did, ord, mod, type, queue, due) VALUES (?, ?, ?, ?, ?, 0, 0, ?)', [cid++, n.id, n.did ?? DEFAULT_DECK_ID, ord, mod, due]]);
+          if (statements.length >= 500) await tx.runBatch(statements.splice(0));
+        }
+      }
+      if (statements.length) await tx.runBatch(statements);
+    });
+  }
+
+  /** Note ids with the same first field (HTML ignored) and note type: Anki's duplicate check. */
+  async findDuplicates(mid: number, firstField: string, excludeNid = 0): Promise<number[]> {
+    const text = stripForDupe(firstField);
+    if (!text) return [];
+    const rows = await this.sql.all<{ id: number }>('SELECT id FROM notes WHERE mid = ? AND id != ? AND strip_html(field_at(flds, 0)) = ?', [mid, excludeNid, text]);
+    return rows.map((r) => r.id);
   }
 
   async note(id: number, sql: Sql = this.sql): Promise<NoteRow | null> {

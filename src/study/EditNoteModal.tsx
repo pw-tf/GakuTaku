@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { col } from '../anki/appCollection';
 import { splitFields, type Notetype } from '../anki/notetype';
+import { CardPreview, NoteFields, TagInput } from '../decks/NoteEditor';
 import { Btn } from '../ui/atoms';
+import { Icon } from '../ui/icons';
 import { ConfirmModal, Modal } from '../ui/Modal';
 
-/** Edit a note's fields (raw HTML, as in Anki's HTML editor) and tags, or delete it. */
+/** Edit a note's fields (HTML, as in Anki's HTML editor, with a formatting toolbar) and tags, or delete it. */
 export function EditNoteModal({ noteId, onClose, onSaved, onDeleted }: { noteId: number; onClose: () => void; onSaved?: () => void; onDeleted?: () => void }) {
   const [nt, setNt] = useState<Notetype | null>(null);
   const [values, setValues] = useState<string[]>([]);
@@ -12,6 +14,7 @@ export function EditNoteModal({ noteId, onClose, onSaved, onDeleted }: { noteId:
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [preview, setPreview] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -55,28 +58,18 @@ export function EditNoteModal({ noteId, onClose, onSaved, onDeleted }: { noteId:
     );
   }
 
+  if (preview && nt) return <CardPreview notetype={nt} values={values} tags={tags} deckName="" onClose={() => setPreview(false)} />;
+
   return (
     <Modal title={nt ? `Edit · ${nt.name}` : 'Edit note'} onClose={onClose} wide>
       <div className="modal-body">
-        {(nt?.fields ?? []).map((f, i) => (
-          <label className="opt-field col" key={f.name}>
-            <span>{f.name}</span>
-            <textarea
-              lang="ja"
-              rows={Math.min(6, Math.max(1, Math.ceil((values[i]?.length ?? 0) / 40)))}
-              value={values[i] ?? ''}
-              onChange={(e) => setValues((v) => v.map((x, j) => (j === i ? e.target.value : x)))}
-            />
-          </label>
-        ))}
-        <label className="opt-field col">
-          <span>Tags</span>
-          <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="space-separated" />
-        </label>
+        {nt && <NoteFields notetype={nt} values={values} onChange={setValues} excludeNid={noteId} />}
+        <TagInput value={tags} onChange={setTags} />
         {err && <p style={{ color: 'var(--rate-again)', fontSize: 13 }}>{err}</p>}
       </div>
       <div className="modal-foot">
-        <Btn onClick={() => setConfirmDelete(true)} style={{ marginRight: 'auto', color: 'var(--rate-again)' }}>Delete note</Btn>
+        <Btn onClick={() => setConfirmDelete(true)} style={{ marginRight: 'auto', color: 'var(--rate-again)' }}>Delete</Btn>
+        <Btn onClick={() => setPreview(true)} disabled={!nt}><Icon.review s={15} /> Preview</Btn>
         <Btn onClick={onClose}>Cancel</Btn>
         <Btn variant="primary" disabled={saving || !nt} onClick={() => void save()}>{saving ? 'Saving…' : 'Save'}</Btn>
       </div>

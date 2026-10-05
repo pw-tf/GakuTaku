@@ -14,6 +14,7 @@ import { ConfirmModal, PromptModal } from '../ui/Modal';
 import { AddNoteModal } from './AddNoteModal';
 import { BrowseCards } from './BrowseCards';
 import { DeckOptionsModal } from './DeckOptionsModal';
+import { NotetypesModal } from './NotetypesModal';
 
 const DECK_TABLES = ['cards', 'decks', 'deck_config', 'config'];
 
@@ -65,6 +66,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
   const [menuOpen, setMenuOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [browsing, setBrowsing] = useState(false);
+  const [notetypes, setNotetypes] = useState(false);
   const rows = useMemo(() => flatten(roots), [roots]);
   useBackHandler(menuOpen, () => setMenuOpen(false));
 
@@ -95,6 +97,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
               <div className="popmenu">
                 <button onClick={() => { setMenuOpen(false); setCreating(true); }}><Icon.plus s={15} /> Create deck</button>
                 <button onClick={() => { setMenuOpen(false); fileRef.current?.click(); }}><Icon.upload s={15} /> Import Anki deck or backup (.apkg / .colpkg)</button>
+                <button onClick={() => { setMenuOpen(false); setNotetypes(true); }}><Icon.study s={15} /> Note types…</button>
               </div>
             </>
           )}
@@ -134,6 +137,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
         </div>
       )}
 
+      {notetypes && <NotetypesModal onClose={() => setNotetypes(false)} />}
       {creating && (
         <PromptModal
           title="Create deck"
