@@ -372,6 +372,62 @@ async function main() {
     check('fsrs: memory state stored', card.stability != null && card.difficulty != null, card);
   }
 
+  // ---- Answer = plan (in memory) + commit (batched write) ---------------------------------------
+  {
+    const { col, raw, mid } = await emptyCol();
+    const parent = await col.getOrCreateDeck('Lang');
+    const child = await col.getOrCreateDeck('Lang::Vocab');
+    const twoCards = await col.addNotetype({
+      name: 'Two', kind: 0, css: '', sortIdx: 0, fields: [{ name: 'Front', ord: 0 }, { name: 'Back', ord: 1 }],
+      templates: [{ name: 'A', ord: 0, qfmt: '{{Front}}', afmt: '{{Back}}' }, { name: 'B', ord: 1, qfmt: '{{Back}}', afmt: '{{Front}}' }],
+    });
+    const presetId = (await col.deck(child))!.conf_id;
+    await setConf(col, presetId, { buryNew: true, leechThreshold: 2, leechAction: 'tagOnly' });
+    const { cardIds: [a, b] } = await col.addNote(twoCards, ['front', 'back'], [], child);
+    const { cardIds: [c1] } = await col.addNote(mid, ['solo', 'x'], [], child);
+    const now = Date.UTC(2026, 4, 1, 12);
+    const count = (q: string) => raw.exec(q)[0].n as number;
+
+    const sa = (await col.studyCard(a, now))!;
+    const before = count('SELECT COUNT(*) AS n FROM revlog');
+    const plan = col.planAnswer(sa, 3, 1000, now);
+    eq('plan: no database writes', count('SELECT COUNT(*) AS n FROM revlog'), before);
+    eq('plan: sibling to bury', plan.bury.map((x) => x.id), [b]);
+    await col.commitAnswer(plan);
+    eq('commit: sibling buried', (await col.card(b))!.queue, -2);
+    const today = (await col.timing(now)).today;
+    eq('commit: child deck counts the new card', raw.exec('SELECT new_studied AS n, last_day_studied AS d FROM decks WHERE id = ?', [child])[0], { n: 1, d: today });
+    eq('commit: parent deck counts it too', raw.exec('SELECT new_studied AS n FROM decks WHERE id = ?', [parent])[0].n, 1);
+    eq('commit: unrelated Default deck untouched', raw.exec('SELECT new_studied AS n FROM decks WHERE id = 1')[0].n, 0);
+
+    // Two answers in the same millisecond get distinct review log ids.
+    const s1 = (await col.studyCard(c1, now))!;
+    const r1 = await col.answer(s1, 3, 1000, now + 5);
+    const s2 = (await col.studyCard(c1, now))!;
+    const r2 = await col.answer(s2, 3, 1000, now + 5);
+    check('same-millisecond answers: distinct revlog ids', r1.undo.revlogId !== r2.undo.revlogId, [r1.undo.revlogId, r2.undo.revlogId]);
+    await col.undoAnswer(r2.undo);
+    await col.undoAnswer(r1.undo);
+
+    // A sibling whose queue changed since the card was loaded is not buried.
+    await col.unburyOrUnsuspend([b]);
+    const stale = (await col.studyCard(a, now))!;
+    await col.buryOrSuspend([b], 'suspend');
+    await col.commitAnswer(col.planAnswer(stale, 3, 1000, now + 10));
+    eq('stale sibling (suspended meanwhile) stays suspended', (await col.card(b))!.queue, -1);
+
+    // Leech: tag added at the threshold, removed again by undo.
+    const { cardIds: [lc] } = await col.addNote(mid, ['leechy', 'x'], [], child);
+    await col.forget([lc], { resetCounts: true, restorePosition: false });
+    raw.exec('UPDATE cards SET type = 2, queue = 2, due = ?, ivl = 5, lapses = 1 WHERE id = ?', [today, lc]);
+    const ls = (await col.studyCard(lc, now))!;
+    const lr = await col.answer(ls, 1, 1000, now + 20);
+    const tags = () => raw.exec('SELECT tags FROM notes WHERE id = (SELECT nid FROM cards WHERE id = ?)', [lc])[0].tags as string;
+    check('leech tagged at the threshold', /\bleech\b/.test(tags()), tags());
+    await col.undoAnswer(lr.undo);
+    check('undo removes the leech tag', !/\bleech\b/.test(tags()), tags());
+  }
+
   if (failures) {
     console.error(`\n${failures} check(s) failed, ${passes} passed.`);
     process.exit(1);

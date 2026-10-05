@@ -5,7 +5,8 @@ import { Reader } from '../reader/Reader';
 import type { RestoreTarget } from '../reader/useBook';
 import type { MinedItem } from '../ui/LookupPopup';
 import { Icon } from '../ui/icons';
-import { proxyFetch } from './proxy';
+import { NhkAgreeNotice } from './NhkAgree';
+import { proxyFetch, ProxyError } from './proxy';
 import { extractArticle, htmlToParagraphs, htmlToText, jpLength, type FeedArticle } from './parse';
 import type { FeedView } from './useFeeds';
 
@@ -26,6 +27,7 @@ interface ArticleState {
   status: 'loading' | 'ready' | 'error';
   paragraphs: FuriToken[][];
   error?: string;
+  needsNhkAgreement?: boolean;
 }
 
 /**
@@ -35,6 +37,7 @@ interface ArticleState {
  */
 export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onClose }: Props) {
   const [state, setState] = useState<ArticleState>({ status: 'loading', paragraphs: [] });
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,14 +57,14 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
         if (!cancelled) setState({ status: 'ready', paragraphs: tokens });
       } catch (e) {
         if (!cancelled) {
-          setState({ status: 'error', paragraphs: [], error: e instanceof Error ? e.message : String(e) });
+          setState({ status: 'error', paragraphs: [], error: e instanceof Error ? e.message : String(e), needsNhkAgreement: e instanceof ProxyError && e.needsNhkAgreement });
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [article.id, article.link, article.content, article.summary]);
+  }, [article.id, article.link, article.content, article.summary, attempt]);
 
   if (state.status !== 'ready') {
     return (
@@ -73,6 +76,8 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
         <div className="rd-stage"><div className="rd-scroll"><div className="rd-col">
           {state.status === 'loading' ? (
             <p style={{ color: 'var(--ink-faint)' }}>Fetching article…</p>
+          ) : state.needsNhkAgreement ? (
+            <NhkAgreeNotice onAgreed={() => setAttempt((n) => n + 1)} />
           ) : (
             <p style={{ color: 'var(--rate-again)' }}>Couldn't open this article: {state.error}</p>
           )}

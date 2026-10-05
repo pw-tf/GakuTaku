@@ -109,6 +109,18 @@ function execMany(sql: string, rows: unknown[][]): ExecResult {
   return out;
 }
 
+/** Several statements in one call (one round trip from the app instead of one each). */
+function execBatch(statements: { sql: string; params: unknown[] }[]): ExecResult {
+  const d = need();
+  changed.clear();
+  for (const { sql, params } of statements) {
+    d.exec({ sql, bind: params.length ? (params.map((p) => (p === undefined ? null : p)) as SqlValue[]) : undefined });
+  }
+  const out = { rows: [], changed: [...changed] };
+  changed.clear();
+  return out;
+}
+
 /** The whole database file, for backups. */
 function exportDb(): Uint8Array {
   if (!poolUtil) throw new Error('Backups need persistent storage, which is unavailable on this device.');
@@ -124,6 +136,6 @@ async function importDb(bytes: Uint8Array): Promise<void> {
   await poolUtil.importDb(DB_FILE, bytes);
 }
 
-const api = { open, exec, execMany, exportDb, importDb };
+const api = { open, exec, execMany, execBatch, exportDb, importDb };
 export type DbWorkerApi = typeof api;
 Comlink.expose(api);

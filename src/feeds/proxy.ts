@@ -1,4 +1,5 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { isNhkUrl, nhkGet } from '../native/nhk';
 
 /** Result of a feed/article fetch: decoded text plus the final (post-redirect) URL. */
 export interface ProxyResult {
@@ -9,10 +10,28 @@ export interface ProxyResult {
 
 /** A failed fetch, carrying the upstream HTTP status when there was one. */
 export class ProxyError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(
+    message: string,
+    readonly status?: number,
+    /** NHK refused because the reader hasn't agreed to its terms (in this app) yet. */
+    readonly needsNhkAgreement = false,
+  ) {
     super(message);
     this.name = 'ProxyError';
   }
+}
+
+/** NHK ONE (Oct 2025) serves its web news only after the reader agrees to NHK's terms. */
+function nhkRefusal(status: number): ProxyError {
+  return new ProxyError('NHK asks you to agree to its terms before it shows this.', status, true);
+}
+
+/** NHK pages in the Android app go through the native NHK fetch, which carries NHK's cookies. */
+async function nhkFetch(url: URL): Promise<{ bytes: Uint8Array; contentType: string; url: string }> {
+  const res = await nhkGet(url.toString());
+  if (res.status === 401 || res.status === 403) throw nhkRefusal(res.status);
+  if (res.status < 200 || res.status >= 300) throw new ProxyError(upstreamMessage(res.status), res.status);
+  return { bytes: res.bytes, contentType: res.contentType, url: res.url };
 }
 
 /**
@@ -85,6 +104,10 @@ function checkUrl(raw: string): URL {
 export async function proxyFetch(target: string): Promise<ProxyResult> {
   const url = checkUrl(target);
 
+  if (Capacitor.isNativePlatform() && isNhkUrl(url.toString())) {
+    const res = await nhkFetch(url);
+    return { body: decode(res.bytes, res.contentType), contentType: res.contentType, url: res.url || url.toString() };
+  }
   if (Capacitor.isNativePlatform()) {
     const res = await CapacitorHttp.get({
       url: url.toString(),
@@ -114,6 +137,10 @@ export async function proxyFetch(target: string): Promise<ProxyResult> {
 /** Fetch raw bytes (audio clips for mining). Same transport rules as {@link proxyFetch}. */
 export async function fetchBytes(target: string): Promise<{ bytes: Uint8Array; contentType: string }> {
   const url = checkUrl(target);
+  if (Capacitor.isNativePlatform() && isNhkUrl(url.toString())) {
+    const res = await nhkFetch(url);
+    return { bytes: res.bytes, contentType: res.contentType };
+  }
   if (Capacitor.isNativePlatform()) {
     const res = await CapacitorHttp.get({ url: url.toString(), responseType: 'arraybuffer', connectTimeout: 15_000, readTimeout: 15_000 });
     if (res.status < 200 || res.status >= 300) throw new ProxyError(upstreamMessage(res.status), res.status);

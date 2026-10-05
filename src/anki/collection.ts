@@ -32,6 +32,8 @@ export interface Sql {
   all<T>(sql: string, params?: unknown[]): Promise<T[]>;
   run(sql: string, params?: unknown[]): Promise<void>;
   runMany(sql: string, rows: unknown[][]): Promise<void>;
+  /** Several different statements in one go (one worker round trip in the app). */
+  runBatch(statements: [string, unknown[]][]): Promise<void>;
   transaction<T>(fn: (tx: Sql) => Promise<T>): Promise<T>;
 }
 
@@ -101,6 +103,27 @@ export interface StudyCard {
   desiredRetention: number;
   note: NoteRow;
   notetype: Notetype;
+  /** The card as stored when loaded (what undo restores). */
+  original: Card;
+  /** Review history, when FSRS needed it to derive a memory state. */
+  revlog?: RevlogEntry[];
+  /** The note's other cards and their queues when loaded (for sibling burying). */
+  siblings: { id: number; queue: number }[];
+  /** Collection settings when loaded. */
+  colConfig: CollectionConfig;
+}
+
+/** An answer worked out in memory (see {@link Collection.planAnswer}), not yet saved. */
+export interface AnswerPlan {
+  study: StudyCard;
+  /** The answered card. */
+  card: Card;
+  revlog: RevlogEntry;
+  /** Siblings to bury, with the queue each had. */
+  bury: { id: number; queue: number }[];
+  /** New tags for the note when the card became a leech and lacks the tag; null otherwise. */
+  leechTags: string[] | null;
+  today: number;
 }
 
 /** What {@link Collection.undoAnswer} needs to reverse an answer exactly. */
@@ -695,19 +718,38 @@ export class Collection {
     const card = await this.card(cardId);
     if (!card) return null;
     const cfg = await this.config();
-    const t = timingAt(nowMs, cfg.rollover);
     const deck = (await this.deck(card.did)) ?? null;
     if (!deck) return null;
     const configs = await this.deckConfigMap();
     const config = configs.get(deck.conf_id) ?? configs.get(DEFAULT_CONFIG_ID) ?? normalizeDeckConfig(null);
-    const desiredRetention = deck.desired_retention ?? config.desiredRetention;
     const needsHistory = cfg.fsrs && card.type !== CardType.New && (card.stability == null || card.last_review == null);
     const revlog = needsHistory ? await this.sql.all<RevlogEntry>('SELECT * FROM revlog WHERE cid = ? ORDER BY id', [card.id]) : undefined;
-    const prepared = prepareCard({ card, config, desiredRetention, timing: t, fsrs: cfg.fsrs, fsrsShortTermWithSteps: cfg.fsrsShortTermWithSteps, revlog });
     const note = await this.note(card.nid);
     const notetype = note ? await this.notetype(note.mid) : null;
     if (!note || !notetype) return null;
-    return { prepared, deck, config, desiredRetention, note, notetype };
+    const siblings = await this.sql.all<{ id: number; queue: number }>('SELECT id, queue FROM cards WHERE nid = ? AND id != ?', [card.nid, card.id]);
+    const desiredRetention = deck.desired_retention ?? config.desiredRetention;
+    const base = { deck, config, desiredRetention, note, notetype, original: card, revlog, siblings, colConfig: cfg };
+    return { ...base, prepared: this.prepare(base, nowMs) };
+  }
+
+  /** The card's scheduling states at `nowMs` (Anki computes them when the card is shown). */
+  private prepare(s: Omit<StudyCard, 'prepared'>, nowMs: number): PreparedCard {
+    const cfg = s.colConfig;
+    return prepareCard({
+      card: s.original,
+      config: s.config,
+      desiredRetention: s.desiredRetention,
+      timing: timingAt(nowMs, cfg.rollover),
+      fsrs: cfg.fsrs,
+      fsrsShortTermWithSteps: cfg.fsrsShortTermWithSteps,
+      revlog: s.revlog,
+    });
+  }
+
+  /** Recompute a loaded card's states for the moment it is actually shown (cards are prefetched). */
+  reprepare(study: StudyCard, nowMs = Date.now()): StudyCard {
+    return { ...study, prepared: this.prepare(study, nowMs) };
   }
 
   /**
@@ -715,69 +757,80 @@ export class Collection {
    * (and parents') daily limits, bury siblings per the preset, and tag leeches. Returns undo info.
    */
   async answer(study: StudyCard, rating: Rating, millisecondsTaken: number, nowMs = Date.now()): Promise<{ undo: AnswerUndo; card: Card }> {
-    const cfg = await this.config();
-    const t = timingAt(nowMs, cfg.rollover);
-    return this.sql.transaction(async (tx) => {
-      const original = (await this.card(study.prepared.card.id, tx))!;
-      let answeredAt = nowMs;
-      const [clash] = await tx.all<{ id: number }>('SELECT id FROM revlog WHERE id >= ? ORDER BY id DESC LIMIT 1', [answeredAt]);
-      if (clash) answeredAt = clash.id + 1;
-      const result = applyAnswer(study.prepared, rating, { config: study.config, timing: t, fsrs: cfg.fsrs, desiredRetention: study.desiredRetention }, answeredAt, millisecondsTaken);
-      await this.writeCard(tx, result.card);
-      const r = result.revlog;
-      await tx.run('INSERT INTO revlog (id, cid, ease, ivl, lastIvl, factor, time, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
-        r.id, r.cid, r.ease, r.ivl, r.lastIvl, r.factor, r.time, r.type,
-      ]);
+    return this.commitAnswer(this.planAnswer(study, rating, millisecondsTaken, nowMs));
+  }
 
+  /**
+   * Work out an answer without touching the database: the answered card, its review log entry,
+   * the siblings to bury and any leech tag. The review screen uses this to move on to the next
+   * card at once, while {@link commitAnswer} saves it.
+   */
+  planAnswer(study: StudyCard, rating: Rating, millisecondsTaken: number, nowMs = Date.now()): AnswerPlan {
+    const cfg = study.colConfig;
+    const t = timingAt(nowMs, cfg.rollover);
+    const result = applyAnswer(study.prepared, rating, { config: study.config, timing: t, fsrs: cfg.fsrs, desiredRetention: study.desiredRetention }, nowMs, millisecondsTaken);
+    const original = study.original;
+
+    // Bury siblings (Anki `maybe_bury_siblings` + `exclude_earlier_gathered_queues`).
+    const c = study.config;
+    const ord = gatherOrd(original.queue);
+    const buryInterday = c.buryInterdayLearning && ord <= 1;
+    const buryReviews = c.buryReviews && ord <= 2;
+    const bury = study.siblings.filter(
+      (s) => (c.buryNew && s.queue === CardQueue.New) || (buryReviews && s.queue === CardQueue.Review) || (buryInterday && s.queue === CardQueue.DayLearn),
+    );
+
+    const tags = tagList(study.note.tags);
+    const leechTags = result.leeched && !tags.some((x) => x.toLowerCase() === 'leech') ? [...tags, 'leech'] : null;
+    return { study, card: result.card, revlog: result.revlog, bury, leechTags, today: t.today };
+  }
+
+  /** Save a planned answer. */
+  async commitAnswer(plan: AnswerPlan): Promise<{ undo: AnswerUndo; card: Card }> {
+    const { study, card, revlog: r, bury, leechTags, today } = plan;
+    const original = study.original;
+    return this.sql.transaction(async (tx) => {
+      // Review log ids are unique answer times; nudge past an existing one (rapid answers).
+      const [{ id: revlogId }] = await tx.all<{ id: number }>(
+        `INSERT INTO revlog (id, cid, ease, ivl, lastIvl, factor, time, type)
+         VALUES ((SELECT MAX(?1, COALESCE(MAX(id) + 1, 0)) FROM revlog WHERE id >= ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id`,
+        [r.id, r.cid, r.ease, r.ivl, r.lastIvl, r.factor, r.time, r.type],
+      );
       // Deck stats ("studied today") for the deck and its parents.
-      const decks = await this.decks(tx);
-      const deck = decks.find((d) => d.id === original.did);
-      const affected = deck ? decks.filter((d) => d.id === deck.id || deck.name.toLowerCase().startsWith(d.name.toLowerCase() + '::')) : [];
-      const deckRows = await tx.all<DeckRow>(`SELECT * FROM decks WHERE id IN (${affected.map(() => '?').join(',') || 'NULL'})`, affected.map((d) => d.id));
+      const deckRows = await tx.all<DeckRow>(`SELECT * FROM decks WHERE id = ?1 OR substr(lower(?2), 1, length(name) + 2) = lower(name) || '::'`, [original.did, study.deck.name]);
       const newDelta = original.queue === CardQueue.New ? 1 : 0;
       const reviewDelta = original.queue === CardQueue.Review || original.queue === CardQueue.DayLearn ? 1 : 0;
-      for (const d of affected) {
-        const reset = d.last_day_studied !== t.today;
-        await tx.run(
+      const c = card;
+      const statements: [string, unknown[]][] = [
+        [
+          `UPDATE cards SET nid=?, did=?, ord=?, mod=?, type=?, queue=?, due=?, ivl=?, factor=?, reps=?, lapses=?, left=?, odue=?, odid=?, flags=?,
+             stability=?, difficulty=?, desired_retention=?, last_review=?, original_position=? WHERE id=?`,
+          [c.nid, c.did, c.ord, c.mod, c.type, c.queue, c.due, c.ivl, c.factor, c.reps, c.lapses, c.left, c.odue, c.odid, c.flags,
+            c.stability, c.difficulty, c.desired_retention, c.last_review, c.original_position, c.id],
+        ],
+      ];
+      for (const d of deckRows) {
+        const reset = d.last_day_studied !== today;
+        statements.push([
           'UPDATE decks SET last_day_studied = ?, new_studied = ?, review_studied = ?, learning_studied = ?, ms_studied = ? WHERE id = ?',
           [
-            t.today,
+            today,
             (reset ? 0 : d.new_studied) + newDelta,
             (reset ? 0 : d.review_studied) + reviewDelta,
             reset ? 0 : d.learning_studied,
             (reset ? 0 : d.ms_studied) + r.time,
             d.id,
           ],
-        );
+        ]);
       }
-
-      // Bury siblings (Anki `maybe_bury_siblings` + `exclude_earlier_gathered_queues`).
-      const buried: { id: number; queue: number }[] = [];
-      const c = study.config;
-      if (c.buryNew || c.buryReviews || c.buryInterdayLearning) {
-        const ord = gatherOrd(original.queue);
-        const buryInterday = c.buryInterdayLearning && ord <= 1;
-        const buryReviews = c.buryReviews && ord <= 2;
-        const sibs = await tx.all<{ id: number; queue: number }>(
-          `SELECT id, queue FROM cards WHERE nid = ? AND id != ? AND ((? AND queue = 0) OR (? AND queue = 2) OR (? AND queue = 3))`,
-          [original.nid, original.id, c.buryNew ? 1 : 0, buryReviews ? 1 : 0, buryInterday ? 1 : 0],
-        );
-        for (const s of sibs) {
-          await tx.run('UPDATE cards SET queue = -2, mod = ? WHERE id = ?', [nowSecs(), s.id]);
-          buried.push(s);
-        }
-      }
-
-      // Leech tag.
-      let leechTagAdded = false;
-      if (result.leeched) {
-        const note = await this.note(original.nid, tx);
-        if (note && !tagList(note.tags).some((t) => t.toLowerCase() === 'leech')) {
-          await this.setNoteTags(note.id, [...tagList(note.tags), 'leech'], tx);
-          leechTagAdded = true;
-        }
-      }
-      return { undo: { card: original, revlogId: r.id, decks: deckRows, buriedSiblings: buried, leechTagAdded }, card: result.card };
+      // Only siblings still in the queue they were in when loaded.
+      for (const s of bury) statements.push(['UPDATE cards SET queue = -2, mod = ? WHERE id = ? AND queue = ?', [nowSecs(), s.id, s.queue]]);
+      if (leechTags) statements.push(['UPDATE notes SET tags = ?, mod = ? WHERE id = ?', [tagString(leechTags), nowSecs(), original.nid]]);
+      await tx.runBatch(statements);
+      return {
+        undo: { card: original, revlogId, decks: deckRows, buriedSiblings: bury, leechTagAdded: leechTags != null },
+        card,
+      };
     });
   }
 

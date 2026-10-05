@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { mediaDataUrl } from '../media/store';
 
 /**
- * Shows one side of a card exactly as Anki's reviewer would: a full HTML document with Anki's base
- * reviewer styles, the note type's own CSS, `<body class="card cardN">` (plus `nightMode` in dark
- * mode), and the deck's own scripts — inside a sandboxed frame, so a deck's JavaScript runs but
- * can't reach the app or its data. Local media (images, and fonts/images referenced from the
- * deck's CSS) are inlined. Taps, swipes, key presses, audio buttons and typed answers are reported
- * to the app through `postMessage`.
+ * Shows one side of a card exactly as Anki's reviewer would: Anki's base reviewer styles, the note
+ * type's own CSS, `<body class="card cardN">` (plus `nightMode` in dark mode), and the deck's own
+ * scripts, inside a sandboxed frame, so a deck's JavaScript runs but can't reach the app or its
+ * data. Local media (images, and fonts/images referenced from the deck's CSS) are inlined. Taps,
+ * swipes, key presses, audio buttons and typed answers are reported to the app through
+ * `postMessage`.
+ *
+ * Like Anki's reviewer, the frame's document is loaded once and each card side is swapped into
+ * `#qa` in place. Reloading the whole document for every reveal and every card made reviewing feel
+ * sluggish on phones.
  */
 
 export type CardEvent =
@@ -18,6 +22,9 @@ export type CardEvent =
   | { type: 'typed'; value: string; enter: boolean }
   | { type: 'pycmd'; cmd: string };
 
+/** Frame-internal: the shell document has loaded and can take card content. */
+type ReadyEvent = { type: 'ready' };
+
 interface Props {
   html: string;
   css: string;
@@ -26,6 +33,8 @@ interface Props {
   onEvent: (e: CardEvent) => void;
   /** Bumps when the same side should re-render (e.g. after editing the note). */
   version?: number;
+  /** Which side `html` is (the answer scrolls to `#answer`, as in Anki). */
+  side?: 'q' | 'a';
 }
 
 /** Anki's ts/reviewer/reviewer.scss essentials + its palette variables, so deck CSS behaves the same. */
@@ -92,7 +101,27 @@ const BRIDGE = `
     if (e.key === ' ') e.preventDefault();
   });
   document.addEventListener('input', function(e){ if (e.target && e.target.id === 'typeans') post({type:'typed', value: e.target.value, enter: false}); });
-  var ta = document.getElementById('typeans'); if (ta && ta.tagName === 'INPUT') setTimeout(function(){ ta.focus(); }, 50);
+  // A card side arrives from the app: swap it in, then run its scripts as Anki's reviewer does.
+  window.addEventListener('message', function(e){
+    var d = e.data;
+    if (e.source !== parent || !d || d.__gakutakuRender !== 1) return;
+    document.documentElement.className = d.htmlClass;
+    document.body.className = d.bodyClass;
+    var css = document.getElementById('note-css');
+    if (css.textContent !== d.css) css.textContent = d.css;
+    var qa = document.getElementById('qa');
+    qa.innerHTML = d.html;
+    Array.prototype.forEach.call(qa.querySelectorAll('script'), function(old){
+      var s = document.createElement('script');
+      for (var i = 0; i < old.attributes.length; i++) s.setAttribute(old.attributes[i].name, old.attributes[i].value);
+      s.text = old.text;
+      old.parentNode.replaceChild(s, old);
+    });
+    var answer = d.side === 'a' && document.getElementById('answer');
+    if (answer) answer.scrollIntoView(); else window.scrollTo(0, 0);
+    var ta = document.getElementById('typeans'); if (ta && ta.tagName === 'INPUT') ta.focus();
+  });
+  post({type:'ready'});
 })();
 `;
 
@@ -111,13 +140,39 @@ function decodeName(ref: string): string {
   }
 }
 
+/**
+ * Data URLs of recently shown media. The answer side repeats the question's images, and cards come
+ * round again, so encoding each file once saves a database read and a base64 pass per render.
+ */
+const dataUrlCache = new Map<string, string | null>();
+let dataUrlCacheChars = 0;
+const DATA_URL_CACHE_CHARS = 40_000_000;
+
+async function cachedDataUrl(name: string): Promise<string | null> {
+  if (dataUrlCache.has(name)) {
+    const hit = dataUrlCache.get(name)!;
+    dataUrlCache.delete(name);
+    dataUrlCache.set(name, hit); // most recently used last
+    return hit;
+  }
+  const url = await mediaDataUrl(name);
+  dataUrlCache.set(name, url);
+  dataUrlCacheChars += url?.length ?? 0;
+  for (const [k, v] of dataUrlCache) {
+    if (dataUrlCacheChars <= DATA_URL_CACHE_CHARS) break;
+    dataUrlCache.delete(k);
+    dataUrlCacheChars -= v?.length ?? 0;
+  }
+  return url;
+}
+
 /** Replace references to local media files with data: URLs. */
 async function inlineMedia(text: string, re: RegExp, pick: (m: RegExpExecArray) => string, rebuild: (m: RegExpExecArray, url: string) => string): Promise<string> {
   const matches = [...text.matchAll(re)] as RegExpExecArray[];
   if (!matches.length) return text;
   const urls = new Map<string, string | null>();
   await Promise.all(
-    [...new Set(matches.map(pick).filter(isLocalRef))].map(async (ref) => urls.set(ref, await mediaDataUrl(decodeName(ref)))),
+    [...new Set(matches.map(pick).filter(isLocalRef))].map(async (ref) => urls.set(ref, await cachedDataUrl(decodeName(ref)))),
   );
   let out = '';
   let last = 0;
@@ -129,51 +184,75 @@ async function inlineMedia(text: string, re: RegExp, pick: (m: RegExpExecArray) 
   return out + text.slice(last);
 }
 
-async function buildDocument(html: string, css: string, ord: number, dark: boolean): Promise<string> {
-  const body = await inlineMedia(html, LOCAL_SRC, (m) => m[3], (m, url) => `${m[1]}${m[2]}${url}${m[2]}`);
-  const noteCss = await inlineMedia(css, CSS_URL, (m) => m[2], (_m, url) => `url("${url}")`);
-  const bodyClass = `card card${ord + 1}${dark ? ' nightMode night_mode' : ''} mobile android`;
-  return `<!doctype html><html class="${dark ? 'night-mode' : ''}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<style>${BASE_CSS}</style><style>${noteCss}</style></head>
-<body class="${bodyClass}"><div id="qa">${body}</div><script>${BRIDGE}</script></body></html>`;
+/** The frame's document, loaded once; card sides are posted into it. */
+const SHELL = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>${BASE_CSS}</style><style id="note-css"></style></head>
+<body class="card"><div id="qa"></div><script>${BRIDGE}</script></body></html>`;
+
+interface Content {
+  html: string;
+  css: string;
+  bodyClass: string;
+  htmlClass: string;
+  side: 'q' | 'a';
 }
 
-export function CardView({ html, css, ord, dark, onEvent, version = 0 }: Props) {
+async function buildContent(html: string, css: string, ord: number, dark: boolean, side: 'q' | 'a'): Promise<Content> {
+  const [body, noteCss] = await Promise.all([
+    inlineMedia(html, LOCAL_SRC, (m) => m[3], (m, url) => `${m[1]}${m[2]}${url}${m[2]}`),
+    inlineMedia(css, CSS_URL, (m) => m[2], (_m, url) => `url("${url}")`),
+  ]);
+  return {
+    html: body,
+    css: noteCss,
+    bodyClass: `card card${ord + 1}${dark ? ' nightMode night_mode' : ''} mobile android`,
+    htmlClass: dark ? 'night-mode' : '',
+    side,
+  };
+}
+
+export function CardView({ html, css, ord, dark, onEvent, version = 0, side = 'q' }: Props) {
   const ref = useRef<HTMLIFrameElement>(null);
-  const [doc, setDoc] = useState<string | null>(null);
+  const ready = useRef(false);
+  const pending = useRef<Content | null>(null);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
-  const key = useMemo(() => `${ord}|${dark}|${version}|${css.length}|${html}`, [html, css, ord, dark, version]);
+  const send = (c: Content) => {
+    const win = ref.current?.contentWindow;
+    if (!ready.current || !win) {
+      pending.current = c;
+      return;
+    }
+    win.postMessage({ __gakutakuRender: 1, ...c }, '*');
+  };
+
   useEffect(() => {
     let alive = true;
-    void buildDocument(html, css, ord, dark).then((d) => alive && setDoc(d));
+    void buildContent(html, css, ord, dark, side).then((c) => alive && send(c));
     return () => {
       alive = false;
     };
-    // `key` covers html/css/ord/dark/version.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [html, css, ord, dark, version, side]);
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       if (e.source !== ref.current?.contentWindow) return;
-      const data = e.data as (CardEvent & { __gakutaku?: number }) | null;
+      const data = e.data as ((CardEvent | ReadyEvent) & { __gakutaku?: number }) | null;
       if (!data || data.__gakutaku !== 1) return;
+      if (data.type === 'ready') {
+        ready.current = true;
+        if (pending.current) send(pending.current);
+        pending.current = null;
+        return;
+      }
       onEventRef.current(data);
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return (
-    <iframe
-      ref={ref}
-      className="card-frame"
-      title="Card"
-      sandbox="allow-scripts"
-      srcDoc={doc ?? ''}
-      style={{ visibility: doc ? 'visible' : 'hidden' }}
-    />
-  );
+  return <iframe ref={ref} className="card-frame" title="Card" sandbox="allow-scripts" srcDoc={SHELL} />;
 }

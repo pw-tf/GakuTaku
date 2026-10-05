@@ -9,6 +9,7 @@ function txSql(tx: Tx): Sql {
       await tx.execute(sql, params);
     },
     runMany: (sql, rows) => tx.executeMany(sql, rows),
+    runBatch: (statements) => tx.executeBatch(statements.map(([sql, params]) => ({ sql, params }))),
     transaction: (fn) => fn(self),
   };
   return self;
@@ -20,6 +21,7 @@ export const appSql: Sql = {
     await db.execute(sql, params);
   },
   runMany: (sql, rows) => db.writeTransaction((tx) => tx.executeMany(sql, rows)),
+  runBatch: (statements) => db.writeTransaction((tx) => tx.executeBatch(statements.map(([sql, params]) => ({ sql, params })))),
   transaction: (fn) => db.writeTransaction((tx) => fn(txSql(tx))),
 };
 

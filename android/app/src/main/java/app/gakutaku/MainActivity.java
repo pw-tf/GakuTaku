@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(JapaneseTtsPlugin.class);
+        registerPlugin(NhkPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
