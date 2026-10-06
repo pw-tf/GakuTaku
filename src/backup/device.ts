@@ -25,6 +25,9 @@ const source: BackupSource = {
   books: allBookFiles,
 };
 
+/** The library's tables: a collection-only restore leaves these as they are (their files aren't in it). */
+const LIBRARY_TABLES = ['documents', 'reading_positions', 'feeds'] as const;
+
 const target: RestoreTarget = {
   schemaVersion: MIGRATIONS.length,
   database: (bytes) => db.importFile(bytes),
@@ -34,6 +37,24 @@ const target: RestoreTarget = {
     } catch {
       /* storage unavailable */
     }
+  },
+  keepLibrary: async () => {
+    const saved = await Promise.all(LIBRARY_TABLES.map(async (t) => [t, await db.getAll<Record<string, unknown>>(`SELECT * FROM ${t}`)] as const));
+    return async () => {
+      await db.writeTransaction(async (tx) => {
+        for (const [table, rows] of saved) {
+          // Only columns the restored (and migrated) database has.
+          const cols = new Set((await tx.getAll<{ name: string }>(`PRAGMA table_info(${table})`)).map((c) => c.name));
+          await tx.execute(`DELETE FROM ${table}`);
+          if (!rows.length) continue;
+          const names = Object.keys(rows[0]).filter((c) => cols.has(c));
+          await tx.executeMany(
+            `INSERT INTO ${table} (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`,
+            rows.map((r) => names.map((n) => r[n])),
+          );
+        }
+      });
+    };
   },
   putMedia: putMediaBlobs,
   pruneMedia,

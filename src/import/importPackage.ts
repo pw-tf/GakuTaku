@@ -19,6 +19,9 @@ export interface ImportSummary {
   reviews: number;
   mediaFiles: number;
   skippedNotes: number;
+  /** Notes and cards already here that the import updated (the incoming copy was newer). */
+  updatedNotes: number;
+  updatedCards: number;
 }
 
 export type ImportPhase = 'reading' | 'media' | 'writing' | 'done';
@@ -182,7 +185,15 @@ export async function importPackage(
 
   // ---- notes ----
   const guidToNid = new Map<string, number>();
-  for (const r of await sql.all<{ guid: string; id: number }>('SELECT guid, id FROM notes')) guidToNid.set(r.guid, r.id);
+  const existingNotes = new Map<number, { mod: number; mid: number }>();
+  for (const r of await sql.all<{ guid: string; id: number; mod: number; mid: number }>('SELECT guid, id, mod, mid FROM notes')) {
+    guidToNid.set(r.guid, r.id);
+    existingNotes.set(r.id, { mod: r.mod, mid: r.mid });
+  }
+  /** Notes already here whose incoming copy is newer (Anki updates those: "update if newer"). */
+  const noteUpdates: unknown[][] = [];
+  /** Incoming notes matching a note here of a different note type: their cards would not fit. */
+  const mismatchedNoteIds = new Set<number>();
   const existingNoteIds = new Set((await sql.all<{ id: number }>('SELECT id FROM notes')).map((r) => r.id));
   const noteMap = new Map<number, number>();
   const skippedNoteIds = new Set<number>();
@@ -192,7 +203,19 @@ export async function importPackage(
     const existing = guidToNid.get(n.guid);
     if (existing != null) {
       noteMap.set(n.id, existing);
-      skippedNoteIds.add(n.id);
+      const here = existingNotes.get(existing);
+      const mid = ntMap.get(n.mid);
+      const nt = mid != null ? ntById.get(mid) : undefined;
+      if (here && nt && here.mid === mid && n.mod > here.mod) {
+        let flds = n.flds;
+        for (const [re, to] of renameRes) flds = flds.replace(re, `$1${to}$2`);
+        const fields = splitFields(flds);
+        while (fields.length < nt.fields.length) fields.push('');
+        noteUpdates.push([n.mod, n.tags, joinFields(fields.slice(0, Math.max(nt.fields.length, 1))), sortFieldValue(nt, fields), existing]);
+      } else {
+        skippedNoteIds.add(n.id);
+        if (!here || here.mid !== mid) mismatchedNoteIds.add(n.id);
+      }
       continue;
     }
     const mid = ntMap.get(n.mid);
@@ -210,17 +233,24 @@ export async function importPackage(
     noteRows.push([id, n.guid, mid, n.mod, n.tags, joinFields(fields.slice(0, Math.max(nt.fields.length, 1))), sortFieldValue(nt, fields)]);
   }
   await insertMany(sql, 'INSERT INTO notes (id, guid, mid, mod, tags, flds, sfld) VALUES (?, ?, ?, ?, ?, ?, ?)', noteRows);
+  await insertMany(sql, 'UPDATE notes SET mod = ?, tags = ?, flds = ?, sfld = ? WHERE id = ?', noteUpdates);
 
   // ---- cards ----
-  const existingCards = new Set((await sql.all<{ nid: number; ord: number }>('SELECT nid, ord FROM cards')).map((r) => `${r.nid}:${r.ord}`));
+  const existingCards = new Map(
+    (await sql.all<{ id: number; nid: number; ord: number; mod: number; odid: number }>('SELECT id, nid, ord, mod, odid FROM cards')).map((r) => [`${r.nid}:${r.ord}`, r]),
+  );
+  /** Cards already here whose incoming copy is newer: take its scheduling (Anki "update if newer"). */
+  const cardUpdates: unknown[][] = [];
   const existingCardIds = new Set((await sql.all<{ id: number }>('SELECT id FROM cards')).map((r) => r.id));
   const cardMap = new Map<number, number>();
   const cardRows: unknown[][] = [];
   let maxNewPos = 0;
   for (const c of pkg.cards) {
+    // Cards of notes that were already here still come in when missing (an earlier import that was
+    // interrupted between writing notes and cards must be repairable by importing again).
     const nid = noteMap.get(c.nid);
-    if (nid == null || skippedNoteIds.has(c.nid)) continue;
-    if (existingCards.has(`${nid}:${c.ord}`)) continue;
+    if (nid == null || mismatchedNoteIds.has(c.nid)) continue;
+    const here = existingCards.get(`${nid}:${c.ord}`);
     let did = c.did;
     let due = c.due;
     let queue = c.queue;
@@ -236,11 +266,20 @@ export async function importPackage(
     const dayBased = queue === CardQueue.Review || queue === CardQueue.DayLearn || c.type === CardType.Review;
     if (dayBased && due < 1_000_000_000) due -= delta;
     if (c.type === CardType.New && due > maxNewPos) maxNewPos = due;
+    if (here) {
+      // Same card: its review history merges in; its scheduling is replaced only by a newer copy,
+      // and never while it's borrowed by one of our filtered decks.
+      cardMap.set(c.id, here.id);
+      if (c.mod > here.mod && !here.odid) {
+        cardUpdates.push([c.mod, c.type, queue, due, c.ivl, c.factor, c.reps, c.lapses, c.left, c.flags, c.stability, c.difficulty, c.desiredRetention, c.lastReview, here.id]);
+      }
+      continue;
+    }
     let id = c.id;
     while (existingCardIds.has(id)) id += 999;
     existingCardIds.add(id);
     cardMap.set(c.id, id);
-    existingCards.add(`${nid}:${c.ord}`);
+    existingCards.set(`${nid}:${c.ord}`, { id, nid, ord: c.ord, mod: c.mod, odid: 0 });
     cardRows.push([
       id, nid, ourDid, c.ord, c.mod, c.type, queue, due, c.ivl, c.factor, c.reps, c.lapses, c.left, 0, 0, c.flags,
       c.stability, c.difficulty, c.desiredRetention, c.lastReview, c.originalPosition,
@@ -252,6 +291,12 @@ export async function importPackage(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     cardRows,
     (n) => report({ phase: 'writing', done: n, total: cardRows.length }),
+  );
+  await insertMany(
+    sql,
+    `UPDATE cards SET mod = ?, type = ?, queue = ?, due = ?, ivl = ?, factor = ?, reps = ?, lapses = ?, left = ?, flags = ?,
+       stability = ?, difficulty = ?, desired_retention = ?, last_review = ? WHERE id = ?`,
+    cardUpdates,
   );
   if (maxNewPos >= cfg.nextPos) await col.setConfig({ nextPos: maxNewPos + 1 });
 
@@ -273,5 +318,7 @@ export async function importPackage(
     reviews: revRows.length,
     mediaFiles,
     skippedNotes: skippedNoteIds.size,
+    updatedNotes: noteUpdates.length,
+    updatedCards: cardUpdates.length,
   };
 }

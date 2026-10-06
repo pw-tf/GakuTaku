@@ -34,7 +34,10 @@ export async function importFile(file: File, userId: string): Promise<void> {
       if (s.reviews) bits.push(`${s.reviews.toLocaleString()} reviews`);
       if (s.mediaFiles) bits.push(`${s.mediaFiles.toLocaleString()} media files`);
       let msg = `Imported ${bits.join(', ')}.`;
-      if (s.skippedNotes) msg += ` ${s.skippedNotes.toLocaleString()} notes were already here and were skipped.`;
+      if (s.updatedNotes || s.updatedCards) {
+        msg += ` Updated ${s.updatedNotes.toLocaleString()} notes and ${s.updatedCards.toLocaleString()} cards that were newer in the file.`;
+      }
+      if (s.skippedNotes) msg += ` ${s.skippedNotes.toLocaleString()} notes were already here and unchanged.`;
       tasks.finish(IMPORT_TASK_ID, 'success', msg);
     } else {
       const { addBook } = await import('../reader/addBook');

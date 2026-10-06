@@ -77,6 +77,18 @@ export function mediaReferences(flds: string): string[] {
   return [...out];
 }
 
+/**
+ * Media a note type's templates and styling use: Anki keeps fonts and scripts these load in files
+ * named with a leading underscore (`_NotoSerifJP.woff2`, `_script.js`), which no note field mentions.
+ */
+export function notetypeMediaReferences(css: string, templates: { qfmt: string; afmt: string }[]): string[] {
+  const out = new Set<string>();
+  for (const text of [css, ...templates.flatMap((t) => [t.qfmt, t.afmt])]) {
+    for (const m of text.matchAll(/(?:url\(\s*|\bsrc\s*=\s*)["']?(_[^"')\s>]+)["']?/gi)) out.add(decodeHtmlEntities(m[1]));
+  }
+  return [...out];
+}
+
 const decodeHtmlEntities = (s: string) => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 
 const SCHEMA = `
@@ -201,6 +213,7 @@ export async function buildApkg(data: ExportData, opts: ExportOptions, readMedia
       run('INSERT INTO notes VALUES (?, ?, ?, ?, -1, ?, ?, ?, ?, 0, ?)', [n.id, n.guid, n.mid, n.mod, n.tags, n.flds, n.sfld, await fieldChecksum(first), '']);
       if (opts.media) for (const m of mediaReferences(n.flds)) media.add(m);
     }
+    if (opts.media) for (const nt of data.notetypes) for (const m of notetypeMediaReferences(nt.css, nt.templates)) media.add(m);
     let newPos = 0;
     const sorted = [...data.cards].sort((a, b) => (a.type === CardType.New && b.type === CardType.New ? a.due - b.due : 0));
     for (const original of sorted) {

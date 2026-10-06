@@ -300,7 +300,7 @@ body { overflow: hidden; }
 .dr-caret.empty { cursor:default; }
 .dr-name { font-family: var(--serif); font-size: 16px; font-weight:500; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dr-counts { display:flex; gap:14px; font-family:var(--mono); font-size:13px; font-variant-numeric: tabular-nums; }
-.dr-counts .c { min-width: 18px; text-align:right; color: var(--ink-faint); }
+.dr-counts .c { min-width: 40px; text-align:right; color: var(--ink-faint); }
 .dr-counts .c.new { color: var(--azure); }
 .dr-counts .c.learn { color: var(--amber); }
 .dr-counts .c.due { color: var(--sage); }
@@ -330,7 +330,10 @@ body { overflow: hidden; }
 
 /* Modal dialog (deck options, description, add card). */
 .modal-backdrop { position: fixed; inset: 0; z-index: 70; display:flex; align-items:center; justify-content:center; padding: calc(24px + var(--sat)) calc(24px + var(--sar)) calc(24px + var(--sab)) calc(24px + var(--sal)); background: oklch(0.2 0.02 60/.45); animation: bgtask-in .15s ease; }
-.modal-card { width: min(440px, 100%); max-height: calc(100dvh - 48px - var(--sat) - var(--sab)); overflow:auto; background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 16px; box-shadow: 0 24px 60px -24px oklch(0.2 0.02 60/.6); }
+.modal-discard { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 16px; background: var(--paper-raised); border-top: 1px solid var(--rate-again); font-size: 14px; color: var(--ink); }
+.modal-discard span { flex: 1; min-width: 140px; }
+.modal-err { margin: 10px 0 0; font-size: 13px; color: var(--rate-again); }
+.modal-card { position: relative; width: min(440px, 100%); max-height: calc(100dvh - 48px - var(--sat) - var(--sab)); overflow:auto; background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 16px; box-shadow: 0 24px 60px -24px oklch(0.2 0.02 60/.6); }
 .modal-head { display:flex; align-items:center; justify-content:space-between; padding: 18px 20px; border-bottom: 1px solid var(--rule); }
 .modal-head h3 { font-family: var(--serif); font-size: 19px; font-weight: 500; }
 .modal-body { padding: 20px; display:flex; flex-direction:column; gap: 16px; }
@@ -498,7 +501,7 @@ body { overflow: hidden; }
 .dr-counts .c.zero { opacity: .35; }
 .deck-row.deck-head { cursor: default; padding-top: 8px; padding-bottom: 8px; background: var(--paper-sunk); }
 .deck-row.deck-head .dr-name, .deck-row.deck-head .c { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; }
-.deck-row.deck-head .c { min-width: 38px; }
+/* Same column width as the rows, so the numbers sit under their headings. */
 .deck-row.deck-head:hover { background: var(--paper-sunk); }
 .empty-state { padding: 40px 20px; text-align: center; color: var(--ink-soft); border: 1px dashed var(--rule-strong); border-radius: var(--radius-lg); margin-bottom: 34px; line-height: 1.6; }
 .empty-state p { margin: 0 0 14px; }

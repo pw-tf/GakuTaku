@@ -433,9 +433,14 @@ export class Collection {
       if (!deck) return;
       const [clash] = await tx.all<{ id: number }>('SELECT id FROM decks WHERE name = ? AND id != ?', [name, id]);
       if (clash) throw new Error('A deck with that name already exists.');
-      const parent = parentName(name);
-      if (parent) await this.getOrCreateDeck(parent, tx);
       const old = deck.name;
+      // Anki refuses to move a deck inside itself (its own parent would be the deck being renamed).
+      if (name.toLowerCase().startsWith(old.toLowerCase() + '::')) throw new Error('A deck can’t be moved inside itself.');
+      const parent = parentName(name);
+      if (parent) {
+        const pid = await this.getOrCreateDeck(parent, tx);
+        if ((await this.deck(pid, tx))?.filtered) throw new Error('A filtered deck can’t contain other decks.');
+      }
       const children = (await this.decks(tx)).filter((d) => d.name.toLowerCase().startsWith(old.toLowerCase() + '::'));
       await tx.run('UPDATE decks SET name = ?, mtime = ? WHERE id = ?', [name, nowSecs(), id]);
       for (const c of children) await tx.run('UPDATE decks SET name = ? WHERE id = ?', [name + c.name.slice(old.length), c.id]);

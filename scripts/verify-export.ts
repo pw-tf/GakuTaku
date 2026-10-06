@@ -8,7 +8,7 @@
 import { Collection } from '../src/anki/collection';
 import { setFuzzEnabled } from '../src/anki/fuzz';
 import { timingAt } from '../src/anki/timing';
-import { apkgFileName, buildApkg, gatherExport, mediaReferences } from '../src/export/apkg';
+import { apkgFileName, buildApkg, gatherExport, mediaReferences, notetypeMediaReferences } from '../src/export/apkg';
 import { parseApkg } from '../src/import/apkg';
 import { importPackage, type MediaSink } from '../src/import/importPackage';
 import { openTestDb } from './sqliteNode';
@@ -68,6 +68,11 @@ const filt = await col.addFilteredDeck('Cram', { terms: [{ search: `cid:${b.card
 eq('setup: one card borrowed by a filtered deck', filt.count, 1);
 
 const mediaFiles = new Map([['neko.png', new Blob(['png-bytes'])], ['neko.mp3', new Blob(['mp3-bytes'])]]);
+eq(
+  'template media: underscore fonts and scripts',
+  notetypeMediaReferences('@font-face { src: url("_NotoSerifJP.woff2"); } .a { background: url(bg.png) }', [{ qfmt: '<script src="_furigana.js"></script>{{Front}}', afmt: '<img src="_logo.png">' }]),
+  ['_NotoSerifJP.woff2', '_furigana.js', '_logo.png'],
+);
 eq('media references', mediaReferences('a <img src="neko.png"> [sound:neko.mp3] <img src="https://x/y.png"> <img src=\'q&amp;a.jpg\'>'), ['neko.png', 'q&a.jpg', 'neko.mp3']);
 
 const data = await gatherExport(col, sql, parent);

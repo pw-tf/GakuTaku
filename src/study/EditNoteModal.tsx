@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { col } from '../anki/appCollection';
 import { splitFields, type Notetype } from '../anki/notetype';
 import { CardPreview, NoteFields, TagInput } from '../decks/NoteEditor';
@@ -15,18 +15,26 @@ export function EditNoteModal({ noteId, onClose, onSaved, onDeleted }: { noteId:
   const [err, setErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [preview, setPreview] = useState(false);
+  /** The note as loaded, to ask before discarding edits. */
+  const [loaded, setLoaded] = useState<string | null>(null);
+  // Parents pass a fresh onClose each render; keep it out of the load effect so a re-render
+  // doesn't reload the note over the edits being made.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     void (async () => {
       const note = await col.note(noteId);
-      if (!note) return onClose();
+      if (!note) return closeRef.current();
       const type = await col.notetype(note.mid);
       setNt(type);
       const fs = splitFields(note.flds);
-      setValues(type ? type.fields.map((_, i) => fs[i] ?? '') : fs);
+      const vals = type ? type.fields.map((_, i) => fs[i] ?? '') : fs;
+      setValues(vals);
       setTags(note.tags.trim());
+      setLoaded(JSON.stringify([vals, note.tags.trim()]));
     })();
-  }, [noteId, onClose]);
+  }, [noteId]);
 
   async function save() {
     setSaving(true);
@@ -61,7 +69,7 @@ export function EditNoteModal({ noteId, onClose, onSaved, onDeleted }: { noteId:
   if (preview && nt) return <CardPreview notetype={nt} values={values} tags={tags} deckName="" onClose={() => setPreview(false)} />;
 
   return (
-    <Modal title={nt ? `Edit · ${nt.name}` : 'Edit note'} onClose={onClose} wide>
+    <Modal title={nt ? `Edit · ${nt.name}` : 'Edit note'} onClose={onClose} wide dirty={loaded != null && loaded !== JSON.stringify([values, tags.trim()])}>
       <div className="modal-body">
         {nt && <NoteFields notetype={nt} values={values} onChange={setValues} excludeNid={noteId} />}
         <TagInput value={tags} onChange={setTags} />

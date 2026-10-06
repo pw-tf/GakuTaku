@@ -1,23 +1,43 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from '../app/back';
 import { Btn } from './atoms';
 import { Icon } from './icons';
 
 /**
- * A centered dialog. Closes on backdrop tap and on the Android back button. Rendered into <body> so a
- * dialog opened from a popover or drawer isn't clipped or positioned by it.
+ * A centered dialog. Closes on a backdrop tap, the close button and the Android back button. With
+ * `dirty`, those ask "Discard changes?" first (the dialog's own Cancel button still closes at once).
+ * Rendered into <body> so a dialog opened from a popover or drawer isn't clipped or positioned by it.
  */
-export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
-  useBackHandler(true, onClose);
+export function Modal({ title, onClose, children, wide, dirty }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; dirty?: boolean }) {
+  const [confirming, setConfirming] = useState(false);
+  // A tap that starts inside the card and ends on the backdrop (selecting text, dragging a slider)
+  // isn't a tap on the backdrop.
+  const downOnBackdrop = useRef(false);
+  const softClose = () => (dirty ? setConfirming(true) : onClose());
+  useBackHandler(true, () => (confirming ? setConfirming(false) : softClose()));
   return createPortal(
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" style={wide ? { width: 'min(640px, 100%)' } : undefined} onClick={(e) => e.stopPropagation()}>
+    <div
+      className="modal-backdrop"
+      onPointerDown={(e) => (downOnBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && downOnBackdrop.current) softClose();
+        downOnBackdrop.current = false;
+      }}
+    >
+      <div className="modal-card" style={wide ? { width: 'min(640px, 100%)' } : undefined}>
         <div className="modal-head">
           <h3>{title}</h3>
-          <button className="icon-btn" aria-label="Close" onClick={onClose}><Icon.close s={18} /></button>
+          <button className="icon-btn" aria-label="Close" onClick={softClose}><Icon.close s={18} /></button>
         </div>
         {children}
+        {confirming && (
+          <div className="modal-discard" role="alertdialog" aria-label="Discard changes?">
+            <span>Discard your changes?</span>
+            <Btn size="sm" onClick={() => setConfirming(false)}>Keep editing</Btn>
+            <Btn size="sm" variant="primary" style={{ background: 'var(--rate-again)', borderColor: 'var(--rate-again)' }} onClick={onClose}>Discard</Btn>
+          </div>
+        )}
       </div>
     </div>,
     document.body,
@@ -102,10 +122,12 @@ export function ConfirmModal({
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   return (
     <Modal title={title} onClose={onClose}>
       <div className="modal-body">
         <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--ink-soft)' }}>{message}</p>
+        {err && <p className="modal-err">{err}</p>}
       </div>
       <div className="modal-foot">
         <Btn onClick={onClose}>Cancel</Btn>
@@ -114,10 +136,14 @@ export function ConfirmModal({
           disabled={busy}
           style={danger ? { background: 'var(--rate-again)', borderColor: 'var(--rate-again)' } : undefined}
           onClick={async () => {
+            if (busy) return;
             setBusy(true);
+            setErr(null);
             try {
               await onConfirm();
               onClose();
+            } catch (e) {
+              setErr(e instanceof Error ? e.message : String(e));
             } finally {
               setBusy(false);
             }

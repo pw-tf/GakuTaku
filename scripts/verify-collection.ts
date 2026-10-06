@@ -691,6 +691,17 @@ async function main() {
     eq('…named as in Anki', (await col.deck(sess.id))!.name, 'Custom Study Session');
     await col.removeDeck(sess.id);
 
+    // Renaming a deck inside itself is refused, as in Anki (it would vanish from the tree).
+    const selfParent = await col.getOrCreateDeck('Loop');
+    let renameErr = '';
+    try {
+      await col.renameDeck(selfParent, 'Loop::Inner');
+    } catch (e) {
+      renameErr = (e as Error).message;
+    }
+    eq('can’t rename a deck inside itself', [/inside itself/.test(renameErr), (await col.deck(selfParent))!.name], [true, 'Loop']);
+    await col.removeDeck(selfParent);
+
     // Reviewing mined words: a session deck with exactly those cards, removed afterwards.
     const mined = await col.cardSession('Mined Session', [b]);
     eq('mined session holds exactly the mined card', [mined.count, (await col.card(b))!.did, (await col.card(a))!.did], [1, mined.id, DEFAULT_DECK_ID]);

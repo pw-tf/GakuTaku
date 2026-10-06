@@ -51,6 +51,12 @@ export interface RestoreTarget {
   schemaVersion: number;
   database(bytes: Uint8Array): Promise<void>;
   prefs(json: string | null): void;
+  /**
+   * Called before a collection-only restore replaces the database: saves the library (books, feeds,
+   * reading positions) and returns a function that puts it back into the restored database, since
+   * such a backup holds no book files.
+   */
+  keepLibrary?(): Promise<() => Promise<void>>;
   /** Add or overwrite media files. */
   putMedia(files: { name: string; blob: Blob }[]): Promise<void>;
   /** Delete every media file not in `keep`. */
@@ -162,7 +168,9 @@ export async function restoreBackup(file: Blob, target: RestoreTarget, onProgres
     if (manifest.kind === 'collection') {
       // Cards, history and settings only: media and books stay as they are.
       onProgress?.('Restoring cards and history…');
+      const putLibraryBack = await target.keepLibrary?.();
       await target.database(database);
+      await putLibraryBack?.();
       target.prefs(prefsJson);
       return manifest;
     }

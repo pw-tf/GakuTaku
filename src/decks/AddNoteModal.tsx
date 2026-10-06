@@ -91,7 +91,7 @@ export function AddNoteModal({ deckId, onClose }: { deckId: number; onClose: () 
   if (preview && nt) return <CardPreview notetype={nt} values={values} tags={tags} deckName={deckName} onClose={() => setPreview(false)} />;
 
   return (
-    <Modal title="Add" onClose={onClose} wide>
+    <Modal title="Add" onClose={onClose} wide dirty={values.some((v, i) => !sticky[i] && v.trim() !== '')}>
       <div className="modal-body">
         <div className="add-pickers">
           <label className="opt-field col">
