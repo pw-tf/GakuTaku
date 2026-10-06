@@ -6,6 +6,7 @@ import { useLive } from '../db/useLive';
 import { Btn } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { ConfirmModal, Modal, PromptModal } from '../ui/Modal';
+import { useAction } from '../ui/useAction';
 import { CardPreview } from './NoteEditor';
 
 /** Anki's Manage Note Types: add, clone, rename, delete, and edit fields and card types. */
@@ -82,7 +83,7 @@ function AddNotetype({ existing, onClose }: { existing: Notetype[]; onClose: () 
   const [pick, setPick] = useState(options[0]?.key ?? '');
   const base = options.find((o) => o.key === pick)?.base;
   const [name, setName] = useState('');
-  const [err, setErr] = useState<string | null>(null);
+  const { busy, err, setErr, run } = useAction();
   useEffect(() => {
     if (base) setName(pick.startsWith('c') ? `${base.name} copy` : base.name);
   }, [pick, base]);
@@ -105,12 +106,12 @@ function AddNotetype({ existing, onClose }: { existing: Notetype[]; onClose: () 
         <Btn onClick={onClose}>Cancel</Btn>
         <Btn
           variant="primary"
+          disabled={busy}
           onClick={async () => {
             if (!base || !name.trim()) return setErr('Enter a name.');
             const { id: _id, ...rest } = base as Notetype;
             void _id;
-            await col.addNotetype({ ...rest, name: name.trim() });
-            onClose();
+            if (await run(() => col.addNotetype({ ...rest, name: name.trim() }))) onClose();
           }}
         >
           Add
@@ -179,7 +180,12 @@ function FieldsEditor({ nt, onClose }: { nt: Notetype; onClose: () => void }) {
   }
 
   return (
-    <Modal title={`Fields · ${nt.name}`} onClose={onClose} wide>
+    <Modal
+      title={`Fields · ${nt.name}`}
+      onClose={onClose}
+      wide
+      dirty={sortIdx !== nt.sortIdx || fields.length !== original.length || fields.some((f, i) => f.from !== i || f.name !== original[i]?.name)}
+    >
       <div className="modal-body">
         {fields.map((f, i) => (
           <div key={i} className="fe-row">
@@ -270,7 +276,15 @@ function CardsEditor({ nt, onClose }: { nt: Notetype; onClose: () => void }) {
   }
 
   return (
-    <Modal title={`Cards · ${nt.name}`} onClose={onClose} wide>
+    <Modal
+      title={`Cards · ${nt.name}`}
+      onClose={onClose}
+      wide
+      dirty={css !== nt.css || templates.length !== nt.templates.length || templates.some((t, i) => {
+        const o = [...nt.templates].sort((a, b) => a.ord - b.ord)[i];
+        return t.from !== i || !o || t.name !== o.name || t.qfmt !== o.qfmt || t.afmt !== o.afmt;
+      })}
+    >
       <div className="modal-body">
         <div className="chip-row">
           {templates.map((t, i) => (

@@ -131,6 +131,24 @@ function StepsInput({ value, onChange }: { value: number[]; onChange: (v: number
   );
 }
 
+/** Why the options can't be saved, or null. HTML min/max on the inputs is only a hint. */
+function invalidOption(cfg: DeckConfig, newLimit: string, reviewLimit: string, dr: string): string | null {
+  const wholeAtLeast = (n: number, min: number) => Number.isInteger(n) && n >= min;
+  if (!wholeAtLeast(cfg.newPerDay, 0) || !wholeAtLeast(cfg.reviewsPerDay, 0)) return 'Daily limits must be whole numbers of 0 or more.';
+  for (const [label, v] of [['This deck: new cards/day', newLimit], ['This deck: reviews/day', reviewLimit]] as const) {
+    if (v.trim() !== '' && !wholeAtLeast(Number(v), 0)) return `${label} must be a whole number of 0 or more, or empty.`;
+  }
+  const retentionOk = (n: number) => Number.isFinite(n) && n >= 0.7 && n <= 0.99;
+  if (!retentionOk(cfg.desiredRetention)) return 'Desired retention must be between 0.70 and 0.99 (e.g. 0.9 for 90%).';
+  if (dr.trim() !== '' && !retentionOk(Number(dr))) return 'This deck’s desired retention must be between 0.70 and 0.99 (e.g. 0.9), or empty.';
+  if ([...cfg.learnSteps, ...cfg.relearnSteps].some((m) => !(m > 0))) return 'Learning steps must be greater than zero.';
+  if (!wholeAtLeast(cfg.maximumReviewInterval, 1) || !wholeAtLeast(cfg.minimumLapseInterval, 1)) return 'Intervals must be whole numbers of 1 day or more.';
+  if (!wholeAtLeast(cfg.graduatingIntervalGood, 1) || !wholeAtLeast(cfg.graduatingIntervalEasy, 1)) return 'Graduating intervals must be whole numbers of 1 day or more.';
+  if (!(cfg.initialEase >= 1.31)) return 'Starting ease must be at least 1.31.';
+  if (!wholeAtLeast(cfg.leechThreshold, 1)) return 'Leech threshold must be a whole number of 1 or more.';
+  return null;
+}
+
 export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose: () => void }) {
   const [deck, setDeck] = useState<Deck | null>(null);
   const [presets, setPresets] = useState<DeckConfigRow[]>([]);
@@ -147,6 +165,28 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
   const [dialog, setDialog] = useState<null | 'add' | 'rename' | 'delete'>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** Everything editable, as loaded — the dialog asks before discarding once this differs. */
+  const [baseline, setBaseline] = useState<string | null>(null);
+  const snapshot = () => JSON.stringify({ presetId, cfg, newLimit, reviewLimit, dr, paramsText, colCfg });
+  const dirty = baseline != null && baseline !== snapshot();
+  useEffect(() => {
+    if (baseline === null && deck) setBaseline(snapshot());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deck, baseline]);
+
+  /** Re-read the preset list after adding/renaming/removing one, keeping every other unsaved edit. */
+  async function refreshPresets(selectId: number, config?: DeckConfig) {
+    const [ps, decks] = await Promise.all([col.deckConfigs(), col.decks()]);
+    setPresets(ps);
+    const u = new Map<number, number>();
+    for (const x of decks) u.set(x.conf_id, (u.get(x.conf_id) ?? 0) + 1);
+    setUsage(u);
+    const p = ps.find((x) => x.id === selectId) ?? ps.find((x) => x.id === DEFAULT_CONFIG_ID)!;
+    setPresetId(p.id);
+    if (config) return;
+    setCfg(p.config);
+    setParamsText(formatParams(p.config.fsrsParams));
+  }
 
   async function load(selectId?: number) {
     const [d, ps, c, decks] = await Promise.all([col.deck(deckId), col.deckConfigs(), col.config(), col.decks()]);
@@ -183,6 +223,8 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
     try {
       const params = parsedParams;
       if (!params) throw new Error('FSRS parameters must be 17, 19 or 21 numbers (or empty for the defaults).');
+      const bad = invalidOption(cfg, newLimit, reviewLimit, dr);
+      if (bad) throw new Error(bad);
       if (cfg.ignoreRevlogsBeforeDate && !/^\d{4}-\d{2}-\d{2}$/.test(cfg.ignoreRevlogsBeforeDate)) throw new Error('“Ignore cards reviewed before” must be a date (YYYY-MM-DD) or empty.');
       const next = { ...cfg, fsrsParams: params };
       await col.updateDeckConfig(presetId, preset?.name ?? 'Default', next);
@@ -219,7 +261,7 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
   }
 
   return (
-    <Modal title={`Options · ${deck?.name ?? ''}`} onClose={onClose} wide>
+    <Modal title={`Options · ${deck?.name ?? ''}`} onClose={onClose} wide dirty={dirty}>
       <div className="modal-body opt-body">
         <div className="preset-bar">
           <select value={presetId} onChange={(e) => { const p = presets.find((x) => x.id === Number(e.target.value)); if (p) { setPresetId(p.id); setCfg(p.config); setParamsText(formatParams(p.config.fsrsParams)); } }}>
@@ -349,7 +391,7 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
           onSubmit={async (v) => {
             if (!v.trim()) return 'Enter a name.';
             const id = await col.addDeckConfig(v.trim(), cfg);
-            await load(id);
+            await refreshPresets(id, cfg);
           }}
         />
       )}
@@ -362,8 +404,9 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
           onClose={() => setDialog(null)}
           onSubmit={async (v) => {
             if (!v.trim()) return 'Enter a name.';
-            await col.updateDeckConfig(presetId, v.trim(), cfg);
-            await load(presetId);
+            // Only the name changes now; edits to the settings still wait for Save (or Cancel).
+            await col.updateDeckConfig(presetId, v.trim(), preset?.config ?? cfg);
+            await refreshPresets(presetId, cfg);
           }}
         />
       )}
@@ -376,7 +419,7 @@ export function DeckOptionsModal({ deckId, onClose }: { deckId: number; onClose:
           onClose={() => setDialog(null)}
           onConfirm={async () => {
             await col.removeDeckConfig(presetId);
-            await load(DEFAULT_CONFIG_ID);
+            await refreshPresets(DEFAULT_CONFIG_ID);
           }}
         />
       )}

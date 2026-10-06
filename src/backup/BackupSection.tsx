@@ -62,6 +62,10 @@ export function BackupSection() {
     const t = useTasks.getState();
     t.start(TASK, 'Restoring backup');
     try {
+      // Keep what's here now as an automatic backup first, so a wrong restore can be undone.
+      t.update(TASK, { message: 'Saving the current state first…' });
+      const { makeAutoBackup } = await import('./auto');
+      await makeAutoBackup();
       const { restoreFrom } = await import('./device');
       await restoreFrom(file, (message, done, total) => t.update(TASK, { message, done: done ?? 0, total: total ?? 0 }));
       t.finish(TASK, 'success', 'Restored. Reloading…');
@@ -92,7 +96,7 @@ export function BackupSection() {
             <>
               Everything on this device will be replaced with the backup from{' '}
               <b>{new Date(pending.manifest.createdAt).toLocaleString()}</b> ({plural(pending.manifest.counts.media, 'media file')},{' '}
-              {plural(pending.manifest.counts.books, 'book')}). Anything added since then will be lost.
+              {plural(pending.manifest.counts.books, 'book')}). What’s here now is saved as an automatic backup first, so you can go back.
             </>
           }
           confirmLabel="Restore"
@@ -155,7 +159,7 @@ function AutoBackups({ busy, onRestore }: { busy: boolean; onRestore: (blob: Blo
       {confirm && (
         <ConfirmModal
           title="Restore this automatic backup?"
-          message={<>Your cards, review history and settings go back to how they were on <b>{confirm.at.toLocaleString()}</b>. Media and books stay as they are. Anything studied or added since then will be lost.</>}
+          message={<>Your cards, review history and settings go back to how they were on <b>{confirm.at.toLocaleString()}</b>. Your books, feeds, reading positions and media stay as they are. What’s here now is saved as another automatic backup first.</>}
           confirmLabel="Restore"
           danger
           onClose={() => setConfirm(null)}

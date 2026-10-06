@@ -180,6 +180,30 @@ await restoreBackup(colOnly, F.target);
 eq('collection-only restore: database replaced', [...F.state.db], [...fakeDb('auto')]);
 eq('…prefs restored', F.state.prefs, deviceA.prefs);
 eq('…media and books untouched', [[...F.state.media.keys()], [...F.state.books.keys()]], [['mine.mp3'], ['my-book']]);
+// The library (books, feeds, positions) is saved before the database swap and put back after it.
+const order: string[] = [];
+const G = memoryDevice({ db: fakeDb('G'), media: {}, books: [] });
+const gDatabase = G.target.database;
+G.target.database = async (bytes) => {
+  order.push('database');
+  await gDatabase(bytes);
+};
+G.target.keepLibrary = async () => {
+  order.push('save library');
+  return async () => {
+    order.push('put library back');
+  };
+};
+await restoreBackup(colOnly, G.target);
+eq('collection-only restore keeps the library around the swap', order, ['save library', 'database', 'put library back']);
+const fullOrder: string[] = [];
+const H = memoryDevice({ db: fakeDb('H'), media: {}, books: [] });
+H.target.keepLibrary = async () => {
+  fullOrder.push('save library');
+  return async () => {};
+};
+await restoreBackup(backup, H.target);
+eq('a full restore replaces the library too', fullOrder, []);
 eq('full backups say so', manifest.kind, 'full');
 
 console.log(`${passes} passed, ${failures} failed`);

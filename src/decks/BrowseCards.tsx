@@ -10,6 +10,7 @@ import { EditNoteModal } from '../study/EditNoteModal';
 import { Btn } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { ConfirmModal, Modal, PromptModal } from '../ui/Modal';
+import { useAction } from '../ui/useAction';
 import { CardInfoModal } from './CardInfo';
 
 /**
@@ -337,9 +338,9 @@ function ActionsSheet({ cids, row, onClose, onDeleted }: { cids: number[]; row?:
     setSub(null);
     onClose();
   };
+  const action = useAction();
   const run = async (f: () => Promise<unknown>) => {
-    await f();
-    onClose();
+    if (await action.run(f)) onClose();
   };
   const notes = () => col.noteIdsOfCards(cids);
   const title = useMemo(() => (row ? stripHtml(row.sfld).slice(0, 40) || 'Card' : `${n.toLocaleString()} selected`), [row, n]);
@@ -383,6 +384,7 @@ function ActionsSheet({ cids, row, onClose, onDeleted }: { cids: number[]; row?:
   return (
     <Modal title={title} onClose={onClose}>
       <div className="modal-body sheet">
+        {action.err && <p className="modal-err" style={{ marginTop: 0 }}>{action.err}</p>}
         {row && (
           <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
             {row.deck} · {row.reps} reviews · {row.lapses} lapses{row.stability != null ? ` · stability ${row.stability.toFixed(1)}d` : ''}
@@ -465,7 +467,7 @@ function RepositionModal({ cids, initial, onClose }: { cids: number[]; initial: 
   const [step, setStep] = useState('1');
   const [randomize, setRandomize] = useState(false);
   const [shift, setShift] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const { busy, err, setErr, run } = useAction();
   return (
     <Modal title="Reposition new cards" onClose={onClose}>
       <div className="modal-body">
@@ -480,12 +482,12 @@ function RepositionModal({ cids, initial, onClose }: { cids: number[]; initial: 
         <Btn onClick={onClose}>Cancel</Btn>
         <Btn
           variant="primary"
+          disabled={busy}
           onClick={async () => {
             const s = Number(start);
             const st = Number(step);
             if (!Number.isInteger(s) || s < 0 || !Number.isInteger(st) || st < 1) return setErr('Enter whole numbers (step at least 1).');
-            await col.repositionNew(cids, s, st, randomize, shift);
-            onClose();
+            if (await run(() => col.repositionNew(cids, s, st, randomize, shift))) onClose();
           }}
         >
           Reposition
@@ -498,16 +500,18 @@ function RepositionModal({ cids, initial, onClose }: { cids: number[]; initial: 
 function ForgetModal({ cids, noun, onClose }: { cids: number[]; noun: string; onClose: () => void }) {
   const [restore, setRestore] = useState(true);
   const [reset, setReset] = useState(false);
+  const { busy, err, run } = useAction();
   return (
     <Modal title="Reset cards?" onClose={onClose}>
       <div className="modal-body">
         <p style={{ marginTop: 0, color: 'var(--ink-soft)', lineHeight: 1.55 }}>Return the {noun} to the new queue. Review history is kept.</p>
         <label className="opt-check"><input type="checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} /> Restore original position where possible</label>
         <label className="opt-check"><input type="checkbox" checked={reset} onChange={(e) => setReset(e.target.checked)} /> Reset repetition and lapse counts</label>
+        {err && <p className="modal-err">{err}</p>}
       </div>
       <div className="modal-foot">
         <Btn onClick={onClose}>Cancel</Btn>
-        <Btn variant="primary" onClick={async () => { await col.forget(cids, { resetCounts: reset, restorePosition: restore }); onClose(); }}>Reset</Btn>
+        <Btn variant="primary" disabled={busy} onClick={async () => { if (await run(() => col.forget(cids, { resetCounts: reset, restorePosition: restore }))) onClose(); }}>Reset</Btn>
       </div>
     </Modal>
   );

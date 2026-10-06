@@ -6,11 +6,15 @@ import { isNative } from '../app/platform';
  * The daily study reminder (AnkiDroid's Settings › Notifications), as Android notifications. The
  * next week of reminders is scheduled ahead, each with the number of cards that will be due then
  * (days with nothing due get none); it's rescheduled whenever the app opens or a study session
- * ends, so the counts stay current.
+ * ends, so the counts stay current. After that week, plain daily reminders run for the rest of a
+ * month, so someone who stops opening the app keeps getting reminded.
  */
 
 const FIRST_ID = 4100;
-const DAYS_AHEAD = 7;
+/** Days whose reminder says how many cards are due. */
+const DAYS_COUNTED = 7;
+/** Days scheduled in all. */
+const DAYS_AHEAD = 30;
 const ids = Array.from({ length: DAYS_AHEAD }, (_, i) => FIRST_ID + i);
 
 export const remindersAvailable = isNative;
@@ -52,6 +56,10 @@ async function schedule(enabled: boolean, time: string): Promise<void> {
   if ((await LocalNotifications.checkPermissions()).display !== 'granted') return;
   const notifications = [];
   for (const [i, at] of reminderTimes(time, Date.now()).entries()) {
+    if (i >= DAYS_COUNTED) {
+      notifications.push({ id: ids[i], title: 'Time to study', body: 'Your cards are waiting in GakuTaku', schedule: { at, allowWhileIdle: true } });
+      continue;
+    }
     const due = await col.totalDue(at.getTime());
     const n = due.new + due.learning + due.review;
     if (n === 0) continue;

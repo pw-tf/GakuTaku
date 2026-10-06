@@ -113,6 +113,23 @@ async function run(format: 'legacy' | 'modern') {
   const again = await importPackage(col, sql, await parseApkg(new Blob([fx.bytes as BlobPart])), media, { isCollection: false, nowMs });
   eq(`${tag} reimport skips`, [again.notes, again.cards, again.skippedNotes], [0, 0, 20]);
   eq(`${tag} reimport card count`, raw.exec('SELECT COUNT(*) AS n FROM cards')[0].n, 20);
+
+  // An import interrupted after the notes but before their cards is repaired by importing again.
+  const lostNids = raw.exec('SELECT DISTINCT nid FROM cards ORDER BY nid LIMIT 3').map((r) => r.nid as number);
+  raw.exec(`DELETE FROM cards WHERE nid IN (${lostNids.join(',')})`);
+  const lost = 20 - (raw.exec('SELECT COUNT(*) AS n FROM cards')[0].n as number);
+  const repaired = await importPackage(col, sql, await parseApkg(new Blob([fx.bytes as BlobPart])), media, { isCollection: false, nowMs });
+  eq(`${tag} reimport restores missing cards`, [repaired.cards, raw.exec('SELECT COUNT(*) AS n FROM cards')[0].n], [lost, 20]);
+
+  // A card here that's older than the file's copy takes the file's scheduling ("update if newer");
+  // one that's newer here is left alone.
+  const [older, newer] = raw.exec('SELECT id, ivl FROM cards WHERE type = 2 ORDER BY id LIMIT 2') as { id: number; ivl: number }[];
+  raw.exec(`UPDATE cards SET ivl = 999, mod = -1 WHERE id = ${older.id}`);
+  raw.exec(`UPDATE cards SET ivl = 777, mod = 4000000000 WHERE id = ${newer.id}`);
+  const updated = await importPackage(col, sql, await parseApkg(new Blob([fx.bytes as BlobPart])), media, { isCollection: false, nowMs });
+  eq(`${tag} older card updated from the file`, [updated.updatedCards, raw.exec(`SELECT ivl FROM cards WHERE id = ${older.id}`)[0].ivl], [1, older.ivl]);
+  eq(`${tag} newer card kept`, raw.exec(`SELECT ivl FROM cards WHERE id = ${newer.id}`)[0].ivl, 777);
+  eq(`${tag} still no duplicates`, raw.exec('SELECT COUNT(*) AS n FROM cards')[0].n, 20);
 }
 
 /** The fast media reader must return exactly what zip.js returns, for every entry. */

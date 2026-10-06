@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { col } from '../anki/appCollection';
 import type { CustomStudyRequest } from '../anki/collection';
 import { deckSearch } from '../anki/search';
@@ -20,6 +20,9 @@ const ORDERS: Record<FilteredOrder, string> = {
 };
 
 function TermEditor({ term, onChange, label }: { term: FilteredTerm; onChange: (t: FilteredTerm) => void; label: string }) {
+  // Edited as text so the field can be cleared and retyped; a valid number updates the term.
+  const [limitText, setLimitText] = useState(String(term.limit));
+  useEffect(() => setLimitText(String(term.limit)), [term.limit]);
   return (
     <fieldset className="fd-term">
       <legend>{label}</legend>
@@ -30,7 +33,17 @@ function TermEditor({ term, onChange, label }: { term: FilteredTerm; onChange: (
       <div className="fd-row">
         <label className="opt-field col">
           <span>Limit to</span>
-          <input type="number" min={1} value={term.limit} onChange={(e) => onChange({ ...term, limit: Math.max(1, Number(e.target.value) || 1) })} />
+          <input
+            type="number"
+            min={1}
+            value={limitText}
+            onChange={(e) => {
+              setLimitText(e.target.value);
+              const n = Math.floor(Number(e.target.value));
+              if (e.target.value !== '' && n >= 1) onChange({ ...term, limit: n });
+            }}
+            onBlur={() => setLimitText(String(term.limit))}
+          />
         </label>
         <label className="opt-field col" style={{ flex: 1 }}>
           <span>Cards selected by</span>
@@ -53,12 +66,16 @@ export function FilteredDeckModal({ deckId, initialSearch = '', onClose, onSaved
   const [second, setSecond] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // The parent passes a fresh onClose on every render (its deck list refreshes each minute); keep
+  // it out of the load effect's deps so a refresh doesn't reset what's being typed.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     void (async () => {
       if (deckId != null) {
         const d = await col.deck(deckId);
-        if (!d?.filtered) return onClose();
+        if (!d?.filtered) return closeRef.current();
         setName(d.name);
         setCfg(d.filtered);
         setSecond(d.filtered.terms.length > 1);
@@ -70,7 +87,7 @@ export function FilteredDeckModal({ deckId, initialSearch = '', onClose, onSaved
         setCfg({ ...d, terms: [{ ...d.terms[0], search: initialSearch }] });
       }
     })();
-  }, [deckId, initialSearch, onClose]);
+  }, [deckId, initialSearch]);
 
   if (!cfg) return null;
   const terms = cfg.terms;

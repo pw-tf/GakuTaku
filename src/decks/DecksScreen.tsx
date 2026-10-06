@@ -237,7 +237,7 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
           {node.filtered ? (
             <>
               <Btn onClick={() => void col.rebuildFilteredDeck(node.deckId).catch((e: unknown) => setNotice(e instanceof Error ? e.message : String(e)))}><Icon.undo s={15} /> Rebuild</Btn>
-              <Btn onClick={() => void col.emptyFilteredDeck(node.deckId)}><Icon.close s={15} /> Empty</Btn>
+              <Btn onClick={() => void col.emptyFilteredDeck(node.deckId).catch((e: unknown) => setNotice(e instanceof Error ? e.message : String(e)))}><Icon.close s={15} /> Empty</Btn>
             </>
           ) : (
             <>
@@ -311,7 +311,11 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
       {dialog === 'delete' && (
         <ConfirmModal
           title="Delete deck?"
-          message={`“${node.fullName}”${node.children.length ? ' and its subdecks' : ''} will be deleted with ${node.totalIncludingChildren.toLocaleString()} cards. This can’t be undone.`}
+          message={
+            node.filtered
+              ? `“${node.fullName}” will be deleted. Its ${node.totalIncludingChildren.toLocaleString()} cards go back to their own decks.`
+              : `“${node.fullName}”${node.children.length ? ' and its subdecks' : ''} will be deleted with ${node.totalIncludingChildren.toLocaleString()} cards. This can’t be undone.`
+          }
           confirmLabel="Delete"
           danger
           onClose={() => setDialog(null)}
