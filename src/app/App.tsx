@@ -2,6 +2,9 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { openDb } from '../db';
 import { AppShell } from './AppShell';
 import { useEffectiveTheme, usePrefs } from './prefs';
+import { initSystemBars, setSystemBarStyle } from '../native/systemBars';
+
+initSystemBars();
 
 type DbState = { status: 'opening' } | { status: 'ready'; persistent: boolean } | { status: 'error'; message: string };
 
@@ -38,6 +41,7 @@ export function App() {
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--rust-ink', `color-mix(in oklch, ${accent} 84%, black)`);
     root.style.colorScheme = dark ? 'dark' : 'light';
+    setSystemBarStyle(dark);
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', getComputedStyle(root).getPropertyValue('--paper').trim() || (dark ? '#1b1815' : '#f7f3ec'));
   }, [dark, theme, accent]);
 
