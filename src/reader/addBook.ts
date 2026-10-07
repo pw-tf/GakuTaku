@@ -77,10 +77,11 @@ export async function addBook(file: File, userId: string, onProgress?: (message:
   return docId;
 }
 
-/** Remove a book, its reading position and its stored files. Mined cards are kept. */
+/** Remove a book, its reading position, bookmarks and stored files. Mined cards are kept. */
 export async function removeBook(docId: string): Promise<void> {
   await db.writeTransaction(async (tx) => {
     await tx.execute('DELETE FROM reading_positions WHERE document_id = ?', [docId]);
+    await tx.execute('DELETE FROM bookmarks WHERE document_id = ?', [docId]);
     await tx.execute('DELETE FROM documents WHERE id = ?', [docId]);
   });
   await deleteBookFiles(docId);

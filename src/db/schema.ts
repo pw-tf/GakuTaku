@@ -241,6 +241,19 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE decks ADD COLUMN filtered TEXT;
   `,
+  // 4: bookmarks and highlighted sentences in books (kind 'bookmark' | 'highlight').
+  `
+  CREATE TABLE bookmarks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    chapter INTEGER NOT NULL,
+    paragraph INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX bookmarks_by_document ON bookmarks(document_id);
+  `,
 ];
 
 /* Row types (all columns nullable, as SQLite returns them). */

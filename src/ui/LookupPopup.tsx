@@ -32,6 +32,8 @@ interface Props extends LookupState {
   onClose: () => void;
   onMine?: (item: MinedItem) => void;
   context?: MineContext;
+  /** Highlight the sentence around the word (books only); resolves once saved. */
+  onHighlight?: () => Promise<void>;
 }
 
 /**
@@ -59,7 +61,7 @@ function swallowNextClick() {
 type AudioStatus = null | 'fetching' | 'done' | 'none';
 
 /** The single shared dictionary popup (build plan §3.5), populated from the real LookupResult. */
-export function LookupPopup({ result, loading, anchor, error, onClose, onMine, context }: Props) {
+export function LookupPopup({ result, loading, anchor, error, onClose, onMine, context, onHighlight }: Props) {
   const { data: decks = [] } = useLive(async () => (await col.decks()).filter((d) => !d.filtered), [], ['decks']);
   const { lastDeckId, setLastDeckId, mineWordAudio, mineSentenceAudio } = usePrefs();
   const [audio, setAudio] = useState<AudioStatus>(null);
@@ -69,11 +71,13 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
   const [already, setAlready] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [highlighted, setHighlighted] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // Reset "added" when the looked-up term changes.
   useEffect(() => {
     setAdded(false);
+    setHighlighted(false);
     setAlready(false);
     setAddError(null);
     setAudio(null);
@@ -297,6 +301,11 @@ export function LookupPopup({ result, loading, anchor, error, onClose, onMine, c
               <Icon.sound s={16} />
             </Btn>
           </>
+        )}
+        {onHighlight && context?.sentencePlain && (
+          <Btn size="sm" aria-label="Highlight sentence" title={highlighted ? 'Sentence highlighted' : 'Highlight sentence'} disabled={highlighted} onClick={() => void onHighlight().then(() => setHighlighted(true))}>
+            <Icon.star s={16} />
+          </Btn>
         )}
       </div>
 

@@ -68,6 +68,10 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
             ))}
           </div>
         </div>
+        <div className="toggle-row">
+          <span>Underline words without a card</span>
+          <input type="checkbox" checked={p.markUnknown} onChange={(e) => p.setMarkUnknown(e.target.checked)} />
+        </div>
       </section>
 
       <ReviewSettings />

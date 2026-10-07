@@ -66,10 +66,14 @@ interface TokenizedProps {
   /** Offset added to a token's local index when reporting taps (lets a paragraph map into a chapter). */
   indexOffset?: number;
   onWordTap?: (token: FuriToken, key: number, anchor: DOMRect) => void;
+  /** Words you have notes for; tappable words not in it are marked as unknown. */
+  known?: Set<string>;
+  /** Per token: inside a highlighted sentence. */
+  highlighted?: boolean[];
 }
 
 /** Pure renderer: turns pre-tokenized text into tappable .rd-word units with density-controlled furigana. */
-export function TokenizedText({ tokens, density, advAvailable, activeKey, indexOffset = 0, onWordTap }: TokenizedProps) {
+export function TokenizedText({ tokens, density, advAvailable, activeKey, indexOffset = 0, onWordTap, known, highlighted }: TokenizedProps) {
   const hasAdv = advAvailable ?? tokens.some((t) => t.adv !== undefined);
   const effective: FuriganaDensity = density === 'n3' && !hasAdv ? 'all' : density;
   const showFuri = (t: FuriToken) => (effective === 'off' ? false : effective === 'all' ? true : !!t.adv);
@@ -102,11 +106,12 @@ export function TokenizedText({ tokens, density, advAvailable, activeKey, indexO
             <span key={j}>{wrapRuns(seg.text, starts[i][j], runs)}</span>
           ),
         );
-        if (!onWordTap || !tappable(token)) return <span key={i}>{segs}</span>;
+        const hl = highlighted?.[i] ? ' rd-hl' : '';
+        if (!onWordTap || !tappable(token)) return <span key={i} className={hl.trim() || undefined}>{segs}</span>;
         return (
           <span
             key={i}
-            className={'rd-word' + (activeKey === key ? ' rd-word-active' : '')}
+            className={'rd-word' + (activeKey === key ? ' rd-word-active' : '') + (known && !known.has(token.basic) && !known.has(token.surface) ? ' rd-unknown' : '') + hl}
             role="button"
             tabIndex={0}
             onClick={(e) => onWordTap(token, key, (e.currentTarget as HTMLElement).getBoundingClientRect())}

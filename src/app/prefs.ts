@@ -27,6 +27,8 @@ interface PrefsState {
   readerFlow: ReaderFlow;
   readerFontScale: ReaderFontScale;
   readerWidth: ReaderWidth;
+  /** Reader: underline words that aren't in any of your notes yet. */
+  markUnknown: boolean;
   /** Mining: fetch a native-speaker recording of the word (JapanesePod101, Android app only). */
   mineWordAudio: boolean;
   /** Mining: record the sentence with the device's Japanese voice (Android app only). */
@@ -54,6 +56,7 @@ interface PrefsState {
   setReaderFlow: (f: ReaderFlow) => void;
   setReaderFontScale: (s: ReaderFontScale) => void;
   setReaderWidth: (w: ReaderWidth) => void;
+  setMarkUnknown: (on: boolean) => void;
   setMineWordAudio: (on: boolean) => void;
   setMineSentenceAudio: (on: boolean) => void;
 }
@@ -72,6 +75,7 @@ export const usePrefs = create<PrefsState>()(
       lastDeckId: null,
       readerOrientation: null,
       readerFlow: 'paged',
+      markUnknown: true,
       readerFontScale: 'm',
       readerWidth: 'normal',
       mineWordAudio: true,
@@ -93,6 +97,7 @@ export const usePrefs = create<PrefsState>()(
       setLastDeckId: (lastDeckId) => set({ lastDeckId }),
       setReaderOrientation: (readerOrientation) => set({ readerOrientation }),
       setReaderFlow: (readerFlow) => set({ readerFlow }),
+      setMarkUnknown: (markUnknown) => set({ markUnknown }),
       setReaderFontScale: (readerFontScale) => set({ readerFontScale }),
       setReaderWidth: (readerWidth) => set({ readerWidth }),
       setMineWordAudio: (mineWordAudio) => set({ mineWordAudio }),

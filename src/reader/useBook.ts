@@ -220,6 +220,13 @@ export function useBook(doc: DocumentRecord, userId: string) {
     });
   }
 
+  /** Jump to a paragraph (a bookmark), saving it as the reading position. */
+  function goTo(chapter: number, paragraph: number) {
+    void loadChapter(chapter, { kind: 'anchor', paragraphIndex: paragraph, fraction: 0 }).then((n) => {
+      if (n != null) saveProgress({ paragraphIndex: paragraph, fraction: 0, chapterFraction: n > 0 ? paragraph / n : 0 });
+    });
+  }
+
   function retryChapter() {
     void loadChapter(state.chapterIndex, { kind: 'anchor', paragraphIndex: 0, fraction: 0 });
   }
@@ -244,6 +251,7 @@ export function useBook(doc: DocumentRecord, userId: string) {
     prevChapter: () => goChapter(state.chapterIndex - 1, 'top'),
     prevChapterEnd: () => goChapter(state.chapterIndex - 1, 'end'),
     retryChapter,
+    goTo,
     saveProgress,
   };
 }
