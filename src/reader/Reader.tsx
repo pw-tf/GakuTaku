@@ -9,6 +9,9 @@ import type { TocEntry } from './epub';
 import { Btn, Chip, Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { useBackHandler } from '../app/back';
+import { useKnownWords } from './knownWords';
+import { speak, stopSpeaking } from '../native/tts';
+import { addBookmark, removeBookmark, useBookmarks } from './bookmarks';
 import type { ReadingPos, RestoreTarget } from './useBook';
 
 const NEXT_SCALE: Record<ReaderFontScale, ReaderFontScale> = { s: 'm', m: 'l', l: 's' };
@@ -50,6 +53,8 @@ interface Props {
   onNextChapter: () => void;
   onPrevChapterEnd: () => void;
   onGoChapter?: (index: number) => void;
+  /** Open another chapter at a paragraph (bookmarks); books only. */
+  onGoPosition?: (chapter: number, paragraph: number) => void;
   onProgress: (pos: ReadingPos, immediate?: boolean) => void;
   onClose: () => void;
 }
@@ -72,8 +77,10 @@ interface Anchor {
 }
 
 export function Reader(props: Props) {
-  const { furigana, setFurigana } = usePrefs();
+  const { furigana, setFurigana, markUnknown, setMarkUnknown } = usePrefs();
   const prefs = usePrefs();
+  const known = useKnownWords(markUnknown);
+  const bookmarks = useBookmarks(props.documentId);
   const lookup = useLookup();
 
   // Layout prefs seed from the persisted store (and, only when never chosen, the book's own
@@ -95,10 +102,16 @@ export function Reader(props: Props) {
 
   const [railOpen, setRailOpen] = useState(false);
   useBackHandler(railOpen, () => setRailOpen(false));
+  /** Read aloud: the paragraph being spoken, or null when not reading. */
+  const [speaking, setSpeaking] = useState<number | null>(null);
+  /** Bumped to stop a read-aloud run (each run checks it between paragraphs). */
+  const speakRun = useRef(0);
   /** Scroll flow: how far through the chapter (0–1), for the progress label and bar. */
   const [scrollFrac, setScrollFrac] = useState(0);
   const [activeKey, setActiveKey] = useState<number | null>(null);
   const [mineContext, setMineContext] = useState<MineContext | undefined>(undefined);
+  /** Paragraph of the word last looked up (where a highlighted sentence is filed). */
+  const [lookupPi, setLookupPi] = useState(0);
   const [page, setPage] = useState(0);
   const [pageCount, setPageCount] = useState(1);
   const [metrics, setMetrics] = useState({ total: 0, viewSize: 0, stride: 0, padStart: 0 });
@@ -126,6 +139,25 @@ export function Reader(props: Props) {
     }
     return out;
   }, [props.paragraphs]);
+  /** Per paragraph of this chapter: which tokens fall inside a highlighted sentence. */
+  const highlighted = useMemo(() => {
+    const out = new Map<number, boolean[]>();
+    for (const b of bookmarks) {
+      if (b.kind !== 'highlight' || b.chapter !== props.chapterIndex) continue;
+      const tokens = props.paragraphs[b.paragraph];
+      if (!tokens) continue;
+      const start = tokens.map((t) => t.surface).join('').indexOf(b.text);
+      if (start < 0) continue;
+      const marks = out.get(b.paragraph) ?? tokens.map(() => false);
+      let at = 0;
+      tokens.forEach((t, i) => {
+        if (at < start + b.text.length && at + t.surface.length > start) marks[i] = true;
+        at += t.surface.length;
+      });
+      out.set(b.paragraph, marks);
+    }
+    return out;
+  }, [bookmarks, props.chapterIndex, props.paragraphs]);
   const advAvailable = useMemo(
     () => props.paragraphs.some((p) => p.some((t) => t.adv !== undefined)),
     [props.paragraphs],
@@ -435,6 +467,49 @@ export function Reader(props: Props) {
     else prevPage();
   }
 
+  // ---- Bookmarks ----------------------------------------------------------------
+
+  function goToMark(chapter: number, paragraph: number) {
+    pendingSave.current = true;
+    if (chapter === props.chapterIndex) {
+      applyRestore({ kind: 'anchor', paragraphIndex: paragraph, fraction: 0 });
+      if (!paged) requestAnimationFrame(() => reportProgress(true));
+    } else props.onGoPosition?.(chapter, paragraph);
+  }
+
+  function bookmarkHere() {
+    if (!props.documentId) return;
+    const pi = Math.min(lastPos.current.pi, Math.max(0, props.paragraphs.length - 1));
+    const text = (props.paragraphs[pi] ?? []).map((t) => t.surface).join('').slice(0, 80);
+    void addBookmark(props.documentId, { chapter: props.chapterIndex, paragraph: pi, kind: 'bookmark', text: text || `Chapter ${props.chapterIndex + 1}` });
+  }
+
+  // ---- Read aloud -------------------------------------------------------------
+
+  function stopReading() {
+    speakRun.current++;
+    stopSpeaking();
+    setSpeaking(null);
+  }
+
+  /** Speak the chapter paragraph by paragraph from the current spot, keeping it on screen. */
+  // ponytail: stops at the end of the chapter; carry on into the next one if that's missed.
+  async function readAloud() {
+    const run = ++speakRun.current;
+    for (let pi = Math.min(lastPos.current.pi, props.paragraphs.length - 1); pi < props.paragraphs.length; pi++) {
+      if (run !== speakRun.current) return;
+      setSpeaking(pi);
+      if (paged) applyRestore({ kind: 'anchor', paragraphIndex: pi, fraction: 0 });
+      else scrollRef.current?.querySelector(`p[data-pi="${pi}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      lastPos.current = { pi, frac: 0 };
+      await speak(props.paragraphs[pi].map((t) => t.surface).join(''));
+    }
+    if (run === speakRun.current) setSpeaking(null);
+  }
+
+  // A new chapter (or closing the reader) ends reading.
+  useEffect(() => stopReading, [props.paragraphs]);
+
   /** Paged views: a tap on the outer quarter of the page (not on a word) turns the page. */
   function onPageTap(e: React.MouseEvent<HTMLDivElement>) {
     const t = e.target as HTMLElement;
@@ -452,6 +527,7 @@ export function Reader(props: Props) {
     let pi = 0;
     while (pi + 1 < offsets.length && offsets[pi + 1] <= key) pi++;
     const tokens = props.paragraphs[pi];
+    setLookupPi(pi);
     const local = key - (offsets[pi] ?? 0);
     if (tokens && tokens[local]) {
       const s = captureSentence(tokens, local);
@@ -497,7 +573,7 @@ export function Reader(props: Props) {
 
   const paras = () =>
     props.paragraphs.map((tokens, pi) => (
-      <p key={pi} data-pi={pi}>
+      <p key={pi} data-pi={pi} className={speaking === pi ? 'rd-speaking' : undefined}>
         <TokenizedText
           tokens={tokens}
           density={furigana}
@@ -505,6 +581,8 @@ export function Reader(props: Props) {
           activeKey={activeKey}
           indexOffset={offsets[pi]}
           onWordTap={handleTap}
+          known={known}
+          highlighted={highlighted.get(pi)}
         />
       </p>
     ));
@@ -526,6 +604,11 @@ export function Reader(props: Props) {
         </button>
         <span className="spacer" />
         <div className="rd-ctrl">
+          {props.paragraphs.length > 0 && (
+            <button className={'icon-btn' + (speaking != null ? ' on' : '')} title={speaking != null ? 'Stop reading' : 'Read aloud'} onClick={() => (speaking != null ? stopReading() : void readAloud())}>
+              {speaking != null ? <Icon.pause s={18} /> : <Icon.sound s={18} />}
+            </button>
+          )}
           <button className="icon-btn" title="Text size" onClick={() => setFontScale(NEXT_SCALE[fontScale])}>
             <span style={{ fontFamily: 'var(--serif)', fontSize: fontScale === 's' ? 14 : fontScale === 'm' ? 17 : 20, fontWeight: 600 }}>A</span>
           </button>
@@ -610,6 +693,13 @@ export function Reader(props: Props) {
                 </div>
               </div>
 
+              <div className="rail-sec">
+                <label className="toggle-row">
+                  <span>Underline words without a card</span>
+                  <input type="checkbox" checked={markUnknown} onChange={(e) => setMarkUnknown(e.target.checked)} />
+                </label>
+              </div>
+
               {props.toc && props.toc.length > 1 && props.onGoChapter && (
                 <>
                   <hr className="hr" />
@@ -626,6 +716,29 @@ export function Reader(props: Props) {
                         >
                           {t.label}
                         </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {props.documentId && (
+                <>
+                  <hr className="hr" />
+                  <div className="rail-sec">
+                    <div className="rs-h"><Kicker>Bookmarks</Kicker><Btn size="sm" onClick={bookmarkHere}><Icon.plus s={14} /> This page</Btn></div>
+                    {bookmarks.length === 0 && (
+                      <div style={{ color: 'var(--ink-faint)', fontSize: 13, padding: '6px 2px' }}>Bookmark a page here, or highlight a sentence with ★ in the word popup.</div>
+                    )}
+                    <div className="bm-list">
+                      {bookmarks.map((b) => (
+                        <div key={b.id} className={'bm-item' + (b.kind === 'highlight' ? ' hl' : '')}>
+                          <button className="bm-go" lang="ja" onClick={() => { goToMark(b.chapter, b.paragraph); setRailOpen(false); }}>
+                            <span className="bm-ch">{b.kind === 'highlight' ? '★' : '🔖'} Ch. {b.chapter + 1}</span>
+                            <span className="bm-t">{b.text}</span>
+                          </button>
+                          <button className="icon-btn" aria-label="Remove" onClick={() => void removeBookmark(b.id)}><Icon.close s={14} /></button>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -703,6 +816,11 @@ export function Reader(props: Props) {
           onClose={closeLook}
           onMine={props.onMine}
           context={mineContext}
+          onHighlight={
+            props.documentId && mineContext?.sentencePlain
+              ? () => addBookmark(props.documentId!, { chapter: props.chapterIndex, paragraph: lookupPi, kind: 'highlight', text: mineContext.sentencePlain })
+              : undefined
+          }
         />
       )}
     </div>

@@ -156,6 +156,16 @@ body { overflow: hidden; }
 .rd-body p { margin: 0 0 1.7em; }
 .rd-word { cursor: pointer; border-radius: 2px; transition: background .12s, color .12s; }
 .rd-word:hover { background: color-mix(in oklch, var(--accent) 14%, transparent); }
+/* A word with no card yet: a quiet dotted underline (it sits to the right of vertical text). */
+.rd-hl { background: color-mix(in oklch, var(--amber, #c98500) 22%, transparent); }
+.bm-list { display: flex; flex-direction: column; gap: 4px; }
+.bm-item { display: flex; align-items: center; gap: 4px; border-radius: var(--radius); }
+.bm-item:hover { background: var(--paper-sunk); }
+.bm-go { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px; background: none; border: 0; color: var(--ink); cursor: pointer; font: inherit; }
+.bm-ch { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); letter-spacing: .04em; }
+.bm-t { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-speaking { background: color-mix(in oklch, var(--accent) 9%, transparent); border-radius: 4px; }
+.rd-unknown { text-decoration: underline dotted color-mix(in oklch, var(--accent) 60%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: .28em; }
 .rd-word-active { background: color-mix(in oklch, var(--accent) 20%, transparent); color: var(--accent); }
 
 .rd-body.fs-s { font-size: 18px; }
