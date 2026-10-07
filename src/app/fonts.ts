@@ -1,5 +1,7 @@
 // Fonts are bundled with the app (no Google Fonts request), so text renders the same offline.
 // Each package splits glyphs into unicode-range subsets; the browser loads only the subsets used.
+// The Japanese faces ship only the weights the CSS leans on (~120 subsets each): others map to the
+// nearest one, which reads the same at text sizes and keeps the CSS and APK much smaller.
 import '@fontsource/newsreader/400.css';
 import '@fontsource/newsreader/400-italic.css';
 import '@fontsource/newsreader/500.css';
@@ -12,7 +14,5 @@ import '@fontsource/hanken-grotesk/700.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/shippori-mincho/600.css';
-import '@fontsource/shippori-mincho/700.css';
 import '@fontsource/zen-kaku-gothic-new/400.css';
-import '@fontsource/zen-kaku-gothic-new/500.css';
 import '@fontsource/zen-kaku-gothic-new/700.css';

@@ -53,8 +53,3 @@ export const useTasks = create<TasksState>((set, get) => ({
   },
   dismiss: (id) => set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) })),
 }));
-
-/** Whether a task with the given id is currently running (read outside React via getState). */
-export function isTaskRunning(id: string): boolean {
-  return useTasks.getState().tasks.some((t) => t.id === id && t.status === 'running');
-}

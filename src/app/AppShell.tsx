@@ -37,7 +37,7 @@ const TITLES: Record<View, [string, string]> = {
   credits: ['Credits', 'クレジット'],
 };
 
-// Lazy-loaded so the heavy ePUB stack (epubjs/jszip) only loads when a book is opened.
+// Lazy-loaded so the heavy ePUB stack (epubjs) only loads when a book is opened.
 const BookReader = lazy(() => import('../reader/BookReader').then((m) => ({ default: m.BookReader })));
 const ArticleReader = lazy(() => import('../feeds/ArticleReader').then((m) => ({ default: m.ArticleReader })));
 

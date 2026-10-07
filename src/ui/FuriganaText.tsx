@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
-import { jpCore } from '../jp-core/client';
+import { useMemo } from 'react';
 import type { FuriToken } from '../jp-core/worker';
 import { hasKanji } from '../jp-core/furigana';
 import type { FuriganaDensity } from '../app/prefs';
@@ -118,35 +117,4 @@ export function TokenizedText({ tokens, density, advAvailable, activeKey, indexO
       })}
     </>
   );
-}
-
-interface Props {
-  text: string;
-  density: FuriganaDensity;
-  activeKey?: number | null;
-  onWordTap?: (token: FuriToken, key: number, anchor: DOMRect) => void;
-}
-
-/** Self-tokenizing convenience wrapper for one-off snippets (tokenizes `text` via the worker). */
-export function FuriganaText({ text, density, activeKey, onWordTap }: Props) {
-  const [tokens, setTokens] = useState<FuriToken[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!text.trim()) {
-      setTokens([]);
-      return;
-    }
-    jpCore
-      .furiganaFor(text)
-      .then((r) => !cancelled && setTokens(r))
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
-    return () => {
-      cancelled = true;
-    };
-  }, [text]);
-
-  if (error) return <p className="text-sm" style={{ color: 'var(--rate-again)' }}>Tokenizer error: {error}</p>;
-  return <TokenizedText tokens={tokens} density={density} activeKey={activeKey} onWordTap={onWordTap} />;
 }
