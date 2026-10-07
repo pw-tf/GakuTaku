@@ -46,10 +46,6 @@ export async function putMediaFiles(files: { name: string; data: Uint8Array }[])
   await mediaDb.files.bulkPut(files.map((f) => ({ name: f.name, blob: new Blob([f.data as BlobPart], { type: mimeForMedia(f.name) }) })));
 }
 
-export async function mediaFileCount(): Promise<number> {
-  return mediaDb.files.count();
-}
-
 /**
  * A free filename for an incoming file that clashes with a different existing one (Anki appends a
  * hash; we append the content's size and a short checksum).

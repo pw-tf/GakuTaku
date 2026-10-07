@@ -40,11 +40,6 @@ export function timingAt(nowMs: number, rolloverHour: number): Timing {
   return { now: Math.floor(nowMs / 1000), today, nextDayAt: Math.floor(next.getTime() / 1000) };
 }
 
-/** Anki `TimestampSecs::elapsed_days_since`: whole days between two timestamps (secs). */
-export function elapsedDaysSince(later: number, earlier: number): number {
-  return Math.max(0, Math.floor((later - earlier) / 86_400));
-}
-
 /**
  * Anki's day count for an *Anki* collection, used only when importing: how many rollovers have
  * passed since the collection's creation (`crt`, unix secs). `creationOffset` / `currentOffset`
