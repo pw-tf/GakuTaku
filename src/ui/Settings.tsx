@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { App as CapApp } from '@capacitor/app';
+import { isNative } from '../app/platform';
 import { ACCENTS, usePrefs, type ThemeMode } from '../app/prefs';
 import { BackupSection } from '../backup/BackupSection';
 import { ACTION_NAMES, GESTURE_NAMES, type Gesture, type ReviewAction } from '../study/gestures';
@@ -95,11 +97,21 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
 
       <section className="set-card">
         <h3>About</h3>
+        <AppVersion />
         <span className="set-help">Study settings (new cards per day, learning steps, FSRS, day rollover) are in each deck’s Options, as in Anki.</span>
         <a className="set-link" onClick={onOpenCredits}>Credits &amp; licenses →</a>
       </section>
     </div>
   );
+}
+
+/** The installed version (Android app only), so it's clear when an update has landed. */
+function AppVersion() {
+  const [v, setV] = useState<string | null>(null);
+  useEffect(() => {
+    if (isNative) void CapApp.getInfo().then((i) => setV(`${i.version} (build ${i.build})`)).catch(() => {});
+  }, []);
+  return v ? <span className="set-help">GakuTaku {v}</span> : null;
 }
 
 /** Reviewer preferences: timer, card text size and gestures. */

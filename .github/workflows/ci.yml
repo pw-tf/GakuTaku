@@ -36,8 +36,9 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     env:
+      # versionCode only ever grows (run numbers do), so each release installs as an update.
       GAKUTAKU_VERSION_CODE: ${{ github.run_number }}
-      GAKUTAKU_VERSION_NAME: 1.0.${{ github.run_number }}
+      GAKUTAKU_VERSION_NAME: 1.0.0-beta.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -117,11 +118,11 @@ jobs:
           path: ${{ runner.temp }}/GakuTaku.apk
 
       - name: Publish release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.key.outputs.path != ''
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.key.outputs.path != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v${GAKUTAKU_VERSION_NAME}" "$RUNNER_TEMP/GakuTaku.apk" \
-            --title "GakuTaku ${GAKUTAKU_VERSION_NAME}" \
-            --notes "Built from ${GITHUB_SHA::7}. Install or update with Obtainium (or download the APK)." \
+            --title "GakuTaku 1.0.0 beta ${GITHUB_RUN_NUMBER}" \
+            --notes "Beta build from ${GITHUB_SHA::7}. Installs as an update over any earlier beta (same signing key). Update with Obtainium, or download the APK." \
             --target "$GITHUB_SHA"
