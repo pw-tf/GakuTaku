@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import { isNative } from '../app/platform';
-import { ACCENTS, usePrefs, type ThemeMode } from '../app/prefs';
+import { ACCENTS, useEffectiveTheme, usePrefs, type ThemeMode } from '../app/prefs';
+import { PAPER, PATTERNS, photoFromFile, useWallpaperPhoto, wallpaperBackground, type Wallpaper } from '../app/wallpaper';
 import { BackupSection } from '../backup/BackupSection';
 import { ACTION_NAMES, GESTURE_NAMES, type Gesture, type ReviewAction } from '../study/gestures';
 import { remindersAvailable, requestReminderPermission } from '../native/reminders';
@@ -10,6 +11,55 @@ import { Modal } from './Modal';
 
 const THEMES: [ThemeMode, string][] = [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark'], ['black', 'Black']];
 const ACCENT_NAMES = ['Vermilion', 'Indigo', 'Pine', 'Plum', 'Teal', 'Rose'];
+
+/** Home wallpaper: none, a built-in pattern in the accent colour, or a photo from the phone. */
+function WallpaperRow() {
+  const { wallpaper, setWallpaper, accent } = usePrefs();
+  const { photo, setPhoto } = useWallpaperPhoto();
+  const paper = PAPER[useEffectiveTheme()];
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState<string | null>(null);
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setErr(null);
+    try {
+      const url = await photoFromFile(file);
+      // Check it fits in storage before swapping it in (the store would fail quietly).
+      localStorage.setItem('gakutaku-wallpaper-probe', url);
+      localStorage.removeItem('gakutaku-wallpaper-probe');
+      setPhoto(url);
+      setWallpaper('photo');
+    } catch (e) {
+      setErr(e instanceof DOMException && e.name === 'QuotaExceededError' ? 'That image is too big to keep. Try a smaller one.' : e instanceof Error ? e.message : String(e));
+    }
+  }
+  const pick = (kind: Wallpaper, label: string, onClick = () => setWallpaper(kind)) => (
+    <button key={kind} type="button" className={'wall-pick' + (wallpaper === kind ? ' on' : '')} style={{ background: wallpaperBackground(kind, accent, paper, photo) ?? undefined }} aria-pressed={wallpaper === kind} onClick={onClick}>
+      <span>{label}</span>
+    </button>
+  );
+  return (
+    <div className="set-row col">
+      <span className="set-label">Home wallpaper</span>
+      <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
+      <div className="wall-picks">
+        {pick('none', 'None')}
+        {PATTERNS.map(([k, label]) => pick(k, label.split(' · ')[0]))}
+        {pick('photo', photo ? 'Photo' : '+ Photo', () => (photo ? setWallpaper('photo') : fileRef.current?.click()))}
+      </div>
+      {photo && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <Btn size="sm" onClick={() => fileRef.current?.click()}>Change photo</Btn>
+          <Btn size="sm" variant="ghost" onClick={() => { setPhoto(null); if (wallpaper === 'photo') setWallpaper('none'); }}>Remove photo</Btn>
+        </div>
+      )}
+      {err && <span className="set-help" style={{ color: 'var(--rate-again)' }}>{err}</span>}
+      <span className="set-help">Shown behind the Home screen only, never behind books, articles or cards.</span>
+    </div>
+  );
+}
 
 /** The Settings screen: appearance, reading, review, mining, backup and about. */
 export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void }) {
@@ -35,6 +85,7 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
             ))}
           </div>
         </div>
+        <WallpaperRow />
       </section>
 
       <section className="set-card">

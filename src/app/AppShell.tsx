@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useBackHandler } from './back';
 import { usePrefs } from './prefs';
+import { useWallpaper } from './wallpaper';
 import { refreshReminders } from '../native/reminders';
 import { col } from '../anki/appCollection';
 import { ensureStockNotetypes } from '../anki/stock';
@@ -132,6 +133,9 @@ export function AppShell() {
   }
 
   const [title, subtitle] = TITLES[view];
+  // The wallpaper is Home's alone (never behind readers, cards or the other tabs).
+  const wallpaper = useWallpaper();
+  const wall = view === 'home' ? wallpaper : null;
 
   return (
     <div className={'shell' + (overlay ? ' reading' : '')}>
@@ -159,7 +163,7 @@ export function AppShell() {
         </div>
       </aside>
 
-      <div className="main">
+      <div className={'main' + (wall ? ' walled' : '')} style={wall ? { background: wall } : undefined}>
         <div className="topbar">
           <button className="icon-btn menu-btn" onClick={() => setMenuOpen(true)}><Icon.menu s={20} /></button>
           <h1>{title}</h1>
