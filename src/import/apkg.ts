@@ -173,8 +173,12 @@ async function openDatabase(bytes: Uint8Array): Promise<Database> {
 function rows(db: Database, sql: string): Record<string, unknown>[] {
   try {
     return db.exec(sql);
-  } catch {
-    return []; // table missing in this schema
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // A table or column this schema version doesn't have is fine; anything else is a real failure
+    // (silently returning nothing once imported note types with no fields or templates).
+    if (/no such (table|column)/i.test(msg)) return [];
+    throw new UnsupportedApkgError(`This package couldn’t be read (${msg}).`);
   }
 }
 const num = (v: unknown, d = 0) => (typeof v === 'number' ? v : typeof v === 'bigint' ? Number(v) : v == null ? d : Number(v) || d);

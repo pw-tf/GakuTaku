@@ -2,9 +2,14 @@ import { appSql, col } from '../anki/appCollection';
 import { useLive } from '../db/useLive';
 import { loadAnalytics, loadStreak, type AnalyticsData } from './analytics';
 
-/** Live analytics (recomputed when reviews or cards change). */
-export function useAnalytics(): AnalyticsData | undefined {
-  return useLive(async () => loadAnalytics(appSql, Date.now(), (await col.config()).rollover), [], ['revlog', 'cards'], { deferWhileStudying: true }).data;
+/** Live analytics for some decks (null = all), recomputed when reviews or cards change. */
+export function useAnalytics(deckIds: number[] | null): AnalyticsData | undefined {
+  return useLive(
+    async () => loadAnalytics(appSql, Date.now(), (await col.config()).rollover, deckIds),
+    [deckIds?.join(',')],
+    ['revlog', 'cards'],
+    { deferWhileStudying: true },
+  ).data;
 }
 
 /** The day streak for the library header. */
