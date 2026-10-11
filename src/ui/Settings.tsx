@@ -72,7 +72,7 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
           <span className="set-label">Theme</span>
           <div className="density-seg">
             {THEMES.map(([v, label]) => (
-              <div key={v} className={'d' + (p.theme === v ? ' on' : '')} onClick={() => p.setTheme(v)}>{label}</div>
+              <button type="button" key={v} className={'d' + (p.theme === v ? ' on' : '')} aria-pressed={p.theme === v} onClick={() => p.setTheme(v)}>{label}</button>
             ))}
           </div>
           <span className="set-help">Auto follows your phone’s dark mode. Black uses true black, which saves battery on OLED screens.</span>
@@ -94,9 +94,9 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
           <span className="set-label">Furigana</span>
           <div className="density-seg">
             {(['all', 'n3', 'off'] as const).map((v) => (
-              <div key={v} className={'d' + (p.furigana === v ? ' on' : '')} onClick={() => p.setFurigana(v)}>
+              <button type="button" key={v} className={'d' + (p.furigana === v ? ' on' : '')} aria-pressed={p.furigana === v} onClick={() => p.setFurigana(v)}>
                 {v === 'all' ? 'All' : v === 'n3' ? 'N3+' : 'Off'}
-              </div>
+              </button>
             ))}
           </div>
           <span className="set-help">N3+ shows readings only over harder kanji (JLPT N3 and above).</span>
@@ -105,9 +105,9 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
           <span className="set-label">Text size</span>
           <div className="density-seg">
             {(['s', 'm', 'l'] as const).map((v) => (
-              <div key={v} className={'d' + (p.readerFontScale === v ? ' on' : '')} onClick={() => p.setReaderFontScale(v)}>
+              <button type="button" key={v} className={'d' + (p.readerFontScale === v ? ' on' : '')} aria-pressed={p.readerFontScale === v} onClick={() => p.setReaderFontScale(v)}>
                 {v === 's' ? 'Small' : v === 'm' ? 'Medium' : 'Large'}
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -115,9 +115,9 @@ export function SettingsScreen({ onOpenCredits }: { onOpenCredits: () => void })
           <span className="set-label">Line width</span>
           <div className="density-seg">
             {(['normal', 'wide'] as const).map((v) => (
-              <div key={v} className={'d' + (p.readerWidth === v ? ' on' : '')} onClick={() => p.setReaderWidth(v)}>
+              <button type="button" key={v} className={'d' + (p.readerWidth === v ? ' on' : '')} aria-pressed={p.readerWidth === v} onClick={() => p.setReaderWidth(v)}>
                 {v === 'normal' ? 'Normal' : 'Wide'}
-              </div>
+              </button>
             ))}
           </div>
         </div>

@@ -60,7 +60,7 @@ export function FeedArticles({ feed, onBack, onOpenArticle }: Props) {
       ) : error ? (
         <p style={{ color: 'var(--ink-faint)' }}>
           Couldn't load this feed: {error instanceof Error ? error.message : String(error)}{' '}
-          <a style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={() => load(true)}>Retry</a>
+          <button type="button" style={{ color: 'var(--accent)' }} onClick={() => load(true)}>Retry</button>
         </p>
       ) : articles === null ? (
         <p style={{ color: 'var(--ink-faint)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -71,13 +71,13 @@ export function FeedArticles({ feed, onBack, onOpenArticle }: Props) {
       ) : (
         <div className="feed-list">
           {articles.map((a) => (
-            <div className="feed-row" key={a.id} onClick={() => onOpenArticle(a)}>
+            <button type="button" className="feed-row" key={a.id} onClick={() => onOpenArticle(a)}>
               <div className="fmeta">
                 <div className="ft" lang="ja">{a.title}</div>
                 {a.summary && <div className="fl" lang="ja">{htmlToText(a.summary)}</div>}
               </div>
               <div className="ftime" lang="ja">{relTimeJa(a.published)}</div>
-            </div>
+            </button>
           ))}
         </div>
       )}

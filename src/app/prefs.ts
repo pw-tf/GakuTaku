@@ -66,9 +66,8 @@ interface PrefsState {
 }
 
 /**
- * User UI preferences (theme, accent, furigana density). Persisted to localStorage; the furigana
- * density is shared between the reader rail and the settings popover. (Production could later sync
- * these to the user_settings table.)
+ * User preferences (theme, reader layout, reviewer gestures, …), persisted to localStorage and
+ * included in backups.
  */
 export const usePrefs = create<PrefsState>()(
   persist(

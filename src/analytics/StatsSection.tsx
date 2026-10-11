@@ -39,7 +39,7 @@ export function StatsSection({ deckIds }: { deckIds: number[] | null }) {
         <h2>Statistics</h2>
         <div className="density-seg stats-period">
           {PERIODS.map(([p, label]) => (
-            <div key={p} className={'d' + (period === p ? ' on' : '')} onClick={() => setPeriod(p)}>{label}</div>
+            <button type="button" key={p} className={'d' + (period === p ? ' on' : '')} aria-pressed={period === p} onClick={() => setPeriod(p)}>{label}</button>
           ))}
         </div>
       </div>
@@ -90,8 +90,8 @@ function StatsBody({ s }: { s: StatsData }) {
         <div className="ap-h">
           <h3>Reviews</h3>
           <div className="density-seg mini">
-            <div className={'d' + (revMode === 'count' ? ' on' : '')} onClick={() => setRevMode('count')}>Count</div>
-            <div className={'d' + (revMode === 'time' ? ' on' : '')} onClick={() => setRevMode('time')}>Time</div>
+            <button type="button" className={'d' + (revMode === 'count' ? ' on' : '')} aria-pressed={revMode === 'count'} onClick={() => setRevMode('count')}>Count</button>
+            <button type="button" className={'d' + (revMode === 'time' ? ' on' : '')} aria-pressed={revMode === 'time'} onClick={() => setRevMode('time')}>Time</button>
           </div>
         </div>
         <BarChart
@@ -141,7 +141,7 @@ function StatsBody({ s }: { s: StatsData }) {
             <h3>Memory (FSRS)</h3>
             <div className="density-seg mini">
               {(['retrievability', 'stability', 'difficulty'] as const).map((k) => (
-                <div key={k} className={'d' + (memTab === k ? ' on' : '')} onClick={() => setMemTab(k)}>{k[0].toUpperCase() + k.slice(1)}</div>
+                <button type="button" key={k} className={'d' + (memTab === k ? ' on' : '')} aria-pressed={memTab === k} onClick={() => setMemTab(k)}>{k[0].toUpperCase() + k.slice(1)}</button>
               ))}
             </div>
           </div>

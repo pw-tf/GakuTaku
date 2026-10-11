@@ -31,36 +31,39 @@ export interface ExecResult {
   changed: string[];
 }
 
+let sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | null = null;
+
 async function open(): Promise<OpenResult> {
-  const sqlite3 = await sqlite3InitModule();
-  let persistent = false;
+  sqlite3 = await sqlite3InitModule();
   let reason: string | undefined;
   const hasOpfs = typeof navigator !== 'undefined' && typeof navigator.storage?.getDirectory === 'function';
   if (hasOpfs) {
     // Errors here (most often: another tab already holds the database) are real failures — falling
     // back to memory would silently throw away everything done in this tab.
-    const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'gakutaku', initialCapacity: 6 });
-    poolUtil = pool;
-    db = new pool.OpfsSAHPoolDb(DB_FILE);
-    persistent = true;
+    poolUtil = await sqlite3.installOpfsSAHPoolVfs({ name: 'gakutaku', initialCapacity: 6 });
+    prepare(new poolUtil.OpfsSAHPoolDb(DB_FILE));
   } else {
     reason = 'Origin Private File System is not available';
-    db = new sqlite3.oo1.DB(':memory:', 'c');
+    prepare(new sqlite3.oo1.DB(':memory:', 'c'));
   }
+  return { persistent: !!poolUtil, reason };
+}
 
-  sqlite3.capi.sqlite3_update_hook(
-    db.pointer!,
+/** Make `d` the open database: change tracking, SQL functions, pragmas and migrations. */
+function prepare(d: Database): void {
+  db = d;
+  sqlite3!.capi.sqlite3_update_hook(
+    d.pointer!,
     (_ctx: number, _op: number, _db: string, table: string) => {
       changed.add(table);
     },
     0,
   );
-  db.createFunction('uuid', () => crypto.randomUUID(), { deterministic: false });
-  registerSqlFunctions(db);
-  db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = TRUNCATE; PRAGMA synchronous = NORMAL;');
-  migrate(db);
+  d.createFunction('uuid', () => crypto.randomUUID(), { deterministic: false });
+  registerSqlFunctions(d);
+  d.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = TRUNCATE; PRAGMA synchronous = NORMAL;');
+  migrate(d);
   changed.clear();
-  return { persistent, reason };
 }
 
 function migrate(d: Database): void {
@@ -130,12 +133,16 @@ function exportDb(): Uint8Array {
   return Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer]);
 }
 
-/** Replace the database file with a backup. The caller reloads the app afterwards. */
+/**
+ * Replace the database file with a backup, then reopen (and migrate) it so the restore can finish
+ * its own writes (a collection-only restore puts the library back). The caller reloads afterwards.
+ */
 async function importDb(bytes: Uint8Array): Promise<void> {
   if (!poolUtil) throw new Error('Restoring needs persistent storage, which is unavailable on this device.');
   db?.close();
   db = null;
   await poolUtil.importDb(DB_FILE, bytes);
+  prepare(new poolUtil.OpfsSAHPoolDb(DB_FILE));
 }
 
 const api = { open, exec, execMany, execBatch, exportDb, importDb };

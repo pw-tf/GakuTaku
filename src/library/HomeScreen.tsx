@@ -76,7 +76,7 @@ export function HomeScreen({ onOpenBook, onOpenArticle, onStudy, onOpenLibrary, 
             )}
           </div>
         </div>
-        <div className="daily" role="button" tabIndex={0} style={{ cursor: 'pointer' }} onClick={onStudy}>
+        <button type="button" className="daily" onClick={onStudy}>
           <div>
             <Kicker accent>Today</Kicker>
             <div className="big-num">{dueLoading ? <Spinner size={26} /> : due}<span className="u">due</span></div>
@@ -86,7 +86,7 @@ export function HomeScreen({ onOpenBook, onOpenArticle, onStudy, onOpenLibrary, 
               <Icon.flame s={16} /> {streak > 0 ? `${streak}-day streak` : 'Start a streak today'}
             </span>
           </div>
-        </div>
+        </button>
       </div>
 
       <section className="home-sec">

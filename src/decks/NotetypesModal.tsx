@@ -313,7 +313,7 @@ function CardsEditor({ nt, onClose }: { nt: Notetype; onClose: () => void }) {
             </div>
             <div className="density-seg ce-tabs">
               {(['front', 'back', 'css'] as const).map((s) => (
-                <div key={s} className={'d' + (side === s ? ' on' : '')} onClick={() => setSide(s)}>{s === 'front' ? 'Front template' : s === 'back' ? 'Back template' : 'Styling'}</div>
+                <button type="button" key={s} className={'d' + (side === s ? ' on' : '')} aria-pressed={side === s} onClick={() => setSide(s)}>{s === 'front' ? 'Front template' : s === 'back' ? 'Back template' : 'Styling'}</button>
               ))}
             </div>
             <textarea

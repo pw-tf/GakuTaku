@@ -11,7 +11,7 @@ export interface LookupState {
 }
 
 /**
- * Universal lookup controller (build plan §3.5): any surface (reader, RSS, test page) calls
+ * Universal lookup controller: any surface (reader, RSS, test page) calls
  * `lookupToken`/`lookupTerm`; one shared popup renders the result. Reused everywhere so
  * "dictionary across the board" is a single service, not per-page code.
  */

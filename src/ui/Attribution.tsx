@@ -1,6 +1,6 @@
 /**
  * Credits / licensing. JMdict/JMnedict/KANJIDIC are free under the EDRDG license but REQUIRE
- * visible attribution (build plan §6) — reachable from Settings → Credits.
+ * visible attribution — reachable from Settings → Credits.
  */
 export function Attribution() {
   return (

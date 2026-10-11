@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { LOCAL_USER_ID } from '../app/localUser';
 import { Btn, Chip } from '../ui/atoms';
 import { Icon } from '../ui/icons';
+import { Modal } from '../ui/Modal';
+import { useAction } from '../ui/useAction';
 import { loadFeedArticles, relTimeJa, unreadCount } from './articles';
 import { parseFeedXml } from './parse';
 import { proxyFetch } from './proxy';
@@ -96,10 +98,12 @@ export function FeedsSection({ onOpenFeed }: Props) {
                   <Icon.trash s={16} />
                 </button>
               )}
-              <div
+              <button
+                type="button"
                 className={'switch' + (f.enabled ? ' on' : '')}
                 role="switch"
                 aria-checked={f.enabled}
+                aria-label={f.title}
                 title={f.enabled ? 'Turn off' : 'Turn on'}
                 onClick={() => setFeedEnabled(f, LOCAL_USER_ID, !f.enabled)}
               />
@@ -115,7 +119,7 @@ export function FeedsSection({ onOpenFeed }: Props) {
           {enabled.map((f) => {
             const p = previews[f.key];
             return (
-              <div className="feed-row" key={f.key} onClick={() => onOpenFeed(f)}>
+              <button type="button" className="feed-row" key={f.key} onClick={() => onOpenFeed(f)}>
                 <div className="fic"><Icon.rss s={18} /></div>
                 <div className="fmeta">
                   <div className="ft" lang="ja">
@@ -133,7 +137,7 @@ export function FeedsSection({ onOpenFeed }: Props) {
                   </div>
                 </div>
                 <div className="ftime" lang="ja">{p && !p.error ? p.time : ''}</div>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -146,8 +150,7 @@ export function FeedsSection({ onOpenFeed }: Props) {
 
 function AddFeedModal({ userId, onClose }: { userId: string; onClose: () => void }) {
   const [url, setUrl] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const { busy, err, setErr, run } = useAction();
 
   async function submit() {
     const raw = url.trim();
@@ -155,39 +158,28 @@ function AddFeedModal({ userId, onClose }: { userId: string; onClose: () => void
       setErr('Enter a full URL starting with http:// or https://');
       return;
     }
-    setBusy(true);
-    setErr(null);
-    try {
+    const ok = await run(async () => {
       // Validate by fetching + parsing once; also yields the feed's own title.
       const res = await proxyFetch(raw);
       const parsed = parseFeedXml(res.body, res.url || raw);
       await addCustomFeed(userId, raw, parsed.title || new URL(raw).hostname);
-      onClose();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    });
+    if (ok) onClose();
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal-card" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>Add RSS feed</h3>
-          <button className="icon-btn" onClick={onClose} aria-label="Close"><Icon.close s={18} /></button>
-        </div>
+    <Modal title="Add RSS feed" onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
         <div className="modal-body">
-          <div className="opt-field col">
+          <label className="opt-field col">
             <span>Feed URL</span>
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !busy && submit()}
-              placeholder="https://example.com/rss.xml"
-              autoFocus
-            />
-          </div>
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/rss.xml" autoFocus />
+          </label>
           {err && <div style={{ color: 'var(--rate-again)', fontSize: 13 }}>{err}</div>}
           <div style={{ fontSize: 12, color: 'var(--ink-faint)' }}>
             RSS 2.0, RSS 1.0 and Atom feeds are supported — the title is detected automatically. Articles open in the
@@ -195,12 +187,12 @@ function AddFeedModal({ userId, onClose }: { userId: string; onClose: () => void
           </div>
         </div>
         <div className="modal-foot">
-          <Btn onClick={onClose}>Cancel</Btn>
-          <Btn variant="primary" disabled={busy || !url.trim()} onClick={submit}>
+          <Btn type="button" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" type="submit" disabled={busy || !url.trim()}>
             {busy ? 'Checking…' : 'Add feed'}
           </Btn>
         </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }

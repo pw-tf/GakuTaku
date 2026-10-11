@@ -21,7 +21,6 @@ export interface BgTask {
 
 interface TasksState {
   tasks: BgTask[];
-  /** True while any task is still running — used to disable re-triggering controls across navigation. */
   start: (id: string, label: string) => void;
   update: (id: string, patch: Partial<Omit<BgTask, 'id'>>) => void;
   finish: (id: string, status: Exclude<TaskStatus, 'running'>, message?: string) => void;

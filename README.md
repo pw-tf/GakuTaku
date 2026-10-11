@@ -17,7 +17,7 @@ data. Uninstalling the app **deletes its data** — make a backup first.
 
 ## Stack
 
-- React + TypeScript + Vite, Tailwind, Zustand
+- React + TypeScript + Vite, plain CSS, Zustand
 - **Capacitor** wraps the web app as the Android APK (native HTTP for feeds, hardware back button)
 - **SQLite** (official WASM build) in a Web Worker, stored in the Origin Private File System — one
   database file holding decks, notes, cards, review history, books and settings (`src/db/`)

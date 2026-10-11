@@ -99,7 +99,7 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
     return (
       <div className="reader">
         <div className="rd-top">
-          <span className="back" onClick={onClose}><Icon.chevL s={18} /> <span className="back-lbl">Articles</span></span>
+          <button type="button" className="back" onClick={onClose}><Icon.chevL s={18} /> <span className="back-lbl">Articles</span></button>
           <span className="rtitle" lang="ja">{article.title}</span>
         </div>
         <div className="rd-stage"><div className="rd-scroll"><div className="rd-col">

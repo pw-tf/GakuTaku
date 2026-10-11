@@ -77,15 +77,15 @@ export function StudyPicker({ onStudy, onClose }: { onStudy: (deckId: number, na
   return (
     <Modal title="Study" onClose={onClose}>
       <div className="deck-tree study-picker">
-        <div className="deck-row" onClick={() => pick(WHOLE_COLLECTION, 'All decks')}>
+        <button type="button" className="deck-row" onClick={() => pick(WHOLE_COLLECTION, 'All decks')}>
           <span className="dr-name"><b>All decks</b></span>
           <Counts n={{ newCount: sum('newCount'), learnCount: sum('learnCount'), reviewCount: sum('reviewCount') }} />
-        </div>
+        </button>
         {flatten(roots).map(({ node, depth }) => (
-          <div key={node.deckId} className={'deck-row' + (node.filtered ? ' filtered' : '')} style={{ paddingLeft: 10 + depth * 18 }} onClick={() => pick(node.deckId, node.fullName)}>
+          <button type="button" key={node.deckId} className={'deck-row' + (node.filtered ? ' filtered' : '')} style={{ paddingLeft: 10 + depth * 18 }} onClick={() => pick(node.deckId, node.fullName)}>
             <span className="dr-name">{node.name}</span>
             <Counts n={node} />
-          </div>
+          </button>
         ))}
       </div>
     </Modal>
@@ -121,11 +121,10 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
     <div className="page">
       <input ref={fileRef} type="file" accept={fileAccept('.apkg,.colpkg')} hidden onChange={onFile} />
       <div className="sec-bar">
-        <h2>Decks</h2>
         <Btn size="sm" onClick={() => setBrowsing(true)} title="Browse all cards" style={{ marginLeft: 'auto' }}>
           <Icon.search s={15} /> Browse
         </Btn>
-        <span className="more deck-add">
+        <span className="more deck-add" style={{ marginLeft: 0 }}>
           <Btn size="sm" disabled={importing} onClick={() => setMenuOpen((o) => !o)}>
             <Icon.plus s={15} /> Add
           </Btn>
@@ -170,7 +169,7 @@ function DeckList({ roots, loading, onOpen }: { roots: DeckTreeNode[]; loading: 
               >
                 {node.children.length ? <Icon.chevR s={14} style={{ transform: node.collapsed ? 'none' : 'rotate(90deg)', transition: 'transform .15s' }} /> : null}
               </button>
-              <span className="dr-name">{node.name}</span>
+              <button type="button" className="dr-name">{node.name}</button>
               <Counts n={node} />
             </div>
           ))}
@@ -294,11 +293,11 @@ function DeckOverview({ node, onBack, onOpen, onStudy }: { node: DeckTreeNode; o
           <div className="sec-bar"><h2>Subdecks</h2></div>
           <div className="deck-tree">
             {node.children.map((c) => (
-              <div key={c.deckId} className="deck-row" onClick={() => onOpen(c.deckId)}>
+              <button type="button" key={c.deckId} className="deck-row" onClick={() => onOpen(c.deckId)}>
                 <span className="dr-caret empty" />
                 <span className="dr-name">{c.name}</span>
                 <Counts n={c} />
-              </div>
+              </button>
             ))}
           </div>
         </>

@@ -35,7 +35,7 @@ const NAV: { id: 'home' | 'library' | 'review' | 'decks' | 'analytics'; label: s
 const TITLES: Record<View, [string, string]> = {
   home: ['Home', 'ホーム'],
   library: ['Library', '本棚'],
-  decks: ['Decks', 'カード'],
+  decks: ['Decks', 'デッキ'],
   analytics: ['Analytics', '統計'],
   settings: ['Settings', '設定'],
   credits: ['Credits', 'クレジット'],
@@ -148,24 +148,24 @@ export function AppShell() {
           const I = Icon[it.icon];
           const on = it.id === 'review' ? overlay === 'review' : !overlay && view === it.id;
           return (
-            <div key={it.id} className={'nav-item' + (on ? ' on' : '')} onClick={() => navTo(it)} title={it.label}>
+            <button type="button" key={it.id} className={'nav-item' + (on ? ' on' : '')} onClick={() => navTo(it)} title={it.label}>
               <span className="nav-ic"><I s={20} /></span>
               <span className="nav-lbl">{it.label}</span>
               {it.id === 'review' && dueCount > 0 && <span className="nav-badge">{dueCount}</span>}
-            </div>
+            </button>
           );
         })}
         <div className="side-foot">
-          <div className={'nav-item' + (!overlay && view === 'settings' ? ' on' : '')} onClick={() => { setOverlay(null); setView('settings'); }} title="Settings">
+          <button type="button" className={'nav-item' + (!overlay && view === 'settings' ? ' on' : '')} onClick={() => { setOverlay(null); setView('settings'); }} title="Settings">
             <span className="nav-ic"><Icon.gear s={20} /></span>
             <span className="nav-lbl">Settings</span>
-          </div>
+          </button>
         </div>
       </aside>
 
       <div className={'main' + (wall ? ' walled' : '')} style={wall ? { background: wall } : undefined}>
         <div className="topbar">
-          <button className="icon-btn menu-btn" onClick={() => setMenuOpen(true)}><Icon.menu s={20} /></button>
+          <button className="icon-btn menu-btn" aria-label="Menu" onClick={() => setMenuOpen(true)}><Icon.menu s={20} /></button>
           <h1>{title}</h1>
           <span className="sub" lang="ja">{subtitle}</span>
           <span className="spacer" />
