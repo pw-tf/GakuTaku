@@ -12,6 +12,8 @@ import { useBackHandler } from '../app/back';
 import { useKnownWords } from './knownWords';
 import { speak, stopSpeaking } from '../native/tts';
 import { addBookmark, removeBookmark, useBookmarks } from './bookmarks';
+import { logRead } from './readingLog';
+import { jpLength } from '../feeds/parse';
 import type { ReadingPos, RestoreTarget } from './useBook';
 
 const NEXT_SCALE: Record<ReaderFontScale, ReaderFontScale> = { s: 'm', m: 'l', l: 's' };
@@ -53,6 +55,8 @@ interface Props {
   onNextChapter: () => void;
   onPrevChapterEnd: () => void;
   onGoChapter?: (index: number) => void;
+  /** Where finished chapters are logged for Analytics › Reading (book id or article link). */
+  readLog?: { key: string; kind: 'chapter' | 'article'; title: string };
   /** Open another chapter at a paragraph (bookmarks); books only. */
   onGoPosition?: (chapter: number, paragraph: number) => void;
   onProgress: (pos: ReadingPos, immediate?: boolean) => void;
@@ -106,6 +110,38 @@ export function Reader(props: Props) {
   const [speaking, setSpeaking] = useState<number | null>(null);
   /** Bumped to stop a read-aloud run (each run checks it between paragraphs). */
   const speakRun = useRef(0);
+  /** Reading time for the log: active ms this chapter, last activity, and whether it's logged. */
+  const readClock = useRef({ active: 0, last: Date.now(), logged: false });
+  /** Count time since the last page turn / scroll / tap. */
+  // ponytail: gaps over 2 min count as 2 min (put down the phone mid-chapter); use visibility if that's too coarse.
+  const touchClock = () => {
+    const c = readClock.current;
+    const now = Date.now();
+    c.active += Math.min(now - c.last, 120_000);
+    c.last = now;
+  };
+  /** The chapter is finished: log it once (chapter changes reset this). */
+  const markRead = () => {
+    const c = readClock.current;
+    if (c.logged || !props.readLog || props.paragraphs.length === 0) return;
+    c.logged = true;
+    touchClock();
+    const chars = jpLength(props.paragraphs.map((p) => p.map((t) => t.surface).join('')).join(''));
+    void logRead({ docKey: props.readLog.key, chapter: props.chapterIndex, kind: props.readLog.kind, title: props.readLog.title, chars, ms: c.active }).catch(() => {});
+  };
+  useEffect(() => {
+    readClock.current = { active: 0, last: Date.now(), logged: false };
+  }, [props.paragraphs]);
+  // Closing the reader (Back, ×) while at the end also finishes it: a one-page chapter or article
+  // has no "next page" to turn to. (Moving on to the next chapter is logged where that happens.)
+  const atEnd = useRef<() => void>(() => {});
+  atEnd.current = () => {
+    const c = readClock.current;
+    // Opening something and backing straight out isn't reading it.
+    if (props.loadingChapter || c.active + Math.min(Date.now() - c.last, 120_000) < 5000) return;
+    if (paged ? page === pageCount - 1 : scrollFrac >= 0.95 || (scrollRef.current?.scrollHeight ?? 0) <= (scrollRef.current?.clientHeight ?? 0) + 40) markRead();
+  };
+  useEffect(() => () => atEnd.current(), []);
   /** Scroll flow: how far through the chapter (0–1), for the progress label and bar. */
   const [scrollFrac, setScrollFrac] = useState(0);
   const [activeKey, setActiveKey] = useState<number | null>(null);
@@ -402,18 +438,27 @@ export function Reader(props: Props) {
 
   const nextPage = useCallback(() => {
     pendingSave.current = true;
-    if (page < pageCount - 1) setPage(page + 1);
-    else props.onNextChapter();
+    touchClock();
+    // Turning onto the last page finishes the chapter (an effect on page/pageCount would also fire
+    // mid chapter change, with the new text but the old page numbers).
+    if (page < pageCount - 1) {
+      setPage(page + 1);
+      if (page + 1 === pageCount - 1) markRead();
+    } else {
+      markRead();
+      props.onNextChapter();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageCount]);
   const prevPage = useCallback(() => {
     pendingSave.current = true;
+    touchClock();
     if (page > 0) setPage(page - 1);
     else props.onPrevChapterEnd();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
   const goPrevChapter = () => { pendingSave.current = true; props.onPrevChapter(); };
-  const goNextChapter = () => { pendingSave.current = true; props.onNextChapter(); };
+  const goNextChapter = () => { pendingSave.current = true; markRead(); props.onNextChapter(); };
 
   // Arrow keys (vertical RTL flips left/right).
   useEffect(() => {
@@ -522,6 +567,7 @@ export function Reader(props: Props) {
   }
 
   function handleTap(token: FuriToken, key: number, anchor: DOMRect) {
+    touchClock();
     setActiveKey(key);
     // The paragraph holding this token (keys are chapter-global), and the sentence around it.
     let pi = 0;
@@ -546,6 +592,8 @@ export function Reader(props: Props) {
     if (el) {
       const max = el.scrollHeight - el.clientHeight;
       setScrollFrac(max > 0 ? clamp01(el.scrollTop / max) : 0);
+      touchClock();
+      if (max > el.clientHeight * 0.5 && el.scrollTop >= max - 40) markRead();
     }
     if (ignoreScroll.current) return;
     reportProgress(false);

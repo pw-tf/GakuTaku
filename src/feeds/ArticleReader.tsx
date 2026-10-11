@@ -128,6 +128,7 @@ export function ArticleReader({ article, feed, mined, onMine, onReviewMined, onC
       chapterIndex={0}
       chapterCount={1}
       sourceLabel={`${article.title} (${feed.title})`}
+      readLog={{ key: article.link ?? article.id, kind: 'article', title: article.title }}
       paragraphs={state.paragraphs}
       loadingChapter={false}
       restore={RESTORE_TOP}

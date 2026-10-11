@@ -51,6 +51,7 @@ export function BookReader({ doc, mined, onMine, onReviewMined, onClose }: Props
       documentId={doc.id}
       onGoChapter={(i) => book.goChapter(i, 'top')}
       onGoPosition={book.goTo}
+      readLog={{ key: doc.id, kind: 'chapter', title: book.title }}
       paragraphs={book.paragraphs}
       images={book.images}
       loadingChapter={book.loadingChapter}

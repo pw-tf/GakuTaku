@@ -5,6 +5,7 @@
  *   npm run verify:analytics
  */
 import { loadAnalytics, loadStreak, HEATMAP_DAYS } from '../src/analytics/analytics';
+import { loadReading } from '../src/analytics/reading';
 import { loadStats } from '../src/analytics/stats';
 import { timingAt } from '../src/anki/timing';
 import { openTestDb } from './sqliteNode';
@@ -111,6 +112,27 @@ eq('stats: deck life spans back to the first review', (await loadStats(sql, { de
 const other = await loadStats(sql, { deckIds: [999], period: 30 }, NOW, ROLLOVER);
 eq('stats: another deck has none of it', [other.today.reviews, other.counts.new, other.forecast[0].n], [0, 0, 0]);
 eq('stats: this deck has it all', (await loadStats(sql, { deckIds: [1], period: 30 }, NOW, ROLLOVER)).today.reviews, 3);
+
+// ---- Reading ----
+{
+  const log = (key: string, chapter: number, kind: string, chars: number, ms: number, at: number) =>
+    sql.run('INSERT OR IGNORE INTO reading_log (doc_key, chapter, kind, title, chars, ms, at) VALUES (?, ?, ?, ?, ?, ?, ?)', [key, chapter, kind, key, chars, ms, at]);
+  await sql.run("INSERT INTO documents (id, title, added_at) VALUES ('book', '仙人', '2026-01-01')");
+  await sql.run("INSERT INTO reading_positions (id, document_id, percent) VALUES ('p', 'book', 42)");
+  await log('book', 0, 'chapter', 1000, 300_000, NOW - 1000);
+  await log('book', 1, 'chapter', 2000, 600_000, NOW - 2000);
+  await log('book', 1, 'chapter', 9999, 1, NOW); // a re-read doesn't count twice
+  await log('https://nhk/a', 0, 'article', 500, 120_000, NOW - DAY);
+  await log('book', 2, 'chapter', 700, 60_000, NOW - 40 * DAY);
+  await sql.run("INSERT INTO mined_words (id, term, looked_up_at) VALUES ('m1', '猫', ?)", [new Date(NOW).toISOString()]);
+  const r = await loadReading(sql, NOW, ROLLOVER);
+  eq('reading totals', r.total, { chapters: 3, articles: 1, chars: 4200, ms: 1_080_000 });
+  eq('reading last 30 days', r.last30, { chapters: 2, articles: 1, chars: 3500, ms: 1_020_000 });
+  eq('reading today / yesterday', [r.days[HEATMAP_DAYS - 1], r.days[HEATMAP_DAYS - 2]], [{ chapters: 2, articles: 0, chars: 3000, ms: 900_000 }, { chapters: 0, articles: 1, chars: 500, ms: 120_000 }]);
+  eq('reading heatmap: today max, yesterday light, earlier empty', [r.heatmap[HEATMAP_DAYS - 1], r.heatmap[HEATMAP_DAYS - 2], r.heatmap[HEATMAP_DAYS - 3]], [4, 1, 0]);
+  eq('books with progress and chapters read', r.books, [{ id: 'book', title: '仙人', percent: 42, chapters: 3 }]);
+  eq('words mined', [r.minedTotal, r.mined30], [1, 1]);
+}
 
 // An empty collection has no retention figure.
 const empty = await openTestDb();

@@ -5,9 +5,23 @@ import { Kicker } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { useAnalytics } from './analyticsHooks';
 import { StatsSection } from './StatsSection';
+import { ReadingTab } from './ReadingTab';
 
 /** Analytics dashboard, computed live from Anki's review log and cards. */
 export function AnalyticsScreen() {
+  const [tab, setTab] = useState<'reviews' | 'reading'>('reviews');
+  const tabs = (
+    <div className="density-seg an-tabs">
+      <div className={'d' + (tab === 'reviews' ? ' on' : '')} onClick={() => setTab('reviews')}>Reviews</div>
+      <div className={'d' + (tab === 'reading' ? ' on' : '')} onClick={() => setTab('reading')}>Reading</div>
+    </div>
+  );
+  if (tab === 'reading') return <div className="page">{tabs}<ReadingTab /></div>;
+  return <ReviewAnalytics tabs={tabs} />;
+}
+
+/** The review side of Analytics (the dashboard and Anki's statistics), for one deck or all. */
+function ReviewAnalytics({ tabs }: { tabs: React.ReactNode }) {
   // One deck choice for the whole screen (a deck includes its subdecks).
   const [deckId, setDeckId] = useState<number | null>(null);
   const { data: decks } = useLive(() => col.decks(), [], ['decks']);
@@ -16,19 +30,16 @@ export function AnalyticsScreen() {
     return root ? decks!.filter((d) => d.id === root.id || d.name.toLowerCase().startsWith(root.name.toLowerCase() + '::')).map((d) => d.id) : null;
   }, [deckId, decks]);
   const s = useAnalytics(deckIds);
-  /** Heatmap day tapped (index into s.activity). */
-  const [day, setDay] = useState<number | null>(null);
   const deckPicker = (
     <div className="an-deck">
-      <select aria-label="Deck" value={deckId ?? ''} onChange={(e) => { setDeckId(e.target.value ? Number(e.target.value) : null); setDay(null); }}>
+      {tabs}
+      <select aria-label="Deck" value={deckId ?? ''} onChange={(e) => setDeckId(e.target.value ? Number(e.target.value) : null)}>
         <option value="">All decks</option>
         {(decks ?? []).filter((d) => !d.filtered).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
       </select>
     </div>
   );
   if (!s) return <div className="page">{deckPicker}</div>;
-  const heatColor = (n: number) =>
-    n === 0 ? 'var(--paper-sunk)' : `color-mix(in oklch, var(--accent) ${18 + n * 20}%, var(--paper))`;
   const fcMax = Math.max(1, ...s.forecast.map((f) => f.n));
   const todMax = Math.max(1, ...s.tod);
   const matTotal = Math.max(1, s.mature + s.young + s.learning + s.newCards);
@@ -53,11 +64,7 @@ export function AnalyticsScreen() {
     ['New', s.newCards, 'var(--azure)'],
   ];
 
-  /** Heatmap cell i is (HEATMAP_DAYS - 1 - i) study days before today. */
-  const dayLabel = (i: number) => {
-    const d = new Date(Date.now() - (s.heatmap.length - 1 - i) * 86_400_000);
-    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-  };
+  const dayLabel = (i: number) => heatDayLabel(i, s.heatmap.length);
   const dayDetail = (i: number) => {
     const a = s.activity[i];
     if (!a.n) return `${dayLabel(i)} · nothing studied`;
@@ -103,24 +110,7 @@ export function AnalyticsScreen() {
       <div className="panel-row">
         <div className="apanel">
           <div className="ap-h"><h3>Review activity</h3><Kicker>18 weeks</Kicker></div>
-          <div className="heat">
-            {s.heatmap.map((n, i) => (
-              <button
-                type="button"
-                className={'cell' + (day === i ? ' on' : '')}
-                key={i}
-                aria-label={dayLabel(i)}
-                style={{ background: heatColor(n) }}
-                onClick={() => setDay(day === i ? null : i)}
-              />
-            ))}
-          </div>
-          <div className="heat-day" aria-live="polite">
-            {day == null ? 'Tap a day to see what you studied.' : dayDetail(day)}
-          </div>
-          <div className="heat-legend" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
-            Less {[0, 1, 2, 3, 4].map((n) => <span className="cell" key={n} style={{ background: heatColor(n) }} />)} More
-          </div>
+          <Heatmap levels={s.heatmap} detail={dayDetail} />
         </div>
         <div className="apanel">
           <div className="ap-h"><h3>Time of day</h3><Kicker>Reviews / hour</Kicker></div>
@@ -135,5 +125,36 @@ export function AnalyticsScreen() {
 
       <StatsSection deckIds={deckIds} />
     </div>
+  );
+}
+
+const heatColor = (n: number) => (n === 0 ? 'var(--paper-sunk)' : `color-mix(in oklch, var(--accent) ${18 + n * 20}%, var(--paper))`);
+
+/** Date label for heatmap cell i of `count` (the last cell is today). */
+export const heatDayLabel = (i: number, count: number) =>
+  new Date(Date.now() - (count - 1 - i) * 86_400_000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+
+/** An 18-week activity heatmap whose days can be tapped for `detail(i)`. */
+export function Heatmap({ levels, detail }: { levels: number[]; detail: (i: number) => string }) {
+  const [day, setDay] = useState<number | null>(null);
+  return (
+    <>
+      <div className="heat">
+        {levels.map((n, i) => (
+          <button
+            type="button"
+            className={'cell' + (day === i ? ' on' : '')}
+            key={i}
+            aria-label={heatDayLabel(i, levels.length)}
+            style={{ background: heatColor(n) }}
+            onClick={() => setDay(day === i ? null : i)}
+          />
+        ))}
+      </div>
+      <div className="heat-day" aria-live="polite">{day == null ? 'Tap a day to see what you did.' : detail(day)}</div>
+      <div className="heat-legend" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
+        Less {[0, 1, 2, 3, 4].map((n) => <span className="cell" key={n} style={{ background: heatColor(n) }} />)} More
+      </div>
+    </>
   );
 }
