@@ -89,6 +89,7 @@ export function HomeScreen({ onOpenBook, onOpenArticle, onStudy, onOpenLibrary, 
         </div>
       </div>
 
+      <section className="home-sec">
       <div className="sec-bar">
         <h2>Recently read</h2>
         <span className="more" style={{ display: 'flex', gap: 8 }}>
@@ -112,7 +113,9 @@ export function HomeScreen({ onOpenBook, onOpenArticle, onStudy, onOpenLibrary, 
           <Icon.chevR s={14} />
         </button>
       )}
+      </section>
 
+      <section className="home-sec">
       {openFeed ? (
         <FeedArticles
           feed={openFeed}
@@ -122,6 +125,7 @@ export function HomeScreen({ onOpenBook, onOpenArticle, onStudy, onOpenLibrary, 
       ) : (
         <FeedsSection onOpenFeed={setOpenFeed} />
       )}
+      </section>
     </div>
   );
 }
