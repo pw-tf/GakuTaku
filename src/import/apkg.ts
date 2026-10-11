@@ -126,10 +126,24 @@ interface Database {
 
 let sqlitePromise: ReturnType<typeof sqlite3InitModule> | null = null;
 
+/** Anki's `unicase` collation: compare text case-insensitively (Unicode lower case). */
+function unicase(sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>>) {
+  const utf8 = new TextDecoder();
+  const text = (ptr: number, len: number) => utf8.decode(sqlite3.wasm.heap8u().subarray(ptr, ptr + len)).toLowerCase();
+  return (_arg: number, len1: number, p1: number, len2: number, p2: number): number => {
+    const a = text(p1, len1);
+    const b = text(p2, len2);
+    return a < b ? -1 : a > b ? 1 : 0;
+  };
+}
+
 async function openDatabase(bytes: Uint8Array): Promise<Database> {
   sqlitePromise ??= sqlite3InitModule();
   const sqlite3 = await sqlitePromise;
   const db = new sqlite3.oo1.DB(':memory:', 'c');
+  // Anki's schema declares note type, field and template names `COLLATE unicase` (its own
+  // case-insensitive collation). SQLite refuses to read those tables without it, so register one.
+  sqlite3.capi.sqlite3_create_collation_v2(db.pointer!, 'unicase', sqlite3.capi.SQLITE_UTF8, 0, unicase(sqlite3), 0);
   // A WAL-mode file (AnkiDroid keeps its collection in WAL mode, and exports can keep the flag)
   // can't be opened from memory. Header bytes 18/19 are the write/read format: 1 = rollback
   // journal, 2 = WAL. The file itself is complete, so marking it as a plain journal is enough.

@@ -130,6 +130,22 @@ async function run(format: 'legacy' | 'modern') {
   eq(`${tag} older card updated from the file`, [updated.updatedCards, raw.exec(`SELECT ivl FROM cards WHERE id = ${older.id}`)[0].ivl], [1, older.ivl]);
   eq(`${tag} newer card kept`, raw.exec(`SELECT ivl FROM cards WHERE id = ${newer.id}`)[0].ivl, 777);
   eq(`${tag} still no duplicates`, raw.exec('SELECT COUNT(*) AS n FROM cards')[0].n, 20);
+
+  // A note type that lost its templates (an earlier broken import) is repaired by importing again.
+  const [hollowNt] = await col.notetypes();
+  await col.updateNotetype({ ...hollowNt, templates: [] });
+  await importPackage(col, sql, await parseApkg(new Blob([fx.bytes as BlobPart])), media, { isCollection: false, nowMs });
+  eq(`${tag} re-import repairs a note type without templates`, (await col.notetype(hollowNt.id))!.templates.length, hollowNt.templates.length);
+
+  // The broken import of real Anki packages (no unicase collation): note type with no fields or
+  // templates, notes cut to their first field. Importing again restores all of it.
+  const fullFlds = raw.exec(`SELECT id, flds FROM notes WHERE mid = ${hollowNt.id} ORDER BY id`) as { id: number; flds: string }[];
+  await col.updateNotetype({ ...hollowNt, fields: [], templates: [] });
+  for (const n of fullFlds) raw.exec(`UPDATE notes SET flds = '${n.flds.split('\x1f')[0].replace(/'/g, "''")}' WHERE id = ${n.id}`);
+  await importPackage(col, sql, await parseApkg(new Blob([fx.bytes as BlobPart])), media, { isCollection: false, nowMs });
+  const fixedNt = (await col.notetype(hollowNt.id))!;
+  const fixedFlds = raw.exec(`SELECT flds FROM notes WHERE mid = ${hollowNt.id} ORDER BY id`).map((r) => r.flds);
+  eq(`${tag} re-import restores an emptied note type and its notes' fields`, [fixedNt.fields.length, fixedNt.templates.length, fixedFlds], [hollowNt.fields.length, hollowNt.templates.length, fullFlds.map((n) => n.flds)]);
 }
 
 /** The fast media reader must return exactly what zip.js returns, for every entry. */
