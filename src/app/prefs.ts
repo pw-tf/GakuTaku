@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_GESTURES, type Gesture, type ReviewAction } from '../study/gestures';
+import type { Wallpaper } from './wallpaper';
 
 export type FuriganaDensity = 'all' | 'n3' | 'off';
 
@@ -19,6 +20,8 @@ export type ThemeMode = 'system' | 'light' | 'dark' | 'black';
 interface PrefsState {
   accent: string;
   theme: ThemeMode;
+  /** Home screen wallpaper (the photo itself is stored separately, see wallpaper.ts). */
+  wallpaper: Wallpaper;
   furigana: FuriganaDensity;
   /** Last deck a word was mined into — used for one-tap "Add to deck". */
   lastDeckId: number | null;
@@ -50,6 +53,7 @@ interface PrefsState {
   setCardZoom: (z: number) => void;
   setAccent: (a: string) => void;
   setTheme: (t: ThemeMode) => void;
+  setWallpaper: (w: Wallpaper) => void;
   setFurigana: (f: FuriganaDensity) => void;
   setLastDeckId: (id: number | null) => void;
   setReaderOrientation: (o: ReaderOrientation) => void;
@@ -71,6 +75,7 @@ export const usePrefs = create<PrefsState>()(
     (set) => ({
       accent: ACCENTS[0],
       theme: 'system',
+      wallpaper: 'none',
       furigana: 'all',
       lastDeckId: null,
       readerOrientation: null,
@@ -93,6 +98,7 @@ export const usePrefs = create<PrefsState>()(
       setCardZoom: (cardZoom) => set({ cardZoom }),
       setAccent: (accent) => set({ accent }),
       setTheme: (theme) => set({ theme }),
+      setWallpaper: (wallpaper) => set({ wallpaper }),
       setFurigana: (furigana) => set({ furigana }),
       setLastDeckId: (lastDeckId) => set({ lastDeckId }),
       setReaderOrientation: (readerOrientation) => set({ readerOrientation }),
