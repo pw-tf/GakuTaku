@@ -268,6 +268,15 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (doc_key, chapter)
   );
   `,
+  // 6: library categories (a book can be in several).
+  `
+  CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE document_categories (
+    document_id TEXT NOT NULL,
+    category_id TEXT NOT NULL,
+    PRIMARY KEY (document_id, category_id)
+  );
+  `,
 ];
 
 /* Row types (all columns nullable, as SQLite returns them). */

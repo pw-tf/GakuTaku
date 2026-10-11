@@ -1,119 +1,89 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { LOCAL_USER_ID } from '../app/localUser';
 import { fileAccept } from '../app/platform';
-import { Btn, Kicker, Spinner } from '../ui/atoms';
+import { Btn } from '../ui/atoms';
 import { Icon } from '../ui/icons';
 import { importFile, useImporting } from '../import/runImport';
-import { useDocuments, useReadingPositions } from '../db/hooks';
+import { db } from '../db';
+import { useDocuments, useQuery } from '../db/hooks';
 import type { DocumentRecord } from '../db/schema';
-import { FeedsSection } from '../feeds/FeedsSection';
-import { getCover } from '../reader/bookCache';
-import { docKind, removeBook } from '../reader/addBook';
-import { ConfirmModal } from '../ui/Modal';
-import { useBackHandler } from '../app/back';
-import { FeedArticles } from '../feeds/FeedArticles';
-import type { FeedArticle } from '../feeds/parse';
-import type { FeedView } from '../feeds/useFeeds';
+import { removeBook } from '../reader/addBook';
+import { ConfirmModal, Modal, PromptModal } from '../ui/Modal';
+import { BOOK_ACCEPT, BookCard, useCovers, useProgress } from './shelf';
 
-const TONES = ['#b8492f', '#5b6b58', '#3d5a6b', '#6b5b3d', '#7d4a86', '#3f5bb0', '#2f6b4f'];
-function toneFor(id: string): string {
-  let h = 0;
-  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return TONES[h % TONES.length];
+interface Category { id: string; name: string }
+type Sort = 'recent' | 'added' | 'title' | 'progress';
+const SORTS: Record<Sort, string> = { recent: 'Last read', added: 'Date added', title: 'Title', progress: 'Progress' };
+/** The category filter: everything, one category, or books in none. */
+const ALL = '';
+const NONE = '\u0000none';
+
+// ---- Category writes --------------------------------------------------------
+
+/** An error message for a bad category name, or null when it's fine. */
+function nameProblem(name: string, cats: Category[], self?: string): string | null {
+  const n = name.trim();
+  if (!n) return 'Give the category a name.';
+  const dup = cats.find((c) => c.id !== self && c.name.toLowerCase() === n.toLowerCase());
+  if (dup) return `There's already a “${dup.name}” category.`;
+  return null;
 }
-
-/**
- * How many cards fit on one row of a CSS grid. `grid-template-columns` computes to an explicit
- * list of pixel tracks, so counting them is exact — no need to mirror the `minmax()`/`gap` values
- * from the stylesheet (which the mobile breakpoint overrides anyway). The collapsed shelf shows
- * exactly one row at any width, so the library can't push the Feeds section below the fold.
- */
-function useGridColumns(ref: React.RefObject<HTMLElement>, enabled: boolean): number {
-  const [cols, setCols] = useState(6);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !enabled) return;
-    const measure = () => {
-      const tracks = getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length;
-      if (tracks > 0) setCols(tracks);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [ref, enabled]);
-  return cols;
+async function createCategory(name: string): Promise<string> {
+  const id = crypto.randomUUID();
+  await db.execute('INSERT INTO categories (id, name, created_at) VALUES (?, ?, ?)', [id, name.trim(), new Date().toISOString()]);
+  return id;
 }
+const renameCategory = (id: string, name: string) => db.execute('UPDATE categories SET name = ? WHERE id = ?', [name.trim(), id]);
+const deleteCategory = (id: string) =>
+  db.writeTransaction(async (tx) => {
+    await tx.execute('DELETE FROM document_categories WHERE category_id = ?', [id]);
+    await tx.execute('DELETE FROM categories WHERE id = ?', [id]);
+  });
+const setInCategory = (docId: string, catId: string, on: boolean) =>
+  on
+    ? db.execute('INSERT OR IGNORE INTO document_categories (document_id, category_id) VALUES (?, ?)', [docId, catId])
+    : db.execute('DELETE FROM document_categories WHERE document_id = ? AND category_id = ?', [docId, catId]);
 
-const BOOK_ACCEPT = '.epub,application/epub+zip,.pdf,application/pdf,.txt,text/plain,.apkg,.colpkg';
+// ---- Screen -----------------------------------------------------------------
 
-/** Object URLs for stored cover images, by document id (revoked on unmount). */
-function useCovers(ids: string[]): Map<string, string> {
-  const [covers, setCovers] = useState<Map<string, string>>(new Map());
-  const key = ids.join(',');
-  useEffect(() => {
-    let cancelled = false;
-    const urls: string[] = [];
-    void (async () => {
-      const m = new Map<string, string>();
-      for (const id of ids) {
-        const blob = await getCover(id).catch(() => undefined);
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          urls.push(url);
-          m.set(id, url);
-        }
-      }
-      if (!cancelled) setCovers(m);
-    })();
-    return () => {
-      cancelled = true;
-      urls.forEach((u) => URL.revokeObjectURL(u));
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return covers;
-}
-
-interface Props {
-  onOpenBook: (doc: DocumentRecord) => void;
-  onOpenArticle: (article: FeedArticle, feed: FeedView) => void;
-  due: number;
-  dueLoading: boolean;
-  streak: number;
-  /** Open the "Study what?" picker (the Today tile). */
-  onStudy: () => void;
-}
-
-export function LibraryScreen({ onOpenBook, onOpenArticle, onStudy, due, dueLoading, streak }: Props) {
+/** Every book, with search, sorting and categories. */
+export function LibraryScreen({ onOpenBook }: { onOpenBook: (doc: DocumentRecord) => void }) {
   const { data: docs } = useDocuments();
-  const { data: positions } = useReadingPositions();
+  const { data: cats } = useQuery<Category>('SELECT id, name FROM categories ORDER BY name COLLATE NOCASE');
+  const { data: links } = useQuery<{ document_id: string; category_id: string }>('SELECT document_id, category_id FROM document_categories');
+  const { pct, readAt } = useProgress();
   const fileRef = useRef<HTMLInputElement>(null);
-  // Progress lives in the global task store (BackgroundTasks banner) so it survives navigating away.
   const busy = useImporting();
-  // Drill-down into one feed's article list (survives opening/closing the article overlay).
-  const [openFeed, setOpenFeed] = useState<FeedView | null>(null);
-  useBackHandler(openFeed != null, () => setOpenFeed(null));
-  // The shelf shows one row until expanded, so a big library doesn't bury the Feeds section.
-  const [showAllBooks, setShowAllBooks] = useState(false);
-  const gridRef = useRef<HTMLDivElement>(null);
-  const cols = useGridColumns(gridRef, docs.length > 0);
-  const visibleDocs = showAllBooks ? docs : docs.slice(0, cols);
-  const hiddenCount = docs.length - visibleDocs.length;
-  const covers = useCovers(docs.map((d) => d.id));
-  const [removing, setRemoving] = useState<DocumentRecord | null>(null);
+  const [q, setQ] = useState('');
+  const [sort, setSort] = useState<Sort>('recent');
+  const [cat, setCat] = useState(ALL);
+  const [editing, setEditing] = useState<DocumentRecord | null>(null);
+  const [managing, setManaging] = useState(false);
 
-  const pctById = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const p of positions) m.set(p.document_id, p.percent ?? 0);
+  const catsOf = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const l of links) (m.get(l.document_id) ?? m.set(l.document_id, new Set()).get(l.document_id)!).add(l.category_id);
     return m;
-  }, [positions]);
+  }, [links]);
 
-  // Continue = the doc with the most recently updated reading position, else most recent upload.
-  const cont = useMemo(() => {
-    const latest = [...positions].sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))[0];
-    return (latest && docs.find((d) => d.id === latest.document_id)) ?? docs[0];
-  }, [positions, docs]);
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const list = docs.filter((d) => {
+      if (needle && !(d.title ?? '').toLowerCase().includes(needle)) return false;
+      if (cat === NONE) return !catsOf.get(d.id)?.size;
+      return cat === ALL || !!catsOf.get(d.id)?.has(cat);
+    });
+    const by: Record<Sort, (a: DocumentRecord, b: DocumentRecord) => number> = {
+      recent: (a, b) => (readAt.get(b.id) ?? '').localeCompare(readAt.get(a.id) ?? ''),
+      added: () => 0, // docs already come newest first
+      title: (a, b) => (a.title ?? '').localeCompare(b.title ?? '', 'ja'),
+      progress: (a, b) => (pct.get(b.id) ?? 0) - (pct.get(a.id) ?? 0),
+    };
+    return list.sort(by[sort]);
+  }, [docs, q, cat, sort, catsOf, readAt, pct]);
+  const covers = useCovers(shown.map((d) => d.id));
+  // A deleted category can't stay selected.
+  const activeCat = cat === ALL || cat === NONE || cats.some((c) => c.id === cat) ? cat : ALL;
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -125,106 +95,150 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, onStudy, due, dueLoad
   return (
     <div className="page">
       <input ref={fileRef} type="file" accept={fileAccept(BOOK_ACCEPT)} hidden onChange={onFile} />
-
-      <div className="lib-hero">
-        <div className="cont-card" onClick={() => cont && onOpenBook(cont)} style={{ cursor: cont ? 'pointer' : 'default' }}>
-          {cont && covers.get(cont.id) ? (
-            <img className="cc-cover cc-img" src={covers.get(cont.id)} alt="" />
-          ) : (
-            <div className="cc-cover"><div className="sp" /></div>
-          )}
-          <div className="cc-meta">
-            <div className="k">{cont ? 'Continue reading' : 'Your reader'}</div>
-            <div className="t" lang="ja">{cont?.title ?? 'Add your first book'}</div>
-            <div className="a">{cont ? `${pctById.get(cont.id) ?? 0}% read` : 'ePUB, PDF or TXT, from your Downloads or anywhere else.'}</div>
-            {cont && <div className="pr"><i style={{ width: (pctById.get(cont.id) ?? 0) + '%' }} /></div>}
-            {cont ? (
-              <Btn variant="primary" size="sm">Resume <Icon.chevR s={15} /></Btn>
-            ) : (
-              <Btn variant="primary" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
-                <Icon.upload s={15} /> Add a book
-              </Btn>
-            )}
-          </div>
+      <div className="lib-tools">
+        <div className="browse-search">
+          <Icon.search s={16} />
+          <input type="search" placeholder="Search your books" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <div className="daily" role="button" tabIndex={0} style={{ cursor: 'pointer' }} onClick={onStudy}>
-          <div>
-            <Kicker accent>Today</Kicker>
-            <div className="big-num">{dueLoading ? <Spinner size={26} /> : due}<span className="u">due</span></div>
-          </div>
-          <div style={{ marginTop: 'auto', display: 'flex', gap: 18, alignItems: 'center' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--accent)', fontWeight: 600, fontSize: 13 }}>
-              <Icon.flame s={16} /> {streak > 0 ? `${streak}-day streak` : 'Start a streak today'}
-            </span>
-          </div>
-        </div>
+        <select aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+          {(Object.keys(SORTS) as Sort[]).map((s) => <option key={s} value={s}>{SORTS[s]}</option>)}
+        </select>
+        <Btn size="sm" disabled={busy} title="Add a book (ePUB, PDF, TXT) or an Anki deck (.apkg, .colpkg)" onClick={() => fileRef.current?.click()}>
+          <Icon.upload s={15} /> {busy ? 'Working…' : 'Add'}
+        </Btn>
       </div>
 
-      <div className="sec-bar">
-        <h2>Your library</h2>
-        <span className="count">{docs.length} {docs.length === 1 ? 'book' : 'books'}</span>
-        <span className="more" style={{ display: 'flex', gap: 8 }}>
-          <Btn size="sm" disabled={busy} title="Add a book (ePUB, PDF, TXT) or an Anki deck (.apkg, .colpkg)" onClick={() => fileRef.current?.click()}>
-            <Icon.upload s={15} /> {busy ? 'Working…' : 'Add file'}
-          </Btn>
-        </span>
+      <div className="chip-row">
+        <button className={'fchip' + (activeCat === ALL ? ' on' : '')} onClick={() => setCat(ALL)}>All</button>
+        {cats.map((c) => <button key={c.id} className={'fchip' + (activeCat === c.id ? ' on' : '')} onClick={() => setCat(c.id)}>{c.name}</button>)}
+        {cats.length > 0 && <button className={'fchip' + (activeCat === NONE ? ' on' : '')} onClick={() => setCat(NONE)}>Uncategorised</button>}
+        <button className="fchip" onClick={() => setManaging(true)}><Icon.plus s={12} w={2.2} style={{ display: 'inline-block', verticalAlign: '-1px' }} /> {cats.length ? 'Categories' : 'New category'}</button>
       </div>
+
+      <p className="lib-count">{shown.length === docs.length ? `${docs.length} ${docs.length === 1 ? 'book' : 'books'}` : `${shown.length} of ${docs.length} books`}</p>
 
       {docs.length === 0 ? (
         <p style={{ color: 'var(--ink-faint)' }}>No books yet. Add a Japanese ePUB, PDF or TXT file to start reading.</p>
+      ) : shown.length === 0 ? (
+        <p style={{ color: 'var(--ink-faint)' }}>No books match.</p>
       ) : (
-        <div className="book-grid" ref={gridRef}>
-          {visibleDocs.map((b) => {
-            const pct = pctById.get(b.id) ?? 0;
-            const tone = toneFor(b.id);
-            const cover = covers.get(b.id);
-            const kind = docKind(b.type);
-            return (
-              <div className="bcard" key={b.id} onClick={() => onOpenBook(b)}>
-                <div className="cv" style={{ background: `linear-gradient(160deg, ${tone}, color-mix(in oklch, ${tone} 70%, black))` }}>
-                  {cover ? <img className="cover" src={cover} alt="" /> : <div className="ph"><div className="jt" lang="ja">{b.title}</div></div>}
-                  <div className="spine" />
-                  {kind !== 'epub' && <span className="kind">{kind.toUpperCase()}</span>}
-                  <button className="bc-more" aria-label="Remove book" title="Remove book" onClick={(e) => { e.stopPropagation(); setRemoving(b); }}>
-                    <Icon.trash s={14} />
-                  </button>
-                  {pct > 0 && <div className="pct"><i style={{ width: pct + '%' }} /></div>}
-                </div>
-                <div className="bt" lang="ja">{b.title}</div>
-                <div className="ba">{pct > 0 ? pct + '%' : 'New'}</div>
-              </div>
-            );
-          })}
+        <div className="book-grid">
+          {shown.map((b) => <BookCard key={b.id} doc={b} pct={pct.get(b.id) ?? 0} cover={covers.get(b.id)} onOpen={() => onOpenBook(b)} onMore={() => setEditing(b)} />)}
         </div>
       )}
 
-      {(hiddenCount > 0 || showAllBooks) && (
-        <button className="shelf-more" onClick={() => setShowAllBooks((s) => !s)}>
-          {showAllBooks ? 'Show less' : `Show all ${docs.length} books`}
-          <Icon.chevR s={14} />
-        </button>
-      )}
-
-      {removing && (
-        <ConfirmModal
-          title="Remove book?"
-          message={`“${removing.title}” and your place in it will be removed from this device. Cards you mined from it stay.`}
-          confirmLabel="Remove"
-          danger
-          onClose={() => setRemoving(null)}
-          onConfirm={() => removeBook(removing.id)}
-        />
-      )}
-
-      {openFeed ? (
-        <FeedArticles
-          feed={openFeed}
-          onBack={() => setOpenFeed(null)}
-          onOpenArticle={(a) => onOpenArticle(a, openFeed)}
-        />
-      ) : (
-        <FeedsSection onOpenFeed={setOpenFeed} />
-      )}
+      {editing && <BookOptions doc={editing} cats={cats} inCats={catsOf.get(editing.id) ?? new Set()} onClose={() => setEditing(null)} />}
+      {managing && <ManageCategories cats={cats} links={links} onClose={() => setManaging(false)} />}
     </div>
+  );
+}
+
+/** One book's categories (ticked on/off right away), and removing the book. */
+function BookOptions({ doc, cats, inCats, onClose }: { doc: DocumentRecord; cats: Category[]; inCats: Set<string>; onClose: () => void }) {
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  if (adding) {
+    return (
+      <PromptModal
+        title="New category"
+        label="Name"
+        confirmLabel="Add"
+        onClose={() => setAdding(false)}
+        onSubmit={async (name) => {
+          const bad = nameProblem(name, cats);
+          if (bad) return bad;
+          await setInCategory(doc.id, await createCategory(name), true);
+        }}
+      />
+    );
+  }
+  if (removing) {
+    return (
+      <ConfirmModal
+        title="Remove book?"
+        message={`“${doc.title}” and your place in it will be removed from this device. Cards you mined from it stay.`}
+        confirmLabel="Remove"
+        danger
+        onClose={onClose}
+        onConfirm={() => removeBook(doc.id)}
+      />
+    );
+  }
+  return (
+    <Modal title={doc.title ?? 'Book'} onClose={onClose}>
+      <div className="modal-body">
+        <div className="cat-list">
+          {cats.length === 0 && <p className="cat-empty">No categories yet. Add one to sort your books, like “Novels” or “Manga”.</p>}
+          {cats.map((c) => (
+            <label key={c.id} className="cat-row">
+              <input type="checkbox" checked={inCats.has(c.id)} onChange={(e) => void setInCategory(doc.id, c.id, e.target.checked)} />
+              <span>{c.name}</span>
+            </label>
+          ))}
+        </div>
+        <Btn size="sm" onClick={() => setAdding(true)}><Icon.plus s={14} /> New category</Btn>
+      </div>
+      <div className="modal-foot">
+        <Btn variant="ghost" style={{ color: 'var(--rate-again)', marginRight: 'auto' }} onClick={() => setRemoving(true)}><Icon.trash s={15} /> Remove book</Btn>
+        <Btn variant="primary" onClick={onClose}>Done</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/** Create, rename and delete categories. */
+function ManageCategories({ cats, links, onClose }: { cats: Category[]; links: { category_id: string }[]; onClose: () => void }) {
+  const [prompt, setPrompt] = useState<null | { cat?: Category }>(null);
+  const [deleting, setDeleting] = useState<Category | null>(null);
+  const count = (id: string) => links.filter((l) => l.category_id === id).length;
+  if (prompt) {
+    return (
+      <PromptModal
+        title={prompt.cat ? 'Rename category' : 'New category'}
+        label="Name"
+        initial={prompt.cat?.name}
+        confirmLabel={prompt.cat ? 'Rename' : 'Add'}
+        onClose={() => setPrompt(null)}
+        onSubmit={async (name) => {
+          const bad = nameProblem(name, cats, prompt.cat?.id);
+          if (bad) return bad;
+          await (prompt.cat ? renameCategory(prompt.cat.id, name) : createCategory(name));
+        }}
+      />
+    );
+  }
+  if (deleting) {
+    const n = count(deleting.id);
+    return (
+      <ConfirmModal
+        title="Delete category?"
+        message={`“${deleting.name}” will be deleted.${n ? ` Its ${n} ${n === 1 ? 'book stays' : 'books stay'} in your library.` : ''}`}
+        confirmLabel="Delete"
+        danger
+        onClose={() => setDeleting(null)}
+        onConfirm={() => deleteCategory(deleting.id)}
+      />
+    );
+  }
+  return (
+    <Modal title="Categories" onClose={onClose}>
+      <div className="modal-body">
+        <div className="cat-list">
+          {cats.length === 0 && <p className="cat-empty">No categories yet. Add one, then tick books into it from their ⋯ menu.</p>}
+          {cats.map((c) => (
+            <div key={c.id} className="cat-row">
+              <span>{c.name}</span>
+              <span className="n">{count(c.id)}</span>
+              <button className="icon-btn" aria-label={`Rename ${c.name}`} onClick={() => setPrompt({ cat: c })}><Icon.edit s={16} /></button>
+              <button className="icon-btn" aria-label={`Delete ${c.name}`} onClick={() => setDeleting(c)}><Icon.trash s={16} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="modal-foot">
+        <Btn onClick={() => setPrompt({})}><Icon.plus s={15} /> New category</Btn>
+        <Btn variant="primary" onClick={onClose}>Done</Btn>
+      </div>
+    </Modal>
   );
 }

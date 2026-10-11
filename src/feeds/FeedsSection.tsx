@@ -61,7 +61,7 @@ interface Props {
   onOpenFeed: (feed: FeedView) => void;
 }
 
-/** Library "Feeds" section: enabled feeds with latest-article previews, plus manage/add. */
+/** Home "Feeds" section: enabled feeds with latest-article previews, plus manage/add. */
 export function FeedsSection({ onOpenFeed }: Props) {
   const { feeds } = useFeeds();
   const [manage, setManage] = useState(false);

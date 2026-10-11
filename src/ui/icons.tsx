@@ -30,6 +30,9 @@ function svg(paths: string[]) {
 }
 
 export const Icon = {
+  home: svg(['M4 11 12 4l8 7', 'M6 9.5V20h4.5v-6h3v6H18V9.5']),
+  edit: svg(['M4 20h4L19 9l-4-4L4 16z', 'M13.5 6.5l4 4']),
+  more: svg(['M6 12h.01', 'M12 12h.01', 'M18 12h.01']),
   library: svg([
     'M4 5.5A1.5 1.5 0 0 1 5.5 4H9v16H5.5A1.5 1.5 0 0 1 4 18.5z',
     'M9 4h4.5A1.5 1.5 0 0 1 15 5.5v13A1.5 1.5 0 0 1 13.5 20H9',
