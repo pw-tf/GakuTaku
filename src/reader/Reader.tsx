@@ -81,8 +81,8 @@ interface Anchor {
 }
 
 export function Reader(props: Props) {
-  const { furigana, setFurigana, markUnknown, setMarkUnknown } = usePrefs();
   const prefs = usePrefs();
+  const { furigana, setFurigana, markUnknown, setMarkUnknown } = prefs;
   const known = useKnownWords(markUnknown);
   const bookmarks = useBookmarks(props.documentId);
   const lookup = useLookup();
@@ -547,7 +547,8 @@ export function Reader(props: Props) {
       if (paged) applyRestore({ kind: 'anchor', paragraphIndex: pi, fraction: 0 });
       else scrollRef.current?.querySelector(`p[data-pi="${pi}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       lastPos.current = { pi, frac: 0 };
-      await speak(props.paragraphs[pi].map((t) => t.surface).join(''));
+      // No voice: stop here rather than racing through the rest of the chapter.
+      if (!(await speak(props.paragraphs[pi].map((t) => t.surface).join('')))) break;
     }
     if (run === speakRun.current) setSpeaking(null);
   }
@@ -638,9 +639,9 @@ export function Reader(props: Props) {
   return (
     <div className="reader">
       <div className="rd-top">
-        <span className="back" onClick={props.onClose}>
+        <button type="button" className="back" onClick={props.onClose}>
           <Icon.chevL s={18} /> <span className="back-lbl" lang="ja">{props.backLabel ?? 'Back'}</span>
-        </span>
+        </button>
         <span className="rd-sep" style={{ width: 1, height: 22, background: 'var(--rule)' }} />
         <span className="rtitle" lang="ja">{props.title}</span>
         <button className="icon-btn rd-chap-btn" title="Previous chapter" onClick={goPrevChapter} disabled={props.chapterIndex <= 0}>
@@ -734,9 +735,9 @@ export function Reader(props: Props) {
                 <div className="rs-h"><Kicker>Furigana density</Kicker></div>
                 <div className="density-seg">
                   {(['all', 'n3', 'off'] as const).map((v) => (
-                    <div key={v} className={'d' + (furigana === v ? ' on' : '')} onClick={() => setFurigana(v)}>
+                    <button type="button" key={v} className={'d' + (furigana === v ? ' on' : '')} aria-pressed={furigana === v} onClick={() => setFurigana(v)}>
                       {v === 'all' ? 'All' : v === 'n3' ? 'N3+' : 'Off'}
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -819,8 +820,8 @@ export function Reader(props: Props) {
               <div className="rail-sec">
                 <div className="rs-h"><Kicker>Reading orientation</Kicker></div>
                 <div className="density-seg">
-                  <div className={'d' + (!vertical ? ' on' : '')} onClick={() => setOrientation('horizontal')}>Horizontal</div>
-                  <div className={'d' + (vertical ? ' on' : '')} onClick={() => setOrientation('vertical')} lang="ja">縦書き</div>
+                  <button type="button" className={'d' + (!vertical ? ' on' : '')} aria-pressed={!vertical} onClick={() => setOrientation('horizontal')}>Horizontal</button>
+                  <button type="button" className={'d' + (vertical ? ' on' : '')} aria-pressed={vertical} onClick={() => setOrientation('vertical')} lang="ja">縦書き</button>
                 </div>
               </div>
 
@@ -828,8 +829,8 @@ export function Reader(props: Props) {
                 <div className="rail-sec">
                   <div className="rs-h"><Kicker>Page flow</Kicker></div>
                   <div className="density-seg">
-                    <div className={'d' + (flow === 'paged' ? ' on' : '')} onClick={() => setFlow('paged')}>Paged</div>
-                    <div className={'d' + (flow === 'scroll' ? ' on' : '')} onClick={() => setFlow('scroll')}>Scroll</div>
+                    <button type="button" className={'d' + (flow === 'paged' ? ' on' : '')} aria-pressed={flow === 'paged'} onClick={() => setFlow('paged')}>Paged</button>
+                    <button type="button" className={'d' + (flow === 'scroll' ? ' on' : '')} aria-pressed={flow === 'scroll'} onClick={() => setFlow('scroll')}>Scroll</button>
                   </div>
                 </div>
               )}
@@ -837,8 +838,8 @@ export function Reader(props: Props) {
               <div className="rail-sec">
                 <div className="rs-h"><Kicker>Text width</Kicker></div>
                 <div className="density-seg">
-                  <div className={'d' + (width === 'normal' ? ' on' : '')} onClick={() => setWidth('normal')}>Normal</div>
-                  <div className={'d' + (width === 'wide' ? ' on' : '')} onClick={() => setWidth('wide')}>Wide</div>
+                  <button type="button" className={'d' + (width === 'normal' ? ' on' : '')} aria-pressed={width === 'normal'} onClick={() => setWidth('normal')}>Normal</button>
+                  <button type="button" className={'d' + (width === 'wide' ? ' on' : '')} aria-pressed={width === 'wide'} onClick={() => setWidth('wide')}>Wide</button>
                 </div>
               </div>
             </div>

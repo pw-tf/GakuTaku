@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useBackHandler } from '../app/back';
 import { Btn } from './atoms';
 import { Icon } from './icons';
+import { useAction } from './useAction';
 
 /**
  * A centered dialog. Closes on a backdrop tap, the close button and the Android back button. With
@@ -25,7 +26,7 @@ export function Modal({ title, onClose, children, wide, dirty }: { title: string
         downOnBackdrop.current = false;
       }}
     >
-      <div className="modal-card" style={wide ? { width: 'min(640px, 100%)' } : undefined}>
+      <div className="modal-card" role="dialog" aria-modal="true" aria-label={title} style={wide ? { width: 'min(640px, 100%)' } : undefined}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="icon-btn" aria-label="Close" onClick={softClose}><Icon.close s={18} /></button>
@@ -66,19 +67,12 @@ export function PromptModal({
   onClose: () => void;
 }) {
   const [value, setValue] = useState(initial);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, err, setErr, run } = useAction();
   async function submit() {
-    setBusy(true);
-    try {
-      const res = await onSubmit(value);
-      if (typeof res === 'string' && res) setErr(res);
-      else onClose();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    let res: string | void = undefined;
+    if (!(await run(async () => (res = await onSubmit(value))))) return;
+    if (typeof res === 'string' && res) setErr(res);
+    else onClose();
   }
   return (
     <Modal title={title} onClose={onClose}>
@@ -121,8 +115,7 @@ export function ConfirmModal({
   onConfirm: () => Promise<void> | void;
   onClose: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const { busy, err, run } = useAction();
   return (
     <Modal title={title} onClose={onClose}>
       <div className="modal-body">
@@ -136,17 +129,7 @@ export function ConfirmModal({
           disabled={busy}
           style={danger ? { background: 'var(--rate-again)', borderColor: 'var(--rate-again)' } : undefined}
           onClick={async () => {
-            if (busy) return;
-            setBusy(true);
-            setErr(null);
-            try {
-              await onConfirm();
-              onClose();
-            } catch (e) {
-              setErr(e instanceof Error ? e.message : String(e));
-            } finally {
-              setBusy(false);
-            }
+            if (await run(async () => onConfirm())) onClose();
           }}
         >
           {confirmLabel}

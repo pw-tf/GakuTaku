@@ -23,7 +23,7 @@ export function katakanaToHiragana(s: string): string {
  * Align a token's surface form with its (katakana) reading, producing furigana segments.
  * Strips matching okurigana from the head and tail so the reading only covers the kanji core.
  * Good for the common ~95% of cases; ambiguous interior okurigana falls back to one ruby over
- * the whole kanji run (acceptable per the build plan's accuracy note).
+ * the whole kanji run.
  */
 export function alignFurigana(surface: string, readingKatakana?: string): FuriSegment[] {
   if (!readingKatakana || !hasKanji(surface)) {

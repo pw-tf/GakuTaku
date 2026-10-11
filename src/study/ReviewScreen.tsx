@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { col } from '../anki/appCollection';
 import type { Rating } from '../anki/types';
 import { useDark, usePrefs } from '../app/prefs';
@@ -127,7 +127,8 @@ export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
     [state.shown, study, mark, bury, suspend, toggleFlag],
   );
 
-  // Keyboard: Anki desktop's bindings.
+  // Keyboard: Anki desktop's bindings (keys pressed inside the card frame arrive as card events).
+  const keyHandler = useRef<(e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey'>) => void>(() => {});
   useEffect(() => {
     function onKey(e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey'> & { preventDefault?: () => void }) {
       if (dialog) return;
@@ -182,7 +183,7 @@ export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
       onKey(e);
     };
     window.addEventListener('keydown', listener);
-    (window as unknown as { __cardKey?: typeof onKey }).__cardKey = onKey;
+    keyHandler.current = onKey;
     return () => window.removeEventListener('keydown', listener);
   }, [card, state.shown, study, toggleFlag, bury, suspend, mark, dialog]);
 
@@ -198,7 +199,7 @@ export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
           break;
         }
         case 'key':
-          (window as unknown as { __cardKey?: (k: typeof e) => void }).__cardKey?.(e);
+          keyHandler.current({ key: e.key, ctrlKey: e.ctrl, metaKey: e.meta });
           break;
         case 'play':
           study.playRef(e.ref);
@@ -218,7 +219,7 @@ export function ReviewScreen({ deckId, title, onExit, onStudy }: Props) {
 
   const top = (
     <div className="rv-top">
-      <span className="back" onClick={onExit} aria-label="Close"><Icon.close s={18} /></span>
+      <button type="button" className="back" onClick={onExit} aria-label="Close"><Icon.close s={18} /></button>
       {card && (
         <span className="rv-counts" title="New · Learning · To review">
           <span className={'c new' + (state.kind === 'new' ? ' cur' : '')}>{state.counts.new}</span>

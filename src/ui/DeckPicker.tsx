@@ -31,7 +31,7 @@ export function DeckPicker({ currentDeckId, onPick, onClose }: Props) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="deck-picker" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="deck-picker" role="dialog" aria-modal="true" aria-label="Add to deck" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dp-head">
           <span className="dp-t">Add to deck</span>
           <button className="icon-btn" onClick={onClose} aria-label="Close"><Icon.close s={18} /></button>

@@ -96,7 +96,7 @@ export function BookCard({ doc, pct, cover, onOpen, onMore }: { doc: DocumentRec
         )}
         {pct > 0 && <div className="pct"><i style={{ width: pct + '%' }} /></div>}
       </div>
-      <div className="bt" lang="ja">{doc.title}</div>
+      <button type="button" className="bt" lang="ja">{doc.title}</button>
       <div className="ba">{pct > 0 ? pct + '%' : 'New'}</div>
     </div>
   );

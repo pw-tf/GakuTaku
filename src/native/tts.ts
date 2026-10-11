@@ -13,20 +13,19 @@ const NativeTts = registerPlugin<JapaneseTtsPlugin>('JapaneseTts');
 
 /**
  * Japanese text-to-speech. Android's WebView has no Web Speech API, so the app uses the device's
- * TTS engine through a small native plugin; a desktop browser uses `speechSynthesis`.
+ * TTS engine through a small native plugin; a desktop browser uses `speechSynthesis`. Resolves once
+ * the text has been spoken (or stopped); false when it couldn't be (no Japanese voice or engine).
  */
-export async function speak(text: string, lang = 'ja-JP'): Promise<void> {
-  if (!text.trim()) return;
-  if (isNative) {
-    await NativeTts.speak({ text }).catch(() => undefined);
-    return;
-  }
-  if (typeof speechSynthesis === 'undefined') return;
-  await new Promise<void>((resolve) => {
+export async function speak(text: string, lang = 'ja-JP'): Promise<boolean> {
+  if (!text.trim()) return true;
+  if (isNative) return NativeTts.speak({ text }).then(() => true, () => false);
+  if (typeof speechSynthesis === 'undefined') return false;
+  return new Promise<boolean>((resolve) => {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang;
-    u.onend = () => resolve();
-    u.onerror = () => resolve();
+    u.onend = () => resolve(true);
+    // Cancelled by stopSpeaking() or the next speak() is a stop, not a failure.
+    u.onerror = (e) => resolve(e.error === 'interrupted' || e.error === 'canceled');
     speechSynthesis.cancel();
     speechSynthesis.speak(u);
   });

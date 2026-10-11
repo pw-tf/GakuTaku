@@ -12,8 +12,8 @@ export function AnalyticsScreen() {
   const [tab, setTab] = useState<'reviews' | 'reading'>('reviews');
   const tabs = (
     <div className="density-seg an-tabs">
-      <div className={'d' + (tab === 'reviews' ? ' on' : '')} onClick={() => setTab('reviews')}>Reviews</div>
-      <div className={'d' + (tab === 'reading' ? ' on' : '')} onClick={() => setTab('reading')}>Reading</div>
+      <button type="button" className={'d' + (tab === 'reviews' ? ' on' : '')} aria-pressed={tab === 'reviews'} onClick={() => setTab('reviews')}>Reviews</button>
+      <button type="button" className={'d' + (tab === 'reading' ? ' on' : '')} aria-pressed={tab === 'reading'} onClick={() => setTab('reading')}>Reading</button>
     </div>
   );
   if (tab === 'reading') return <div className="page">{tabs}<ReadingTab /></div>;

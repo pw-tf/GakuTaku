@@ -24,7 +24,7 @@ function playOne(tag: AvTag, gen: number): Promise<void> {
   return new Promise((resolve) => {
     if (gen !== generation) return resolve();
     if (tag.kind === 'tts') {
-      void speak(tag.value, tag.lang?.replace('_', '-')).then(resolve);
+      void speak(tag.value, tag.lang?.replace('_', '-')).then(() => resolve());
       return;
     }
     void mediaUrl(tag.value).then((url) => {

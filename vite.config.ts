@@ -63,20 +63,13 @@ function woff2Only(): PluginOption {
   };
 }
 
-/** Cross-origin isolation headers (lets a future multi-threaded FSRS optimizer use SharedArrayBuffer). */
-const COI_HEADERS = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'credentialless',
-};
-
 /** `npm run build:android` — the Capacitor WebView build, which has no use for a service worker. */
 const ANDROID = process.env.GAKUTAKU_TARGET === 'android';
 
 // https://vite.dev/config/
 export default defineConfig({
   // Ignore the gitignored sample-ePUB handoff folder: locked .epub files there crash the file watcher.
-  server: { headers: COI_HEADERS, watch: { ignored: ['**/design_handoff_gakutaku/**'] } },
-  preview: { headers: COI_HEADERS },
+  server: { watch: { ignored: ['**/design_handoff_gakutaku/**'] } },
   plugins: [
     serveRawGzipDict(),
     woff2Only(),
