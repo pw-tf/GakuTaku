@@ -96,10 +96,13 @@ CREATE TABLE cards (id integer primary key, nid integer not null, did integer no
 CREATE TABLE revlog (id integer primary key, cid integer not null, usn integer not null, ease integer not null, ivl integer not null, lastIvl integer not null, factor integer not null, time integer not null, type integer not null);
 CREATE TABLE graves (usn integer not null, oid integer not null, type integer not null);`;
 
+// As Anki writes it: names use Anki's own \`unicase\` collation, which the importer must supply.
 const SCHEMA18_EXTRA = `
-CREATE TABLE notetypes (id integer primary key, name text not null, mtime_secs integer not null, usn integer not null, config blob not null);
-CREATE TABLE fields (ntid integer not null, ord integer not null, name text not null, config blob not null, primary key (ntid, ord));
-CREATE TABLE templates (ntid integer not null, ord integer not null, name text not null, mtime_secs integer not null, usn integer not null, config blob not null, primary key (ntid, ord));
+CREATE TABLE notetypes (id integer primary key, name text not null COLLATE unicase, mtime_secs integer not null, usn integer not null, config blob not null);
+CREATE TABLE fields (ntid integer not null, ord integer not null, name text not null COLLATE unicase, config blob not null, primary key (ntid, ord)) without rowid;
+CREATE UNIQUE INDEX idx_fields_name_ntid ON fields (name, ntid);
+CREATE TABLE templates (ntid integer not null, ord integer not null, name text not null COLLATE unicase, mtime_secs integer not null, usn integer not null, config blob not null, primary key (ntid, ord)) without rowid;
+CREATE UNIQUE INDEX idx_templates_name_ntid ON templates (name, ntid);
 CREATE TABLE decks (id integer primary key, name text not null, mtime_secs integer not null, usn integer not null, common blob not null, kind blob not null);
 CREATE TABLE deck_config (id integer primary key, name text not null, mtime_secs integer not null, usn integer not null, config blob not null);
 CREATE TABLE config (KEY text not null primary key, usn integer not null, mtime_secs integer not null, val blob not null);`;
@@ -161,7 +164,15 @@ export async function buildKaishiPackage(format: 'legacy' | 'modern', nowMs = Da
   const db: Database = new sqlite3.oo1.DB(':memory:', 'c');
   const run = (sql: string, bind: unknown[] = []) => db.exec({ sql, bind: bind as SqlValue[] });
   db.exec(SCHEMA11);
-  if (format === 'modern') db.exec(SCHEMA18_EXTRA);
+  if (format === 'modern') {
+    // Only to build the file; the importer registers its own.
+    sqlite3.capi.sqlite3_create_collation_v2(db.pointer!, 'unicase', sqlite3.capi.SQLITE_UTF8, 0, (_p: number, l1: number, p1: number, l2: number, p2: number) => {
+      const t = (p: number, l: number) => new TextDecoder().decode(sqlite3.wasm.heap8u().subarray(p, p + l)).toLowerCase();
+      const a = t(p1, l1), b = t(p2, l2);
+      return a < b ? -1 : a > b ? 1 : 0;
+    }, 0);
+    db.exec(SCHEMA18_EXTRA);
+  }
 
   const nowSecs = Math.floor(nowMs / 1000);
   const crt = nowSecs - 400 * 86400;

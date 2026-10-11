@@ -170,13 +170,19 @@ export async function importPackage(
     throw new Error(`The note type “${hollow[0].name}” in this file has no card templates, so its cards couldn’t be shown. Please send this file to the developer.`);
   }
   const ntMap = new Map<number, number>();
+  /** Our note types repaired from this file: their notes take the file's fields whatever their mod. */
+  const repairedMids = new Set<number>();
   const ourNts = await col.notetypes();
   for (const nt of pkg.notetypes) {
     const fieldsKey = nt.fields.map((f) => f.name).join('\x1f');
     const sameId = ourNts.find((o) => o.id === nt.id);
+    // An earlier import that couldn't read the package's fields and templates left this note type
+    // empty (and its notes cut to one field): take the file's note type, and its notes below.
+    const hollowHere = !!sameId && sameId.templates.length === 0 && sameId.fields.length <= 1 && nt.fields.length > sameId.fields.length;
+    if (hollowHere) repairedMids.add(sameId.id);
     // Same note type (same id and fields): take the incoming templates when it has as many, or when
-    // ours has lost its templates (an earlier broken import), which repairs those cards.
-    if (sameId && sameId.fields.map((f) => f.name).join('\x1f') === fieldsKey && (sameId.templates.length === nt.templates.length || sameId.templates.length === 0)) {
+    // ours has lost its templates, which repairs those cards.
+    if (sameId && (hollowHere || (sameId.fields.map((f) => f.name).join('\x1f') === fieldsKey && (sameId.templates.length === nt.templates.length || sameId.templates.length === 0)))) {
       // Same note type: take the incoming templates/styling (an updated shared deck).
       await col.updateNotetype({ ...nt, id: sameId.id, name: sameId.name });
       ntMap.set(nt.id, sameId.id);
@@ -215,7 +221,7 @@ export async function importPackage(
       const here = existingNotes.get(existing);
       const mid = ntMap.get(n.mid);
       const nt = mid != null ? ntById.get(mid) : undefined;
-      if (here && nt && here.mid === mid && n.mod > here.mod) {
+      if (here && nt && mid != null && here.mid === mid && (n.mod > here.mod || repairedMids.has(mid))) {
         let flds = n.flds;
         for (const [re, to] of renameRes) flds = flds.replace(re, `$1${to}$2`);
         const fields = splitFields(flds);
