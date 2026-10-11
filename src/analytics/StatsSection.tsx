@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { appSql, col } from '../anki/appCollection';
 import { useLive } from '../db/useLive';
 import { loadStats, type Bucket, type Histogram, type StatsData, type StatsPeriod } from './stats';
@@ -23,15 +23,9 @@ const bucketLabel = (b: Bucket) =>
 const minutes = (ms: number) => (ms >= 3_600_000 ? `${(ms / 3_600_000).toFixed(1)}h` : `${Math.round(ms / 60_000)}m`);
 const pct = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : '—');
 
-export function StatsSection() {
-  const [deckId, setDeckId] = useState<number | null>(null);
+/** Anki's statistics for `deckIds` (null = all decks; the deck is picked at the top of Analytics). */
+export function StatsSection({ deckIds }: { deckIds: number[] | null }) {
   const [period, setPeriod] = useState<StatsPeriod>(30);
-  const { data: decks } = useLive(() => col.decks(), [], ['decks']);
-  const deckIds = useMemo(() => {
-    if (deckId == null || !decks) return null;
-    const root = decks.find((d) => d.id === deckId);
-    return root ? decks.filter((d) => d.id === deckId || d.name.toLowerCase().startsWith(root.name.toLowerCase() + '::')).map((d) => d.id) : null;
-  }, [deckId, decks]);
   const { data: s } = useLive(
     async () => loadStats(appSql, { deckIds, period }, Date.now(), (await col.config()).rollover),
     [deckIds?.join(','), period],
@@ -43,10 +37,6 @@ export function StatsSection() {
     <div className="stats">
       <div className="stats-bar">
         <h2>Statistics</h2>
-        <select aria-label="Deck" value={deckId ?? ''} onChange={(e) => setDeckId(e.target.value ? Number(e.target.value) : null)}>
-          <option value="">All decks</option>
-          {(decks ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
         <div className="density-seg stats-period">
           {PERIODS.map(([p, label]) => (
             <div key={p} className={'d' + (period === p ? ' on' : '')} onClick={() => setPeriod(p)}>{label}</div>

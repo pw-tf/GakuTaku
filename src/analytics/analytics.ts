@@ -27,6 +27,8 @@ export interface AnalyticsData {
   forecast: { d: string; n: number }[];
   /** HEATMAP_DAYS cells (oldest first), intensity 0–4. */
   heatmap: number[];
+  /** What was studied on each heatmap day (same order): reviews, time (ms), reviews passed. */
+  activity: { n: number; ms: number; passed: number }[];
   /** Reviews per hour of day. */
   tod: number[];
   totalReviews: number;
@@ -38,8 +40,13 @@ function studyDayOf(ms: number, rollover: number): number {
   return timingAt(ms, rollover).today;
 }
 
-export async function loadAnalytics(sql: Sql, nowMs: number, rollover: number): Promise<AnalyticsData> {
+/** `deckIds` limits everything but the streak to those decks' cards (null = whole collection). */
+export async function loadAnalytics(sql: Sql, nowMs: number, rollover: number, deckIds: number[] | null = null): Promise<AnalyticsData> {
   const t = timingAt(nowMs, rollover);
+  const ids = deckIds?.join(',') || 'NULL';
+  // Same filters as the statistics below (a card borrowed by a filtered deck counts for its home deck).
+  const deckCards = deckIds ? `(did IN (${ids}) OR odid IN (${ids}))` : '1';
+  const inDeck = deckIds ? `AND cid IN (SELECT id FROM cards WHERE ${deckCards})` : '';
   const dayStartMs = (t.nextDayAt - 86_400) * 1000;
   const heatStartMs = dayStartMs - (HEATMAP_DAYS - 1) * 86_400_000;
 
@@ -50,21 +57,21 @@ export async function loadAnalytics(sql: Sql, nowMs: number, rollover: number): 
        SUM(type = 2 AND queue >= 0 AND ivl < 21) AS young,
        SUM(type = 2 AND queue >= 0 AND ivl >= 21) AS mature,
        SUM(queue = -1) AS suspended
-     FROM cards`,
+     FROM cards WHERE ${deckCards}`,
   );
-  const [today] = await sql.all<{ n: number; ms: number }>(`SELECT COUNT(*) AS n, COALESCE(SUM(time), 0) AS ms FROM revlog WHERE id >= ? AND ease > 0`, [dayStartMs]);
+  const [today] = await sql.all<{ n: number; ms: number }>(`SELECT COUNT(*) AS n, COALESCE(SUM(time), 0) AS ms FROM revlog WHERE id >= ? AND ease > 0 ${inDeck}`, [dayStartMs]);
   const [ret] = await sql.all<{ total: number; passed: number }>(
-    `SELECT COUNT(*) AS total, SUM(ease > 1) AS passed FROM revlog WHERE type = 1 AND ease > 0 AND id >= ?`,
+    `SELECT COUNT(*) AS total, SUM(ease > 1) AS passed FROM revlog WHERE type = 1 AND ease > 0 AND id >= ? ${inDeck}`,
     [dayStartMs - 29 * 86_400_000],
   );
-  const [{ n: totalReviews }] = await sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM revlog WHERE ease > 0`);
+  const [{ n: totalReviews }] = await sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM revlog WHERE ease > 0 ${inDeck}`);
 
   // Forecast: reviews (and interday learning) due over the next week; today includes overdue.
   const due = await sql.all<{ day: number; n: number }>(
-    `SELECT MAX(due, ?1) AS day, COUNT(*) AS n FROM cards WHERE queue IN (2, 3) AND due < ?1 + ?2 GROUP BY MAX(due, ?1)`,
+    `SELECT MAX(due, ?1) AS day, COUNT(*) AS n FROM cards WHERE queue IN (2, 3) AND due < ?1 + ?2 AND ${deckCards} GROUP BY MAX(due, ?1)`,
     [t.today, FORECAST_DAYS],
   );
-  const [lrn] = await sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM cards WHERE queue IN (1, 4) AND due < ?`, [t.nextDayAt]);
+  const [lrn] = await sql.all<{ n: number }>(`SELECT COUNT(*) AS n FROM cards WHERE queue IN (1, 4) AND due < ? AND ${deckCards}`, [t.nextDayAt]);
   const byDay = new Map(due.map((r) => [r.day, r.n]));
   const forecast = Array.from({ length: FORECAST_DAYS }, (_, i) => {
     const d = new Date(nowMs + i * 86_400_000);
@@ -72,15 +79,18 @@ export async function loadAnalytics(sql: Sql, nowMs: number, rollover: number): 
   });
 
   // Activity: reviews per day (bucketed in JS so day boundaries follow the rollover hour and DST).
-  const recent = await sql.all<{ id: number }>(`SELECT id FROM revlog WHERE id >= ? AND ease > 0`, [heatStartMs]);
-  const perDay = new Map<number, number>();
+  const recent = await sql.all<{ id: number; time: number; ease: number }>(`SELECT id, time, ease FROM revlog WHERE id >= ? AND ease > 0 ${inDeck}`, [heatStartMs]);
+  const perDay = new Map<number, { n: number; ms: number; passed: number }>();
   for (const r of recent) {
     const d = studyDayOf(r.id, rollover);
-    perDay.set(d, (perDay.get(d) ?? 0) + 1);
+    const a = perDay.get(d) ?? perDay.set(d, { n: 0, ms: 0, passed: 0 }).get(d)!;
+    a.n++;
+    a.ms += r.time;
+    if (r.ease > 1) a.passed++;
   }
-  const counts = Array.from({ length: HEATMAP_DAYS }, (_, i) => perDay.get(t.today - (HEATMAP_DAYS - 1 - i)) ?? 0);
-  const max = Math.max(1, ...counts);
-  const heatmap = counts.map((n) => (n === 0 ? 0 : Math.min(4, Math.ceil((n / max) * 4))));
+  const activity = Array.from({ length: HEATMAP_DAYS }, (_, i) => perDay.get(t.today - (HEATMAP_DAYS - 1 - i)) ?? { n: 0, ms: 0, passed: 0 });
+  const max = Math.max(1, ...activity.map((a) => a.n));
+  const heatmap = activity.map(({ n }) => (n === 0 ? 0 : Math.min(4, Math.ceil((n / max) * 4))));
 
   const streak = await loadStreak(sql, nowMs, rollover);
 
@@ -99,6 +109,7 @@ export async function loadAnalytics(sql: Sql, nowMs: number, rollover: number): 
     suspended: cards.suspended ?? 0,
     forecast,
     heatmap,
+    activity,
     tod,
     totalReviews,
     totalCards: cards.total ?? 0,

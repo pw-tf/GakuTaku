@@ -79,6 +79,14 @@ eq('heatmap today is the max bucket', a.heatmap[HEATMAP_DAYS - 1], 4);
 eq('heatmap 3 days ago empty', a.heatmap[HEATMAP_DAYS - 4], 0);
 eq('heatmap yesterday', a.heatmap[HEATMAP_DAYS - 2], 2);
 eq('time-of-day total', a.tod.reduce((x, y) => x + y, 0), 6);
+// What was studied on a heatmap day: today 3 reviews, 2 min, 2 passed (one Again).
+eq('activity today', a.activity[HEATMAP_DAYS - 1], { n: 3, ms: 120_000, passed: 2 });
+eq('activity yesterday', a.activity[HEATMAP_DAYS - 2], { n: 1, ms: 10_000, passed: 1 });
+// Per deck: all of it is deck 1; another deck has none of it.
+const inDeck = await loadAnalytics(sql, NOW, ROLLOVER, [1]);
+eq('analytics for the deck = whole collection here', [inDeck.totalCards, inDeck.reviewsToday, inDeck.retention], [8, 3, 80]);
+const elsewhere = await loadAnalytics(sql, NOW, ROLLOVER, [999]);
+eq('analytics for another deck are empty', [elsewhere.totalCards, elsewhere.reviewsToday, elsewhere.totalReviews, elsewhere.forecast[0].n, elsewhere.activity[HEATMAP_DAYS - 1].n], [0, 0, 0, 0, 0]);
 
 // Streak survives "not studied yet today" (counts back from yesterday).
 eq('streak tomorrow before studying', await loadStreak(sql, NOW + DAY, ROLLOVER), 3);

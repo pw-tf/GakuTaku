@@ -407,6 +407,11 @@ body { overflow: hidden; }
 
 .heat { display:grid; grid-auto-flow: column; grid-template-rows: repeat(7,1fr); gap: 4px; }
 .heat .cell { width: 14px; height: 14px; border-radius: 3px; }
+.an-deck { margin-bottom: 16px; }
+.an-deck select { border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 7px 10px; font: inherit; font-size: 14px; background: var(--paper); color: var(--ink); max-width: 100%; }
+.heat .cell { border: 0; padding: 0; cursor: pointer; }
+.heat .cell.on { outline: 2px solid var(--ink); outline-offset: 1px; }
+.heat-day { margin-top: 10px; font-size: 13px; color: var(--ink-soft); min-height: 1.4em; }
 .heat-legend { display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10px; color:var(--ink-faint); letter-spacing:0.06em; }
 .heat-legend .cell { width:12px;height:12px;border-radius:3px; }
 
