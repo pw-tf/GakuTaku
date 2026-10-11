@@ -3,6 +3,7 @@ import { appSql, col } from '../anki/appCollection';
 import { stripHtml } from '../anki/template';
 import { findDeckNode, type DeckTreeNode } from '../anki/deckTree';
 import { deckSearch } from '../anki/search';
+import { WHOLE_COLLECTION } from '../anki/queue';
 import { fileAccept } from '../app/platform';
 import { LOCAL_USER_ID } from '../app/localUser';
 import { useBackHandler } from '../app/back';
@@ -10,7 +11,7 @@ import { useLive } from '../db/useLive';
 import { importFile, useImporting } from '../import/runImport';
 import { Btn, Spinner } from '../ui/atoms';
 import { Icon } from '../ui/icons';
-import { ConfirmModal, PromptModal } from '../ui/Modal';
+import { ConfirmModal, Modal, PromptModal } from '../ui/Modal';
 import { AddNoteModal } from './AddNoteModal';
 import { BrowseCards } from './BrowseCards';
 import { DeckOptionsModal } from './DeckOptionsModal';
@@ -62,6 +63,32 @@ function Counts({ n }: { n: Pick<DeckTreeNode, 'newCount' | 'learnCount' | 'revi
       <span className={'c learn' + (n.learnCount ? '' : ' zero')} title="Learning">{n.learnCount}</span>
       <span className={'c due' + (n.reviewCount ? '' : ' zero')} title="To review">{n.reviewCount}</span>
     </span>
+  );
+}
+
+/** "Study what?": every deck with its due counts, plus all decks together. Tapping one starts it. */
+export function StudyPicker({ onStudy, onClose }: { onStudy: (deckId: number, name: string) => void; onClose: () => void }) {
+  const { data: roots = [] } = useDeckTree();
+  const sum = (k: 'newCount' | 'learnCount' | 'reviewCount') => roots.reduce((a, r) => a + r[k], 0);
+  const pick = (id: number, name: string) => {
+    onClose();
+    onStudy(id, name);
+  };
+  return (
+    <Modal title="Study" onClose={onClose}>
+      <div className="deck-tree study-picker">
+        <div className="deck-row" onClick={() => pick(WHOLE_COLLECTION, 'All decks')}>
+          <span className="dr-name"><b>All decks</b></span>
+          <Counts n={{ newCount: sum('newCount'), learnCount: sum('learnCount'), reviewCount: sum('reviewCount') }} />
+        </div>
+        {flatten(roots).map(({ node, depth }) => (
+          <div key={node.deckId} className={'deck-row' + (node.filtered ? ' filtered' : '')} style={{ paddingLeft: 10 + depth * 18 }} onClick={() => pick(node.deckId, node.fullName)}>
+            <span className="dr-name">{node.name}</span>
+            <Counts n={node} />
+          </div>
+        ))}
+      </div>
+    </Modal>
   );
 }
 

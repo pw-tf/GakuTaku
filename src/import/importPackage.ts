@@ -162,12 +162,21 @@ export async function importPackage(
   const fallbackDeck = deckMap.values().next().value ?? (await col.getOrCreateDeck('Default'));
 
   // ---- note types ----
+  // A note type without card templates can't show its cards: refuse rather than import cards that
+  // would all read "This note type has no card templates".
+  const usedMids = new Set(pkg.notes.map((n) => n.mid));
+  const hollow = pkg.notetypes.filter((nt) => usedMids.has(nt.id) && nt.templates.length === 0);
+  if (hollow.length) {
+    throw new Error(`The note type “${hollow[0].name}” in this file has no card templates, so its cards couldn’t be shown. Please send this file to the developer.`);
+  }
   const ntMap = new Map<number, number>();
   const ourNts = await col.notetypes();
   for (const nt of pkg.notetypes) {
     const fieldsKey = nt.fields.map((f) => f.name).join('\x1f');
     const sameId = ourNts.find((o) => o.id === nt.id);
-    if (sameId && sameId.fields.map((f) => f.name).join('\x1f') === fieldsKey && sameId.templates.length === nt.templates.length) {
+    // Same note type (same id and fields): take the incoming templates when it has as many, or when
+    // ours has lost its templates (an earlier broken import), which repairs those cards.
+    if (sameId && sameId.fields.map((f) => f.name).join('\x1f') === fieldsKey && (sameId.templates.length === nt.templates.length || sameId.templates.length === 0)) {
       // Same note type: take the incoming templates/styling (an updated shared deck).
       await col.updateNotetype({ ...nt, id: sameId.id, name: sameId.name });
       ntMap.set(nt.id, sameId.id);

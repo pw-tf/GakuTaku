@@ -130,6 +130,12 @@ async function run(format: 'legacy' | 'modern') {
   eq(`${tag} older card updated from the file`, [updated.updatedCards, raw.exec(`SELECT ivl FROM cards WHERE id = ${older.id}`)[0].ivl], [1, older.ivl]);
   eq(`${tag} newer card kept`, raw.exec(`SELECT ivl FROM cards WHERE id = ${newer.id}`)[0].ivl, 777);
   eq(`${tag} still no duplicates`, raw.exec('SELECT COUNT(*) AS n FROM cards')[0].n, 20);
+
+  // A note type that lost its templates (an earlier broken import) is repaired by importing again.
+  const [hollowNt] = await col.notetypes();
+  await col.updateNotetype({ ...hollowNt, templates: [] });
+  await importPackage(col, sql, await parseApkg(new Blob([fx.bytes as BlobPart])), media, { isCollection: false, nowMs });
+  eq(`${tag} re-import repairs a note type without templates`, (await col.notetype(hollowNt.id))!.templates.length, hollowNt.templates.length);
 }
 
 /** The fast media reader must return exactly what zip.js returns, for every entry. */

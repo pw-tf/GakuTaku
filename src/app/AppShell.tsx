@@ -10,7 +10,7 @@ import { SettingsScreen } from '../ui/Settings';
 import { Attribution } from '../ui/Attribution';
 import { BackgroundTasks } from '../ui/BackgroundTasks';
 import { LibraryScreen } from '../library/LibraryScreen';
-import { DecksScreen, useDeckTree } from '../decks/DecksScreen';
+import { DecksScreen, StudyPicker, useDeckTree } from '../decks/DecksScreen';
 import { AnalyticsScreen } from '../analytics/AnalyticsScreen';
 import { ReviewScreen } from '../study/ReviewScreen';
 import { useStreak } from '../analytics/analyticsHooks';
@@ -52,6 +52,8 @@ export function AppShell() {
     deckId: WHOLE_COLLECTION, title: 'All decks', returnTo: null, tempDeck: false,
   });
   const [menuOpen, setMenuOpen] = useState(false);
+  /** The "Study what?" deck picker (Review in the menu, the Today tile). */
+  const [studyPicking, setStudyPicking] = useState(false);
 
   const { data: deckTree, loading: dueLoading } = useDeckTree();
   const dueCount = (deckTree ?? []).reduce((n, d) => n + d.newCount + d.learnCount + d.reviewCount, 0);
@@ -119,7 +121,7 @@ export function AppShell() {
   }
   function navTo(item: (typeof NAV)[number]) {
     if (item.id === 'review') {
-      startReview(WHOLE_COLLECTION, 'All decks');
+      setStudyPicking(true);
       return;
     }
     setOverlay(null);
@@ -162,7 +164,7 @@ export function AppShell() {
           <span className="spacer" />
         </div>
         <div className="scroll">
-          {view === 'library' && <LibraryScreen onOpenBook={openBook} onOpenArticle={openArticle} due={dueCount} dueLoading={dueLoading} streak={streak} />}
+          {view === 'library' && <LibraryScreen onOpenBook={openBook} onOpenArticle={openArticle} onStudy={() => setStudyPicking(true)} due={dueCount} dueLoading={dueLoading} streak={streak} />}
           {view === 'decks' && <DecksScreen onStudy={(id, name) => startReview(id, name)} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'settings' && <SettingsScreen onOpenCredits={() => setView('credits')} />}
@@ -196,6 +198,8 @@ export function AppShell() {
       {overlay === 'review' && (
         <ReviewScreen deckId={reviewSource.deckId} title={reviewSource.title} onExit={exitReview} onStudy={(id, name) => startReview(id, name)} />
       )}
+
+      {studyPicking && <StudyPicker onStudy={(id, name) => startReview(id, name)} onClose={() => setStudyPicking(false)} />}
 
       <BackgroundTasks />
 

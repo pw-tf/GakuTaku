@@ -81,9 +81,11 @@ interface Props {
   due: number;
   dueLoading: boolean;
   streak: number;
+  /** Open the "Study what?" picker (the Today tile). */
+  onStudy: () => void;
 }
 
-export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, streak }: Props) {
+export function LibraryScreen({ onOpenBook, onOpenArticle, onStudy, due, dueLoading, streak }: Props) {
   const { data: docs } = useDocuments();
   const { data: positions } = useReadingPositions();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -145,7 +147,7 @@ export function LibraryScreen({ onOpenBook, onOpenArticle, due, dueLoading, stre
             )}
           </div>
         </div>
-        <div className="daily">
+        <div className="daily" role="button" tabIndex={0} style={{ cursor: 'pointer' }} onClick={onStudy}>
           <div>
             <Kicker accent>Today</Kicker>
             <div className="big-num">{dueLoading ? <Spinner size={26} /> : due}<span className="u">due</span></div>
