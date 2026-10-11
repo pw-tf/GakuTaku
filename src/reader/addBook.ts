@@ -82,6 +82,7 @@ export async function removeBook(docId: string): Promise<void> {
   await db.writeTransaction(async (tx) => {
     await tx.execute('DELETE FROM reading_positions WHERE document_id = ?', [docId]);
     await tx.execute('DELETE FROM bookmarks WHERE document_id = ?', [docId]);
+    await tx.execute('DELETE FROM document_categories WHERE document_id = ?', [docId]);
     await tx.execute('DELETE FROM documents WHERE id = ?', [docId]);
   });
   await deleteBookFiles(docId);

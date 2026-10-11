@@ -26,7 +26,7 @@ const source: BackupSource = {
 };
 
 /** The library's tables: a collection-only restore leaves these as they are (their files aren't in it). */
-const LIBRARY_TABLES = ['documents', 'reading_positions', 'feeds', 'bookmarks', 'reading_log'] as const;
+const LIBRARY_TABLES = ['documents', 'reading_positions', 'feeds', 'bookmarks', 'reading_log', 'categories', 'document_categories'] as const;
 
 const target: RestoreTarget = {
   schemaVersion: MIGRATIONS.length,

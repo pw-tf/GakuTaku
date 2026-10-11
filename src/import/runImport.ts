@@ -1,7 +1,7 @@
 import { useTasks } from '../app/tasks';
 
 /**
- * Shared file-import driver used by both the Library and Decks screens. Branches on file type
+ * Shared file-import driver used by the Home, Library and Decks screens. Branches on file type
  * (.apkg/.colpkg → Anki import, .epub/.pdf/.txt → library), reports progress through the global task store so
  * the `<BackgroundTasks/>` banner shows it regardless of which screen kicked it off, and dynamically
  * imports the heavy stacks so they stay out of the initial bundle.

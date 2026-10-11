@@ -13,7 +13,7 @@ interface Props {
   onOpenArticle: (article: FeedArticle) => void;
 }
 
-/** Article list for one feed (drill-down from the Library's Feeds section). */
+/** Article list for one feed (drill-down from Home's Feeds section). */
 export function FeedArticles({ feed, onBack, onOpenArticle }: Props) {
   const [articles, setArticles] = useState<FeedArticle[] | null>(null);
   const [error, setError] = useState<unknown>(null);

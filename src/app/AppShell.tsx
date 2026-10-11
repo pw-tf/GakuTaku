@@ -9,6 +9,7 @@ import { Icon, type IconName } from '../ui/icons';
 import { SettingsScreen } from '../ui/Settings';
 import { Attribution } from '../ui/Attribution';
 import { BackgroundTasks } from '../ui/BackgroundTasks';
+import { HomeScreen } from '../library/HomeScreen';
 import { LibraryScreen } from '../library/LibraryScreen';
 import { DecksScreen, StudyPicker, useDeckTree } from '../decks/DecksScreen';
 import { AnalyticsScreen } from '../analytics/AnalyticsScreen';
@@ -19,10 +20,11 @@ import type { DocumentRecord } from '../db/schema';
 import type { FeedArticle } from '../feeds/parse';
 import type { FeedView } from '../feeds/useFeeds';
 
-type View = 'library' | 'decks' | 'analytics' | 'settings' | 'credits';
+type View = 'home' | 'library' | 'decks' | 'analytics' | 'settings' | 'credits';
 type Overlay = null | 'reader' | 'article' | 'review';
 
-const NAV: { id: 'library' | 'review' | 'decks' | 'analytics'; label: string; icon: IconName; overlay?: boolean }[] = [
+const NAV: { id: 'home' | 'library' | 'review' | 'decks' | 'analytics'; label: string; icon: IconName; overlay?: boolean }[] = [
+  { id: 'home', label: 'Home', icon: 'home' },
   { id: 'library', label: 'Library', icon: 'library' },
   { id: 'review', label: 'Review', icon: 'review', overlay: true },
   { id: 'decks', label: 'Decks', icon: 'decks' },
@@ -30,7 +32,8 @@ const NAV: { id: 'library' | 'review' | 'decks' | 'analytics'; label: string; ic
 ];
 
 const TITLES: Record<View, [string, string]> = {
-  library: ['Library', '本棚 · フィード'],
+  home: ['Home', 'ホーム'],
+  library: ['Library', '本棚'],
   decks: ['Decks', 'カード'],
   analytics: ['Analytics', '統計'],
   settings: ['Settings', '設定'],
@@ -42,7 +45,7 @@ const BookReader = lazy(() => import('../reader/BookReader').then((m) => ({ defa
 const ArticleReader = lazy(() => import('../feeds/ArticleReader').then((m) => ({ default: m.ArticleReader })));
 
 export function AppShell() {
-  const [view, setView] = useState<View>('library');
+  const [view, setView] = useState<View>('home');
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [book, setBook] = useState<DocumentRecord | null>(null);
   const [articleView, setArticleView] = useState<{ article: FeedArticle; feed: FeedView } | null>(null);
@@ -84,8 +87,8 @@ export function AppShell() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
 
-  // Android back: close the innermost open thing; on a tab other than Library, go to Library.
-  useBackHandler(view !== 'library', () => setView('library'));
+  // Android back: close the innermost open thing; on a tab other than Home, go Home.
+  useBackHandler(view !== 'home', () => setView('home'));
   useBackHandler(overlay !== null, () => (overlay === 'review' ? exitReview() : setOverlay(null)));
   useBackHandler(menuOpen, () => setMenuOpen(false));
 
@@ -164,7 +167,8 @@ export function AppShell() {
           <span className="spacer" />
         </div>
         <div className="scroll">
-          {view === 'library' && <LibraryScreen onOpenBook={openBook} onOpenArticle={openArticle} onStudy={() => setStudyPicking(true)} due={dueCount} dueLoading={dueLoading} streak={streak} />}
+          {view === 'home' && <HomeScreen onOpenBook={openBook} onOpenArticle={openArticle} onStudy={() => setStudyPicking(true)} onOpenLibrary={() => setView('library')} due={dueCount} dueLoading={dueLoading} streak={streak} />}
+          {view === 'library' && <LibraryScreen onOpenBook={openBook} />}
           {view === 'decks' && <DecksScreen onStudy={(id, name) => startReview(id, name)} />}
           {view === 'analytics' && <AnalyticsScreen />}
           {view === 'settings' && <SettingsScreen onOpenCredits={() => setView('credits')} />}
