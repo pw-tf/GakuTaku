@@ -254,6 +254,20 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX bookmarks_by_document ON bookmarks(document_id);
   `,
+  // 5: reading history for Analytics › Reading: one row per finished chapter or article (re-reads
+  // don't count twice). `doc_key` is the book's id or the article's link.
+  `
+  CREATE TABLE reading_log (
+    doc_key TEXT NOT NULL,
+    chapter INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    chars INTEGER NOT NULL,
+    ms INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (doc_key, chapter)
+  );
+  `,
 ];
 
 /* Row types (all columns nullable, as SQLite returns them). */
