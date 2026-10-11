@@ -162,7 +162,29 @@ async function readerMatchesZipJs() {
   }
 }
 
+/**
+ * AnkiDroid keeps its collection in WAL journal mode, and exports can carry that flag in the
+ * database header. An in-memory SQLite can't open a WAL-mode file, so the importer must clear it.
+ */
+async function walModeCollection() {
+  const fx = await buildKaishiPackage('legacy', Date.now());
+  const entries = await new ZipReader(new BlobReader(new Blob([fx.bytes as BlobPart]))).getEntries();
+  const w = new ZipWriter(new BlobWriter('application/zip'));
+  for (const e of entries) {
+    let data = await (e as unknown as { getData: (x: Uint8ArrayWriter) => Promise<Uint8Array> }).getData(new Uint8ArrayWriter());
+    if (e.filename.startsWith('collection.anki2')) {
+      data = new Uint8Array(data);
+      data[18] = 2; // file format write version: WAL
+      data[19] = 2; // read version: WAL
+    }
+    await w.add(e.filename, new Uint8ArrayReader(data));
+  }
+  const pkg = await parseApkg(await w.close());
+  eq('WAL-mode collection (AnkiDroid) imports', [pkg.notes.length > 0, pkg.cards.length], [true, fx.cards.length]);
+}
+
 async function main() {
+  await walModeCollection();
   await run('legacy');
   await run('modern');
   await readerMatchesZipJs();

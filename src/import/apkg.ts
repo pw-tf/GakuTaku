@@ -130,6 +130,13 @@ async function openDatabase(bytes: Uint8Array): Promise<Database> {
   sqlitePromise ??= sqlite3InitModule();
   const sqlite3 = await sqlitePromise;
   const db = new sqlite3.oo1.DB(':memory:', 'c');
+  // A WAL-mode file (AnkiDroid keeps its collection in WAL mode, and exports can keep the flag)
+  // can't be opened from memory. Header bytes 18/19 are the write/read format: 1 = rollback
+  // journal, 2 = WAL. The file itself is complete, so marking it as a plain journal is enough.
+  if (bytes[18] === 2 || bytes[19] === 2) {
+    bytes[18] = 1;
+    bytes[19] = 1;
+  }
   const p = sqlite3.wasm.allocFromTypedArray(bytes);
   const rc = sqlite3.capi.sqlite3_deserialize(
     db.pointer!,
@@ -266,7 +273,13 @@ function deckConfigFromJson(c: Record<string, unknown>): DeckConfig {
 // ---- Schema 11 (legacy JSON) --------------------------------------------------------------
 
 function parseLegacyCol(db: Database) {
-  const col = rows(db, 'SELECT crt, conf, models, decks, dconf FROM col LIMIT 1')[0];
+  let col: Record<string, unknown> | undefined;
+  try {
+    col = db.exec('SELECT crt, conf, models, decks, dconf FROM col LIMIT 1')[0];
+  } catch (e) {
+    // Say what SQLite said: "no collection" hid the real reason before.
+    throw new UnsupportedApkgError(`This package’s collection couldn’t be read (${e instanceof Error ? e.message : String(e)}).`);
+  }
   if (!col) throw new UnsupportedApkgError('This file has no Anki collection inside.');
   const conf = json<Record<string, unknown>>(col.conf, {});
   const models = json<Record<string, Record<string, unknown>>>(col.models, {});
