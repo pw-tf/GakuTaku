@@ -1,9 +1,76 @@
 # GakuTaku
 
-A personal Android app (plus a desktop web build) for learning Japanese: read books and NHK news
-with furigana and tap-to-lookup, mine words into flashcards, and review them with FSRS — a
-replacement for Anki/AnkiDroid. Everything is stored **on the device**; there are no accounts and no
-server.
+Learn Japanese by reading. GakuTaku is an Android app for reading Japanese books and news with
+furigana and tap-to-look-up. You turn the words you don't know into flashcards with one tap, then
+review them with the same scheduler Anki uses. It can replace Anki/AnkiDroid: it imports your
+collection and keeps every card's schedule and history.
+
+Everything stays **on your phone**. There are no accounts, no server and no tracking. A desktop
+browser version works too, with a few limits (see [below](#on-a-desktop-browser)).
+
+<p align="center">
+  <img src="docs/screenshots/reader-lookup.png" width="250" alt="Reading 吾輩は猫である with furigana; tapping 人間 opens its dictionary entry">
+  <img src="docs/screenshots/review.png" width="250" alt="Reviewing a mined word: the word, its reading, meaning and the sentence it came from">
+  <img src="docs/screenshots/reader-vertical.png" width="250" alt="走れメロス in vertical text (縦書き) in the dark theme">
+</p>
+
+## Read
+
+- **Books:** ePUB, PDF and TXT files from your phone. Shift_JIS/EUC-JP text files and Aozora Bunko
+  markup are handled.
+- **News:** NHK やさしいことばニュース and NHK's news categories are built in, and you can add any
+  RSS or Atom feed.
+- **Furigana** over every word, only over harder kanji (N3 and above), or turned off.
+- **Tap any word** for its dictionary entry: JMdict meanings, names from JMnedict, and kanji
+  readings from KANJIDIC. Conjugated forms are looked up as their dictionary form. The dictionary
+  is built into the app and works offline.
+- **Vertical (縦書き) or horizontal** text, paged or scrolling, with adjustable text size and line
+  width.
+- **Words you don't have a card for are underlined**, so you can see what's new on each page.
+- **Read aloud** with the phone's Japanese voice, plus bookmarks, sentence highlights and a table of
+  contents. Your place is saved in every book.
+
+## Mine words
+
+One tap on **Add to deck** in the dictionary popup makes a flashcard. Each card holds the word, its
+reading and meaning, and the sentence you found it in (with the word in bold) and where it came from.
+On Android it also gets two recordings: a native speaker saying the word (from JapanesePod101) and
+the sentence read by the phone's Japanese voice. **Review mined** studies the words from your current
+reading session straight away.
+
+## Review
+
+<p align="center">
+  <img src="docs/screenshots/home.png" width="250" alt="Home: continue reading, cards due today, recent books and news feeds">
+  <img src="docs/screenshots/decks.png" width="250" alt="The deck list with new, learning and due counts">
+  <img src="docs/screenshots/analytics.png" width="250" alt="Analytics: retention, reviews today, upcoming reviews and card maturity">
+</p>
+
+- **Anki's scheduler, ported:** learning steps, FSRS-6 or SM-2, interval fuzz, daily limits and
+  sibling burying behave as they do in Anki, so your due counts match.
+- **Import your Anki collection** (`.colpkg`) or shared decks (`.apkg`). Scheduling, review history,
+  deck options and media all come across. You can export decks back out as `.apkg`.
+- **Cards look as they do in Anki,** with the note type's own styling and scripts, audio, cloze and
+  type-in answers.
+- **AnkiDroid-style reviewing:** tap zones and swipes you assign yourself, undo, flags, mark, bury,
+  suspend, set a due date, edit the note mid-review, card info, an answer timer and card zoom.
+- **Deck tools:** deck options presets, the FSRS optimizer (trains your parameters on your own
+  review history), filtered decks and Custom Study, a card browser with Anki's search syntax, and a
+  note-type editor.
+- **Analytics:** Anki's statistics graphs for one deck or for everything, an activity calendar, and a
+  Reading tab with the chapters, articles, characters and time you've read.
+- **Daily reminder** (Android) that says how many cards are due.
+- **Themes:** follow the phone, light, dark or true black, with a choice of accent colour and a
+  Home wallpaper.
+
+## Your data
+
+- **Back up now** (Settings) saves one file containing your cards, review history, media, books and
+  settings. On Android it opens the share sheet, so you can save it to Drive or Files or send it to
+  another device. **Restore** puts everything back.
+- The app also keeps **automatic daily backups** of your cards and history (the last five) inside
+  the app.
+- Uninstalling the app **deletes its data**, so back up first.
 
 ## Install on Android
 
@@ -13,100 +80,30 @@ Every merge to `main` builds a signed APK and publishes it as a
 release.
 
 Every release is signed with the same key, so updates install over the previous version and keep your
-data. Uninstalling the app **deletes its data** — make a backup first.
+data.
 
-## Stack
+### On a desktop browser
 
-- React + TypeScript + Vite, plain CSS, Zustand
-- **Capacitor** wraps the web app as the Android APK (native HTTP for feeds, hardware back button)
-- **SQLite** (official WASM build) in a Web Worker, stored in the Origin Private File System — one
-  database file holding decks, notes, cards, review history, books and settings (`src/db/`)
-- IndexedDB holds binary files: book files and imported Anki media
-- Japanese core in a Web Worker: kuromoji tokenizer, furigana, deinflection, and a bundled
-  JMdict + JMnedict + KANJIDIC dictionary (`src/jp-core/`, `src/dictionary/`)
+`npm run dev` runs the same app in a desktop browser. Reading, reviewing, import and backups all
+work. The browser blocks most news sites from being read by another site, so most feeds only load in
+the Android app. Mined cards don't get recordings there either; they read the word and sentence aloud
+at review time instead.
+
+## Credits
+
+The dictionary uses [JMdict, JMnedict and KANJIDIC](https://www.edrdg.org/) from the Electronic
+Dictionary Research and Development Group, under their
+[licence](https://www.edrdg.org/edrdg/licence.html), converted by
+[jmdict-simplified](https://github.com/scriptin/jmdict-simplified). Words are split with
+[kuromoji.js](https://github.com/sglkc/kuromoji.js). The scheduler is a port of
+[Anki](https://github.com/ankitects/anki), and the FSRS optimizer is a port of
+[fsrs-rs](https://github.com/open-spaced-repetition/fsrs-rs). The full list is in Settings →
+Credits.
+
+Screenshots show the openings of 吾輩は猫である, 坊っちゃん and 走れメロス (public domain), with
+words mined from them and a few weeks of reviews.
 
 ## Development
 
-```bash
-npm install
-npm run dev          # http://localhost:5173
-npm run lint         # typecheck
-npm run verify       # scheduler, collection, import, analytics and dictionary checks
-npm run build        # production web build (PWA)
-```
-
-The dictionary isn't committed. To get word lookup locally, download `jmdict-eng-*.json`,
-`jmnedict-all-*.json` and `kanjidic2-en-*.json` from
-[jmdict-simplified releases](https://github.com/scriptin/jmdict-simplified/releases/latest) into
-`dict-src/` and run `npm run build:dict` (writes `public/dict/jmdict/`). CI does this for every APK.
-
-### Android
-
-```bash
-npm run build:android            # web build without service worker + `cap sync android`
-cd android && ./gradlew assembleDebug
-```
-
-Needs JDK 21 and the Android SDK. CI (`.github/workflows/ci.yml`) builds the release APK; it signs
-with the keystore in the `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` repository
-secrets (alias `gakutaku`). Without them CI still builds a debug APK as an artifact, but publishes no
-release.
-
-## Architecture notes
-
-- **Database.** `src/db/index.ts` exposes `db.execute / getAll / getOptional / writeTransaction`;
-  all statements run one at a time through a queue. Code inside `writeTransaction` must use its `tx`
-  argument. `useQuery` (`src/db/useQuery.ts`) is a live query: SQLite's update hook reports which
-  tables each write touched, and only queries reading those tables re-run.
-- **Schema changes** are append-only migrations in `src/db/schema.ts` (tracked with
-  `PRAGMA user_version`).
-- **Anki media needs an explicit MIME type** on the stored Blob, or `<audio>` refuses to play it.
-  See `src/import/mediaMime.ts`.
-- **Anki engine** (`src/anki/`) is a port of Anki's Rust core, not a look-alike. It covers:
-  - the collection model (decks, presets, note types, notes and cards with Anki's
-    `type`/`queue`/`due` semantics, plus the revlog);
-  - the v3 scheduler, including learning steps, FSRS-6, SM-2, fuzz, limits, sibling burying and
-    learn-ahead;
-  - deck-tree counts and the template renderer (furigana, cloze, type-in, `[sound:]`).
-
-  Things that look odd are usually Anki's behaviour; check `rslib/src/scheduler` before changing them.
-  The `scripts/verify-*.ts` checks pin the port to Anki's own test vectors and to
-  `test_schedv3.py` scenarios.
-- **FSRS optimizer** (`src/anki/fsrsOptimizer.ts`): a port of fsrs-rs 6.6.2, the version Anki
-  pins. It covers the analytic gradients, outlier filtering, recency weighting, the initial-stability
-  search, Adam with cosine annealing, and parameter clipping, and is checked against fsrs-rs's own
-  test vectors.
-  - It runs in a worker from Deck options → FSRS → Optimize.
-  - As in Anki, it keeps the current parameters when they already fit better.
-  - Saving new parameters recomputes the preset's cards' memory states.
-- **Import** (`src/import/`) reads `.apkg` and `.colpkg` files, both legacy and schema-18/zstd. It
-  keeps every card's scheduling state and FSRS memory state, plus the review history and the
-  deck-options presets, so due counts match Anki after import. Day-based due dates are shifted from
-  the source collection's day numbering to ours.
-- **Cards render in a sandboxed iframe** (`src/study/CardView.tsx`). It uses Anki's reviewer
-  document structure (`<body class="card cardN">`, `nightMode`), so a note type's CSS behaves as it
-  does in Anki and AnkiDroid. Media is inlined from the local store.
-- **Books** (`src/books/`, `src/reader/`): ePUBs are read chapter by chapter with epub.js. TXT and
-  PDF files are converted to chapters once, when added, and the result is stored next to the
-  original file.
-  - TXT: UTF-8/16, Shift_JIS or EUC-JP, with Aozora Bunko markup removed.
-  - PDF: pdf.js extracts the text, using the bundled CMaps that Japanese CID fonts need.
-    Vertical punctuation forms are normalised, and paragraph indents are recovered from the layout.
-- **Mining** (`src/study/mining.ts`) saves the tapped word with the sentence around it (in Anki
-  furigana syntax, word in bold) and the book or article it came from. In the Android app it then
-  attaches two recordings: a native-speaker clip of the word from JapanesePod101, fetched over
-  native HTTP, and the sentence recorded with the device's Japanese voice. The recording uses the
-  `JapaneseTts` plugin in `android/app/src/main/java/app/gakutaku/`. Without recordings, cards speak
-  the word and sentence at review time.
-- **Backups** (`src/backup/`): Settings → Back up now writes one zip containing the SQLite
-  database, all media, the books (original files, extracted text, covers) and the preferences.
-  - Android: the zip goes into the app cache and is offered through the share sheet (Drive, Files,
-    another device).
-  - Browser: it downloads.
-
-  Restoring writes the files over the existing ones, swaps in the database, and only then removes
-  whatever the backup doesn't contain. A restore that fails part-way therefore leaves the current
-  collection working.
-- **Feeds** are fetched with Capacitor's native HTTP on Android, which isn't subject to CORS and
-  decodes Shift_JIS / EUC-JP feeds (`src/feeds/proxy.ts`). In a desktop browser only sites that allow
-  cross-origin reads work.
+See **[DEVELOPMENT.md](DEVELOPMENT.md)** for building the app and the Android APK, the dictionary
+pipeline, and notes on how the code is organised.
